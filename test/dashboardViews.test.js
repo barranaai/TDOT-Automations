@@ -181,3 +181,53 @@ test('Reporting step 6: the page scripts parse; renderKpis draws Bookings by own
   assert.ok(out.includes('Abandoned holds: 1') && out.includes('Upcoming: 2'));
   assert.ok(out.includes('Counting changed on 9 Nov 2026'));
 });
+
+// 2026-11-14 (Faran): the dark "Live Dashboard" band is gone from both pages; the data time and the refresh sit right of the
+// page title, in the Consultations page's "Updated … · refresh" look, next to the view switch.
+test('both pages: no "Live Dashboard" band; the data time and the refresh sit in the page header next to the view switch', async () => {
+  for (const [path, sw] of [['/', '📊 Summary'], ['/summary', '📋 Client Master']]) {
+    const html = await renderRoute(path);
+    for (const gone of ['refresh-bar', 'Live Dashboard', 'live-dot', 'live-label', 'livePulse', '↻']) assert.ok(!html.includes(gone), `${path}: no ${gone}`);
+    const head = html.slice(html.indexOf('<div class="dash-header">'), html.indexOf('</main>'));
+    const tools = head.slice(head.indexOf('<div class="dash-tools">'), head.indexOf('</a>', head.indexOf('<div class="dash-tools">')) + 4);
+    assert.ok(tools.startsWith('<div class="dash-tools">'), `${path}: the tools group is in the header`);
+    assert.ok(head.indexOf('class="dash-title"') < head.indexOf('<div class="dash-tools">'), `${path}: right of (after) the title`);
+    assert.match(tools, /<span class="dash-age"><span id="hdr-updated"><\/span><span class="dash-sep"> · <\/span><button type="button" id="refresh-btn" onclick="loadData\(true\)" title="Read Monday again \(when the data shown is more than 30 seconds old\)">refresh<\/button><\/span>/);
+    assert.ok(tools.includes(sw + '</a>'), `${path}: next to the view switch`);
+    assert.equal((html.match(/id="hdr-updated"/g) || []).length, 1);
+    assert.equal((html.match(/id="refresh-btn"/g) || []).length, 1);
+    // Client Master's print hides the header tools as it hid the band (the Summary page's print is left as it was);
+    // the look is the Consultations page's small grey text with a blue link
+    const pr = html.indexOf('@media print {');
+    if (path === '/') assert.ok(pr > 0 && html.indexOf('.admin-hdr, .dash-tools, .dash-subtitle,', pr) > pr, 'print hides the data time and the refresh');
+    assert.ok(html.includes('.dash-age { font-size: 11.5px; color: #94a3b8;') && html.includes('#hdr-updated:empty + .dash-sep { display: none; }'));
+    const main = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]).find((s) => s.includes('function loadData('));
+    for (const s of [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1])) new vm.Script(s);
+    assert.ok(main.includes("btn.textContent = 'loading…';\n  btn.disabled = true;") && main.includes("btn.textContent = 'refresh';\n      btn.disabled = false;"), `${path}: disabled while loading`);
+    assert.ok(main.includes("document.getElementById('hdr-updated').textContent = VIEW === 'summary'"), `${path}: the data time and scope still fill #hdr-updated`);
+  }
+});
+
+test('loadData (the page code): the refresh asks for fresh data, is disabled while it loads, and the header gets the data time and the "All cases — name" scope', async () => {
+  const html = await renderRoute('/');
+  const main = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]).find((s) => s.includes('function loadData('));
+  const pick = (name) => { const i = main.indexOf('\nfunction ' + name + '('); return main.slice(i + 1, main.indexOf('\n}\n', i) + 2); };
+  const els = {};
+  const el = (id) => (els[id] = els[id] || { id, style: {}, textContent: '', innerHTML: '', disabled: false });
+  const seen = [];
+  let resolveFetch;
+  const ctx = vm.createContext({
+    document: { getElementById: el }, window: {}, location: { hash: '' }, requestAnimationFrame: () => {}, Array, Error, Date,
+    VIEW: 'cases', getKey: () => '', naLoad: () => {}, render: () => {}, cmWaitLater: () => {}, cmDataTimeText: () => 'Monday data from 09:41',
+    fetch: (url) => { seen.push(url); return new Promise((r) => { resolveFetch = r; }); },
+  });
+  vm.runInContext(pick('loadData'), ctx);
+  const p = ctx.loadData(true);
+  assert.equal(seen[0], '/admin/dashboard-stats?fresh=1&contact=1');
+  assert.deepEqual([els['refresh-btn'].textContent, els['refresh-btn'].disabled], ['loading…', true]);
+  resolveFetch({ ok: true, status: 200, json: async () => ({ cases: [], generatedAt: '2026-11-14T14:41:00Z', viewer: { scope: 'all', name: 'Sample Person' } }) });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(els['hdr-updated'].textContent, 'Monday data from 09:41 · 🗂️ All cases — Sample Person');
+  assert.deepEqual([els['refresh-btn'].textContent, els['refresh-btn'].disabled], ['refresh', false]);
+  void p;
+});

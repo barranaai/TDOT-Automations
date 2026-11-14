@@ -600,7 +600,8 @@ test('opening and closing: a click on the heading, Open all, Close all — kept 
   p.ctx.cmGrpAll(false);
   assert.ok(p.look().every((t) => t.endsWith('▸')) && p.look().length === 6, 'closed: every heading still there with its count');
   p.ctx.cmGrpAll(true);
-  assert.deepEqual(p.look().map((t) => t.split(' ▾')[1].trim()), ['p6', 'l4', 'n1 n3', 'o2', 's5', 'u7']);
+  // (2026-11-14: All orders months by date — the renamed group's title no longer reads as a month, so it sits with the plain groups after Leads)
+  assert.deepEqual(p.look().map((t) => t.split(' ▾')[1].trim()), ['p6', 'l4', 'o2', 'n1 n3', 's5', 'u7']);
   // a new browser page in the same tab reads the kept choices; another tab of the page has its own
   const again = await groupsPage({ store: { tdot_list_cases_groups: JSON.stringify({ all: { group_mm8qqjyz: false, group_mm2tz8e1: true }, eeita: { group_mm8qqjyz: false } }) } });
   again.draw(ALL_ROWS);
@@ -719,4 +720,49 @@ test('the look and the print: an open group is marked in navy and bound to its r
   assert.ok(bar.includes('<button type="button" class="cm-oc-b" id="cm-close-all" onclick="cmGrpAll(false)"') && bar.includes('>Close all</button>'));
   assert.ok(bar.indexOf('id="search-box"') < bar.indexOf('id="cm-oc"') && bar.indexOf('id="cm-oc"') < bar.indexOf('id="table-count"'));
   assert.ok(!/id="cm-oc"|\.cm-grp-b \{/.test(await renderRoute('/summary')), 'the Summary page has neither the buttons nor the look');
+});
+
+/* ── The All tab's group order: months by date (Faran 2026-11-14) ─────────────────────────────────── */
+const grp = (key, title) => ({ key, title, rows: [] });
+const titlesOf = (gs) => gs.map((g) => g.title);
+
+test('allGroupOrder on the real board: Pending and Leads (and the other plain groups) first, the months newest first, older history, Cancel, TEST', () => {
+  const board = META_FIX.groups.map((g) => grp(g.id, g.title));
+  const out = U.allGroupOrder(board, { groups: META_FIX.groups });
+  assert.deepEqual(titlesOf(out), ['⏳ Pending — signatures & payment', 'Leads', 'New Group', 'New Group', 'New Group', 'New Group',
+    'November 2026', 'October 2026', 'September  2026', 'August 2026', 'July 2026', 'June 2026', 'May 2026', 'April 2026',
+    'Retainers before May 2026', 'Cancel /Did not retained', 'TEST']);
+  assert.equal(out.length, board.length, 'nothing dropped');
+  assert.deepEqual(out.filter((g) => g.title === 'New Group').map((g) => g.key), ['group_mm7zakk6', 'group_mm83rxxk', 'group_mm7zfqf2', 'group_mm7ze1p7'], 'plain groups keep board order');
+  assert.deepEqual(titlesOf(board).slice(-3), ['May 2026', 'TEST', 'Retainers before May 2026'], 'the input is not changed');
+});
+
+test('allGroupOrder: year rollover, short and odd-cased month names, double spaces, a plain group, a missing group, an unknown group', () => {
+  const meta = { groups: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'].map((id) => ({ id, title: id })) };
+  const gs = [grp('', '—'), grp('a', 'December 2026'), grp('b', 'test'), grp('c', 'cancel  later'), grp('d', 'JANUARY  2027'), grp('e', 'Sept 2026'),
+    grp('f', 'Walk-ins'), grp('g', 'retainers before  May 2026'), grp('h', 'November 2026'), grp('zz', 'Brand new group'), grp('zm', 'February 2027')];
+  assert.deepEqual(titlesOf(U.allGroupOrder(gs, meta)), ['Walk-ins', 'February 2027', 'JANUARY  2027', 'December 2026', 'November 2026', 'Sept 2026',
+    'retainers before  May 2026', 'cancel  later', 'test', '—', 'Brand new group']);
+  // no board read: every group is placed by its title alone (the unknown one is a plain group then)
+  assert.deepEqual(titlesOf(U.allGroupOrder(gs, null)), ['Walk-ins', 'Brand new group', 'February 2027', 'JANUARY  2027', 'December 2026', 'November 2026', 'Sept 2026',
+    'retainers before  May 2026', 'cancel  later', 'test', '—']);
+  // "Retainers before May 2026" and "TEST 2026" are not months; equal months keep their order
+  assert.deepEqual(titlesOf(U.allGroupOrder([grp('x', 'TEST 2026'), grp('y', 'May 2026'), grp('z', 'may 2026')], null)), ['TEST 2026', 'May 2026', 'may 2026']);
+  assert.deepEqual(U.allGroupOrder([], null), []);
+  assert.deepEqual(U.allGroupOrder(null, null), []);
+});
+
+test('the All tab (the page code) uses the months-by-date order; the view tabs keep Monday\'s order', async () => {
+  const p = await groupsPage();
+  const rows = [row('c1', 'group_mm3b9tap', 'Cancel /Did not retained'), row('m2', 'group_mm347b6q', 'May 2026'), row('t3', 'group_mm3842s', 'TEST'),
+    row('n4', 'group_mm8qqjyz', 'November 2026'), row('l5', 'group_mm2tz8e1', 'Leads'), row('x6', '', ''), row('r7', 'group_mm3t4kda', 'Retainers before May 2026')];
+  p.draw(rows);
+  assert.deepEqual(p.look().map((t) => t.replace(/ [▾▸].*$/, '')), ['Leads 1', 'November 2026 1', 'May 2026 1', 'Retainers before May 2026 1', 'Cancel /Did not retained 1', 'TEST 1', '— 1']);
+  assert.ok(p.look()[1].startsWith('November 2026 1 ▾'), 'the current Toronto month is still the one open group');
+  // EE after ITA (grouped by board group too) keeps the board's order: May 2026 after Cancel
+  const ee = rows.map((r) => ({ ...r, views: ['eeita'] }));
+  p.draw(ee, { q: '', sel: { view: ['eeita'] } });
+  const eeTitles = p.look().map((t) => t.replace(/ \d+ [▾▸].*$/, ''));
+  assert.ok(eeTitles.indexOf('Cancel /Did not retained') < eeTitles.indexOf('May 2026'), eeTitles.join(' | '));
+  assert.ok(/if \(isAll\) groups = CMU\.allGroupOrder\(groups, /.test(p.main), 'only the All tab re-orders');
 });

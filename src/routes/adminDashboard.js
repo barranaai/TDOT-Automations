@@ -521,7 +521,7 @@ const CM_CSS = `
     @page { size: landscape; margin: 10mm; }
     @media print {
       body { background:#fff; }
-      .admin-hdr, .refresh-bar, .view-switch, .dash-subtitle, #cs-quick, .table-toolbar, #cs-chips, .site-footer, #loading, #error-msg, .cm-print, .cm-clear-w, .th-f, .lt-pop, .cm-assign, .cm-asg-ok, .dlc-btn, .dlc-ok { display:none !important; }
+      .admin-hdr, .dash-tools, .dash-subtitle, #cs-quick, .table-toolbar, #cs-chips, .site-footer, #loading, #error-msg, .cm-print, .cm-clear-w, .th-f, .lt-pop, .cm-assign, .cm-asg-ok, .dlc-btn, .dlc-ok { display:none !important; }
       #all-cases-table:not(.cm-wide) #cs-headrow th:last-child, #all-cases-table td.cm-del { display:none; }
       /* All with columns added is wide too, and its last column is still the delete column */
       #all-cases-table.cm-wide-all #cs-headrow th:last-child { display:none; }
@@ -654,6 +654,16 @@ function buildDashboardHTML(view = 'cases') {
       background: #fff; color: var(--navy); border: 1px solid #e2e8f0;
     }
     .view-switch:hover { background: #f8fafc; }
+    /* The data time and the refresh, right of the title next to the view switch — the Consultations page's
+       "Updated … · refresh" look (the dark band that sat above the page was taken off, Faran 2026-11-14).
+       On a narrow screen the whole group drops under the title and the time wraps; nothing overlaps. */
+    .dash-tools { display: flex; align-items: center; justify-content: flex-end; gap: 6px 14px; flex-wrap: wrap; min-width: 0; margin-left: auto; }
+    .dash-age { font-size: 11.5px; color: #94a3b8; min-width: 0; overflow-wrap: anywhere; }
+    .dash-age button { background: none; border: 0; color: #2563eb; cursor: pointer; font: inherit; font-size: 11.5px; padding: 0 2px; }
+    .dash-age button:hover { text-decoration: underline; }
+    .dash-age button:disabled { color: #94a3b8; cursor: not-allowed; text-decoration: none; }
+    #hdr-updated:empty + .dash-sep { display: none; }
+    @media (max-width: 760px) { .dash-tools { margin-left: 0; justify-content: flex-start; } .dash-age, .dash-age button { font-size: 13px; } }
     .dash-gen { font-size: 11px; color: #94a3b8; }
 
     /* ── KPI Strip ───────────────────────────────────────────────── */
@@ -1111,38 +1121,6 @@ function buildDashboardHTML(view = 'cases') {
     .r-bar-fill.low { background: var(--st-red-solid); }
     .r-bar-pct { font-size: 11px; font-weight: 700; color: var(--navy); min-width: 30px; }
 
-    /* ── Refresh bar ─────────────────────────────────────────────── */
-    .refresh-bar {
-      background: linear-gradient(135deg, #1a3358 0%, #2d5282 100%);
-      padding: 10px 32px;
-      display: flex; align-items: center; justify-content: space-between;
-      border-bottom: 1px solid rgba(255,255,255,.07);
-      box-shadow: 0 2px 10px rgba(0,0,0,.14);
-    }
-    .refresh-bar-left { display: flex; align-items: center; gap: 10px; }
-    .refresh-bar-right { display: flex; align-items: center; gap: 16px; }
-    .live-dot {
-      width: 8px; height: 8px; border-radius: 50%; background: #4ade80;
-      box-shadow: 0 0 0 0 rgba(74,222,128,.5);
-      animation: livePulse 2.2s ease-in-out infinite;
-      flex-shrink: 0;
-    }
-    @keyframes livePulse {
-      0%   { box-shadow: 0 0 0 0 rgba(74,222,128,.5); }
-      60%  { box-shadow: 0 0 0 7px rgba(74,222,128,.0); }
-      100% { box-shadow: 0 0 0 0 rgba(74,222,128,.0); }
-    }
-    .live-label { font-size: 11px; font-weight: 700; color: rgba(255,255,255,.55); letter-spacing: .6px; text-transform: uppercase; }
-    .refresh-updated { font-size: 11px; color: rgba(255,255,255,.4); }
-    .refresh-btn {
-      padding: 6px 18px;
-      background: rgba(255,255,255,.11); color: white;
-      border: 1px solid rgba(255,255,255,.2); border-radius: 8px;
-      font-size: 12px; font-weight: 700; font-family: inherit; cursor: pointer;
-      transition: background .15s, border-color .15s;
-    }
-    .refresh-btn:hover { background: rgba(255,255,255,.2); border-color: rgba(255,255,255,.38); }
-    .refresh-btn:disabled { opacity: .5; cursor: not-allowed; }
 
     /* ── Responsive ───────────────────────────────────────────────── */
     @media (max-width: 1100px) {
@@ -1155,7 +1133,6 @@ function buildDashboardHTML(view = 'cases') {
       .chart-row-3, .chart-row-2, .chart-row-dl { grid-template-columns: 1fr; }
       .kpi-strip { grid-template-columns: repeat(2, 1fr); }
       .wrap { padding: 16px 14px 56px; }
-      .refresh-bar { padding: 10px 16px; }
       .dash-title { font-size: 20px; }
     }
 
@@ -1180,18 +1157,6 @@ function buildDashboardHTML(view = 'cases') {
 
 ${buildNavHeader(isSummary ? 'summary' : 'dashboard')}
 
-<!-- ── Refresh bar ──────────────────────────────────────────────── -->
-<div class="refresh-bar">
-  <div class="refresh-bar-left">
-    <span class="live-dot"></span>
-    <span class="live-label">Live Dashboard</span>
-  </div>
-  <div class="refresh-bar-right">
-    <span id="hdr-updated" class="refresh-updated"></span>
-    <button id="refresh-btn" class="refresh-btn" onclick="loadData(true)" title="Read Monday again (when the data shown is more than 30 seconds old)">↻ Refresh</button>
-  </div>
-</div>
-
 <!-- ── MAIN ───────────────────────────────────────────────────────── -->
 <main class="wrap">
 
@@ -1203,7 +1168,10 @@ ${buildNavHeader(isSummary ? 'summary' : 'dashboard')}
         ? 'Portfolio overview, workload and cases needing attention · TDOT Immigration Platform'
         : 'The Client Master board, with its Monday views as tabs'}</p>
     </div>
-    <a class="view-switch" href="${isSummary ? '/admin/dashboard' : '/admin/dashboard/summary'}">${isSummary ? '📋 Client Master' : '📊 Summary'}</a>
+    <div class="dash-tools">
+      <span class="dash-age"><span id="hdr-updated"></span><span class="dash-sep"> · </span><button type="button" id="refresh-btn" onclick="loadData(true)" title="Read Monday again (when the data shown is more than 30 seconds old)">refresh</button></span>
+      <a class="view-switch" href="${isSummary ? '/admin/dashboard' : '/admin/dashboard/summary'}">${isSummary ? '📋 Client Master' : '📊 Summary'}</a>
+    </div>
   </div>
 
   ${isSummary ? NEEDS_ATTENTION_HTML : ''}
@@ -1278,7 +1246,7 @@ function loadData(fresh) {
   var key = getKey();
   if (VIEW === 'summary') naLoad();   // the needs-attention list loads on its own
   var btn = document.getElementById('refresh-btn');
-  btn.textContent = '↻ Loading…';
+  btn.textContent = 'loading…';
   btn.disabled = true;
 
   document.getElementById('loading').style.display = 'flex';
@@ -1347,7 +1315,7 @@ function loadData(fresh) {
       el.style.display = 'block';
     })
     .finally(function() {
-      btn.textContent = '↻ Refresh';
+      btn.textContent = 'refresh';
       btn.disabled = false;
     });
 }
@@ -2225,7 +2193,7 @@ function cmGroupTone(v, g) {
   return '';
 }
 
-/* A tab's table: the groups (Monday's grouping; on All the board's own groups), each under a heading that opens and closes it.
+/* A tab's table: the groups (Monday's grouping; on All the board's own groups, months newest first), each under a heading that opens and closes it.
    Inside a group: Monday's order on a view tab (unless a column sort is chosen — mondayOrder false), the engine's order on All.
    No pages. Only the rows of OPEN groups are drawn; the counts are of every matching row, open or closed.
    total (All only) = every case this person may see. */
@@ -2233,6 +2201,8 @@ function renderViewTable(v, rows, st, mondayOrder, total) {
   var isAll = v === CMU.ALL_VIEW;
   var ordered = mondayOrder ? CMU.viewOrder(v, rows) : rows;
   var groups = CMU.groupRows(v, ordered, (_data && _data.meta) || null);
+  // All only (2026-11-14): Pending / Leads first, then the months newest first, older history, Cancel and TEST, no group last.
+  if (isAll) groups = CMU.allGroupOrder(groups, (_data && _data.meta) || null);
   var tbody = document.getElementById('all-cases-body');
   // a view tab has its own, wider column set (2026-11-12): the table says so (Case Ref and Client stay in view while it scrolls sideways).
   // The columns are the ones chosen for this tab (the Columns button); All is wide too once a view-tab column is added to it.

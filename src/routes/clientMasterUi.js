@@ -222,6 +222,31 @@ function clientMasterUi(W) {
     return null;
   }
   /**
+   * The All tab's heading order (Faran 2026-11-14, "months by date"): the groups from groupRows (board order) put as
+   *   0 · every other group (Pending, Leads, …) in board order;  1 · the month groups ("<Month> <Year>"), newest first;
+   *   2 · "Retainers before …" (older history);  3 · Cancel groups, then TEST;  4 · rows with no group ("—") last, and with
+   *   them a group the board read does not know (meta given) unless its title is a month — a month is placed by its date.
+   *   With no meta (a failed board read) every group is placed by its title.
+   * A stable re-order: never adds, drops or splits a group; equal ranks keep the order they came in.
+   * Only the All tab uses it — the view tabs keep Monday's order.
+   */
+  function allGroupRank(g, meta) {
+    var key = s(g && g.key), t = s(g && g.title).toLowerCase().split(' ').filter(function (x) { return x !== ''; }).join(' ');   // no backslash: this file is injected as text
+    if (key === '' || t === '' || t === '—') return { band: 4, n: 0 };
+    var mo = monthOf(g.title);
+    if (mo) return { band: 1, n: -(mo.y * 12 + mo.m) };
+    if (meta && meta.groups && meta.groups.length && !groupMeta(meta, key)) return { band: 4, n: 0 };
+    if (t.indexOf('retainers before') === 0) return { band: 2, n: 0 };
+    if (t.indexOf('cancel') === 0) return { band: 3, n: 0 };
+    if (t === 'test') return { band: 3, n: 1 };
+    return { band: 0, n: 0 };
+  }
+  function allGroupOrder(groups, meta) {
+    return (groups || []).map(function (g, i) { return { g: g, i: i, r: allGroupRank(g, meta) }; })
+      .sort(function (a, b) { return (a.r.band - b.r.band) || (a.r.n - b.r.n) || (a.i - b.i); })
+      .map(function (o) { return o.g; });
+  }
+  /**
    * The id of the month group to open on the All tab: the group named for today's month (today = Toronto YYYY-MM-DD);
    * if there is none, the newest group whose title reads "<Month> <Year>"; if none reads so, the first group. null = no groups.
    */
@@ -396,7 +421,7 @@ function clientMasterUi(W) {
 
   return { EMPTY: EMPTY, keyOf: keyOf, titleOf: titleOf, groupRows: groupRows, viewOrder: viewOrder, noOfficer: noOfficer,
     noOfficerCount: noOfficerCount, waitingWords: waitingWords, waitingCounts: waitingCounts, typeCounts: typeCounts, filteredLine: filteredLine, hasUserFilter: hasUserFilter,
-    ALL_VIEW: ALL_VIEW, groupId: groupId, monthOf: monthOf, newestMonthId: newestMonthId, defaultOpenIds: defaultOpenIds, openMap: openMap, setOpen: setOpen,
+    ALL_VIEW: ALL_VIEW, allGroupOrder: allGroupOrder, groupId: groupId, monthOf: monthOf, newestMonthId: newestMonthId, defaultOpenIds: defaultOpenIds, openMap: openMap, setOpen: setOpen,
     normalizeKept: normalizeKept, filterSig: filterSig, groupLabel: groupLabel,
     COL_LOCKED: COL_LOCKED, COL_FIXED: COL_FIXED, COL_SAME: COL_SAME, colSame: colSame, colTabKey: colTabKey, colPlan: colPlan, colPref: colPref, colIds: colIds,
     colToggle: colToggle, colSummary: colSummary, colStore: colStore, colStoreOut: colStoreOut, colWide: colWide, colMinWidth: colMinWidth, colPrintFit: colPrintFit };
