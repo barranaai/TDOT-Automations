@@ -227,6 +227,15 @@ function startScheduler() {
       console.error('[Scheduler] Booking reminders failed:', err.message)));
   console.log('[Scheduler] Job registered — booking-invite reminders hourly (:19)');
 
+  // ── Otter recordings (Faran 2026-11-14): the Zap's files in "Otter Recordings" file themselves on the
+  // consultation they belong to; the ones that cannot be placed wait on the Consultations page. Every 10
+  // minutes (:01, :11, …) — and ONLY when OTTER_READER=on (unset/off: nothing; report: the admin preview only).
+  // A run still going when the next tick comes answers "already running" (the service's own lock).
+  cron.schedule('1-59/10 * * * *', () =>
+    require('./otterReaderService').tick().catch(() =>
+      console.error('[Scheduler] Otter recordings run failed')));
+  console.log('[Scheduler] Job registered — Otter recordings every 10 min (only when OTTER_READER=on)');
+
   // ── The consultation copy on Client Master (team meeting point 8, 2026-11-05): cases opened since then carry a
   // copy of their consultation; hourly at :46 (no other job runs at :46) it is brought up to date from the lead —
   // a recording or a fee recorded later. Only rows that already carry a copy. CONSULT_COPY=off stops it.

@@ -230,6 +230,7 @@ async function getConsultationDetail(leadId, { actor } = {}) {
 
   return {
     leadId:    lead.id,
+    recordingCode: require('../utils/recordingCode').recordingCode(lead.id),   // display only: the Otter recording title (2026-11-14)
     name:      lead.fullName || lead.name,
     email:     lead.email || '',
     phone:     lead.phone || '',
@@ -3283,6 +3284,7 @@ function consultRow(l, consultPayment) {
     outcome: consultOutcomeText(l.outcome), followUpDate: s(l.followUpDate),   // never the lead-only Webinar: the consultation still needs its outcome
     consultationHeld: s(l.consultationHeld), hasMeeting: !!s(l.meetingLink),
     tier: s(l.tier), createdAt: l.createdAt || '',
+    recCode: require('../utils/recordingCode').recordingCode(l.id),   // typed as the Otter recording title (2026-11-14); staff pages only
     ...adminOnlyDelete(l),
     // A direct consultation (step 2): its kind for the "direct" pill and who booked it — only on such a row.
     ...(isDirectConsult(l) ? { direct: require('../utils/directConsult').kindOf(l) || '?', bookedBy: s(l.bookedBy) } : {}),

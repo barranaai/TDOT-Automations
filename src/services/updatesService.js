@@ -18,12 +18,58 @@
 
 const mondayApi = require('./mondayApi');
 
-const UPDATE_FIELDS = `id text_body created_at creator{ name } replies{ id text_body created_at creator{ name } }`;
+const UPDATE_FIELDS = `id text_body body created_at creator{ name } replies{ id text_body created_at creator{ name } }`;
 
-function shape(u, origin) {
+/**
+ * PURE: the only addresses of an Otter entry that the page may show as links (review 2026-11-14) — the
+ * line the app itself writes right above the machine line that ENDS the entry:
+ *   "Recording in Otter: https://otter.ai/…"            above "Otter recording ref: <id>"  (the summary entry)
+ *   "Full transcript (in the client's folder): https://<the firm's own host>/…"
+ *                                                       above "Otter transcript ref: <id>" (the stored-transcript entry)
+ * The Otter link: https and host EXACTLY otter.ai. The transcript link: https and a host in `hosts` — the
+ * hosts the app's own OneDrive upload returned (otterReaderService.transcriptHosts). Review 2 (2026-11-14):
+ * never "any *.sharepoint.com" — another tenant's site is an outsider's page; with no host known the
+ * address stays text. Nothing from the written parts of the entry, nothing from any other entry.
+ */
+function otterLinksOf(text, hosts = []) {
+  const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const last = lines[lines.length - 1] || '';
+  const kind = /^Otter recording ref: [A-Za-z0-9_-]{1,80}$/.test(last) ? 'recording' : /^Otter transcript ref: [A-Za-z0-9_-]{1,80}$/.test(last) ? 'transcript' : '';
+  if (!kind || lines.length < 2) return [];
+  const allowed = (hosts || []).map((h) => String(h).toLowerCase());
+  const host = (v) => { try { const u = new URL(v); return u.protocol === 'https:' && !u.username && !u.password ? u.hostname.toLowerCase() : ''; } catch (_) { return ''; } };
+  const line = lines[lines.length - 2];
+  if (kind === 'recording') {
+    const m = /^Recording in Otter: (https:\/\/otter\.ai\/[^\s"'<>\\]*)$/.exec(line);
+    return m && host(m[1]) === 'otter.ai' ? [m[1]] : [];
+  }
+  const m = /^Full transcript \(in the client's folder\): (https:\/\/[^\s"'<>\\]+)$/.exec(line);
+  const h = m ? host(m[1]) : '';
+  return h && allowed.includes(h) ? [m[1]] : [];
+}
+
+/**
+ * PURE: is this update an Otter entry THE APP FILED (review 2, 2026-11-14)? It starts with the Otter
+ * heading — the same test postOtterEntry makes before it writes — AND carries a machine line. An email
+ * note, a typed update or a pasted summary that merely CONTAINS "Otter recording ref: …" is not one:
+ * it is read as before (Monday's text) and never gets a link.
+ */
+function isFiledOtterEntry(u) {
+  const raw = String((u && u.body) || '');
+  if (!/Otter (?:recording|transcript) ref: /.test(raw)) return false;
+  return htmlToText(raw).trimStart().startsWith(htmlToText(OTTER_HEADER));
+}
+
+function shape(u, origin, hosts) {
+  const otter = isFiledOtterEntry(u);
+  const body = (otter ? htmlToText(u.body) : String(u.text_body || '')).trim();
   return {
     id:      String(u.id),
-    body:    String(u.text_body || '').trim(),
+    // An Otter recording the app filed (2026-11-14) is read from its HTML: its line breaks are certain there
+    // (Monday's text_body can hand them back collapsed) and each link shows as its address. Every other entry as before.
+    // Only such an entry carries otter + links — the page shows links for those and nothing else (otterLinksOf).
+    body,
+    ...(otter ? { otter: true, links: otterLinksOf(body, hosts) } : {}),
     at:      String(u.created_at || ''),
     by:      (u.creator && u.creator.name) || '',
     origin,  // 'case' | 'lead'
@@ -40,7 +86,13 @@ async function getUpdatesForItem(itemId, { limit = 50, origin = 'lead' } = {}) {
     { id: [String(itemId)], n: limit }
   );
   const item = d && d.items && d.items[0];
-  return ((item && item.updates) || []).map((u) => shape(u, origin)).filter((u) => u.body);
+  const updates = (item && item.updates) || [];
+  // the firm's own file host is asked for only when an entry the app filed links a stored transcript
+  let hosts = [];
+  if (updates.some((u) => isFiledOtterEntry(u) && String(u.body).includes('Full transcript (in the client'))) {
+    try { hosts = await require('./otterReaderService').transcriptHosts(); } catch (_) { hosts = []; }
+  }
+  return updates.map((u) => shape(u, origin, hosts)).filter((u) => u.body);
 }
 
 /**
@@ -243,6 +295,49 @@ async function postConsultNotes(itemId, { body, staffName } = {}) {
   try { return await work; } finally { notesInFlight.delete(key); }
 }
 
+// ── Otter recordings filed by the app (2026-11-14) ──────────────────────────
+// A recording the app files on a consultation is ONE update headed like the pasted Otter summary
+// (OTTER_HEADER — so isStaffTypedEntry skips it too) that ends with a machine line "Otter recording
+// ref: <id>"; a transcript stored or posted for it carries "Otter transcript ref: <id>". Those lines,
+// read back from the item's own updates, are the proof that a recording is already there — never a cache.
+const OTTER_REF_RE = /Otter (recording|transcript) ref: ([A-Za-z0-9_-]{3,80})/g;
+
+/** PURE: the Otter ids an update's text or HTML carries → adds to { recordings:Set, transcripts:Set }. */
+function otterRefsIn(textOrHtml, into = { recordings: new Set(), transcripts: new Set() }) {
+  const raw = String(textOrHtml == null ? '' : textOrHtml);
+  for (const text of [raw, raw.includes('<') ? htmlToText(raw) : '']) {
+    OTTER_REF_RE.lastIndex = 0;
+    for (let m; (m = OTTER_REF_RE.exec(text));) (m[1] === 'recording' ? into.recordings : into.transcripts).add(m[2]);
+  }
+  return into;
+}
+
+/** The Otter recordings already on one item, from its own updates. Throws when they cannot be read. */
+async function getOtterFiled(itemId) {
+  if (!/^\d+$/.test(String(itemId))) throw new Error('Invalid item id.');
+  const d = await mondayApi.query(
+    `query($id:[ID!], $n:Int!){ items(ids:$id, limit:1){ id updates(limit:$n){ id text_body body } } }`,
+    { id: [String(itemId)], n: NOTES_READ_LIMIT }
+  );
+  const item = d && d.items && d.items[0];
+  if (!item) { const e = new Error('The record was not found.'); e.notFound = true; throw e; }
+  const out = { recordings: new Set(), transcripts: new Set() };
+  for (const u of item.updates || []) { otterRefsIn(u.body, out); otterRefsIn(u.text_body, out); }
+  return out;
+}
+
+/**
+ * Posts one ready-made entry (HTML built and escaped by otterReaderService) ONCE: mondayApi's own retry is
+ * off — it could store a second copy. A failure is the caller's to retry, after reading the item again.
+ */
+async function postOtterEntry(itemId, html) {
+  if (!/^\d+$/.test(String(itemId))) throw new Error('Invalid item id.');
+  const body = String(html == null ? '' : html);
+  if (!body.startsWith(OTTER_HEADER)) throw new Error('Not an Otter entry.');
+  await mondayApi.query(`mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }`, { i: String(itemId), b: body }, 0);
+  return { ok: true };
+}
+
 function _resetConsultNotesGuard({ retryMs } = {}) { notesInFlight.clear(); notesRecent.clear(); notesItemSaved.clear(); if (retryMs != null) notesRetryMs = retryMs; }
 
-module.exports = { getUpdatesForItem, getCaseThread, postUpdate, getConsultNotes, isStaffTypedEntry, MAX_UPDATE, MAX_OTTER, MAX_CONSULT_NOTES, _resetConsultNotesGuard };
+module.exports = { getUpdatesForItem, getCaseThread, postUpdate, getConsultNotes, isStaffTypedEntry, getOtterFiled, postOtterEntry, otterRefsIn, otterLinksOf, isFiledOtterEntry, htmlToText, MAX_UPDATE, MAX_OTTER, MAX_CONSULT_NOTES, OTTER_HEADER, _resetConsultNotesGuard };

@@ -896,6 +896,55 @@ app.get('/admin/otter/recordings-check', async (req, res) => {
   catch (err) { res.status(500).json({ error: 'The Otter recordings check could not run.' }); }
 });
 
+// ─── Otter recordings file themselves on the consultation (Faran 2026-11-14) ────
+// otterReaderService. OTTER_READER: unset/off = nothing runs; report = this preview only; on = every 10 min.
+// preview: what a run WOULD do with the files in the folder — files nothing, writes nothing. Per file only the
+// created time, the decision, how it was matched, the reason, counts and lengths — never a title, a name, an
+// email, a link or any text of a recording.
+app.get('/admin/otter/reader/preview', async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  if (!resolveAdminOrReject(req, res, 'Only an admin can preview the Otter recordings.')) return;
+  try { res.json(await require('./services/otterReaderService').runOnce({ mode: require('./services/otterReaderService').mode() === 'off' ? 'off' : 'report' })); }
+  catch (_) { res.status(500).json({ error: 'The Otter recordings preview could not run.' }); }
+});
+// A recording marked "Not a consultation" comes back to the list (or one given up on is read again). Admin only.
+app.post('/admin/otter/reader/restore/:otterId', async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  if (!resolveAdminOrReject(req, res, 'Only an admin can bring an Otter recording back.')) return;
+  try { res.json(await require('./services/otterReaderService').restore({ otterId: req.params.otterId })); }
+  catch (err) { res.status(err.status || 500).json({ error: err.status ? err.message : 'The recording could not be brought back.' }); }
+});
+
+// The "Otter recordings to match" strip on the Consultations page. Behind the /api gate, like the
+// Consultations data itself (the page shows every consultation to everyone who can open it). The list
+// carries what staff need to recognise the client (the typed title, the first words of the summary).
+app.get('/api/otter/needs-matching', async (_req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  try { res.json(await require('./services/otterReaderService').needsList()); }
+  catch (_) { res.status(500).json({ error: 'The Otter recordings could not be loaded.' }); }
+});
+// Saving a recording to a client, or marking it "not a consultation": a NAMED staff member (signed in with
+// Monday) — the shared key alone does not say who did it. Idempotent: a second press adds nothing.
+function otterNamedStaffOrReject(req, res, what) {
+  const actor = staffActor(req, '');
+  if (!actor.verified) { res.status(401).json({ error: `Sign in with Monday to ${what} — the shared admin key does not say who you are.`, loginUrl: '/q/auth/monday' }); return null; }
+  return actor;
+}
+app.post('/api/otter/needs-matching/:otterId/assign', express.json(), async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const actor = otterNamedStaffOrReject(req, res, 'save an Otter recording to a client');
+  if (!actor) return;
+  try { res.json(await require('./services/otterReaderService').assign({ otterId: req.params.otterId, leadId: (req.body || {}).leadId, actor })); }
+  catch (err) { res.status(err.status || 500).json({ error: err.status ? err.message : 'The recording could not be saved to the client.' }); }
+});
+app.post('/api/otter/needs-matching/:otterId/dismiss', express.json(), async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const actor = otterNamedStaffOrReject(req, res, 'take an Otter recording off the list');
+  if (!actor) return;
+  try { res.json(await require('./services/otterReaderService').dismiss({ otterId: req.params.otterId, why: (req.body || {}).why, actor })); }
+  catch (err) { res.status(err.status || 500).json({ error: err.status ? err.message : 'The recording could not be taken off the list.' }); }
+});
+
 // ─── Otter API key: READ-ONLY check (Faran 2026-11-12) ─────────────────────────
 // Asks Otter a few GET questions with the key in the environment and answers only the
 // status and the SHAPE of each reply (field names, types, counts) — never meeting content,

@@ -15,6 +15,7 @@ const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS,
 const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const { CONSULT_NOTES_CSS, consultNotesHtml, CONSULT_NOTES_JS } = require('./consultNotesWidget');   // the Consultation notes box (2026-11-10)
+const { OTTER_MATCH_CSS, otterMatchHtml, OTTER_MATCH_JS } = require('./otterMatchWidget');   // "Otter recordings to match" (2026-11-14)
 const { OUTCOME_LABELS, REMARK_PRESETS, RETAINER_TABS, RETAINED_TAB } = require('../services/consultantPortalService');
 const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
 const { REFERRAL_CSS, REFERRAL_UI_JS, referralFieldsHtml, sourceOptionsHtml } = require('./referralPicker');   // the walk-in form's Source / Reference (2026-11-04)
@@ -130,6 +131,8 @@ const CONSULT_PAGE_CSS = `
   .cq-month select:focus-visible, .cq-month .cm-b:focus-visible { outline:2px solid var(--st-focus); outline-offset:1px; }
   .time { font-variant-numeric:tabular-nums; white-space:nowrap; font-weight:600; color:var(--navy); }
   .time .d { font-weight:500; color:#64748b; }
+  /* The recording code under the client's name (2026-11-14): what staff type as the Otter recording title. */
+  .rec-code { display:block; font-size:11px; font-weight:500; color:#94a3b8; font-variant-numeric:tabular-nums; letter-spacing:.02em; margin-top:1px; white-space:nowrap; }
 `;
 
 const RETAINERS_PAGE_CSS = `
@@ -276,7 +279,7 @@ function rowHtml(c){
   var pd=paidPill(c);
   return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
     '<td>'+dateCell(c)+'</td><td>'+timeCell(c)+'</td>'+
-    '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+directPill(c)+'</td>'+
+    '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+directPill(c)+(c.recCode?'<span class="rec-code" title="Recording code: type it as the Otter recording title before you stop the recording">'+escHtml(c.recCode)+'</span>':'')+'</td>'+
     '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
     '<td>'+escHtml(c.consultant||'—')+'</td>'+
     '<td>'+(c.meetingType?escHtml(c.meetingType):'—')+'</td>'+
@@ -812,6 +815,7 @@ function buildQueueHTML() {
   ${BLACKLIST_UI_CSS}
   ${REFERRAL_CSS}
   ${DQ_CSS}
+  ${OTTER_MATCH_CSS}
 </style></head><body>
 ${buildNavHeader('consultations')}
 <main class="wrap">
@@ -824,6 +828,7 @@ ${buildNavHeader('consultations')}
     </div>
     ${DQ_DONE_HTML}
     <p class="page-sub">Every consultation, in four tabs (and All). Once an outcome is set, the consultation moves to the Completed tab and stays there; the client is worked from <a href="/admin/retainers">Retainers &amp; follow-ups</a>.</p>
+    ${otterMatchHtml()}
     <div class="lt-tabs" id="cq-tabs" role="tablist" aria-label="Consultations by list"></div>
     <div class="q-head">
       <div><h2 class="sec-h"><span id="cq-title">Booked consultations</span> <span id="cq-count" class="muted" style="font-weight:500" aria-live="polite"></span></h2>
@@ -869,6 +874,11 @@ ${REFERRAL_UI_JS}
 var DQ_FORM=${jsLit(dqFormHtml())};
 ${DQ_JS}
 dqInitButton();
+</script>
+<script>
+${OTTER_MATCH_JS}
+/* Otter recordings waiting for a person (shown only when there are some and the feature is on). */
+tdotOtterMatchMount({ rows: function(){ return ALLROWS; }, signIn: '/q/auth/monday?returnTo=%2Fadmin%2Fconsultations' });
 </script>
 <script>${listTableScript(consultListSpec, consultListOpts, '{ onChange: consultOnChange }')}</script>
 <script>load(); window.addEventListener('pageshow',function(e){ if(e.persisted) load(); });   /* Back to this page from memory: read the list again */</script></body></html>`;
@@ -984,6 +994,16 @@ function buildDetailHTML(leadId, opts) {
   .avatar { width:46px; height:46px; border-radius:50%; background:var(--navy); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:15px; letter-spacing:.5px; flex:none; }
   .cname { font-size:21px; font-weight:800; color:var(--navy); letter-spacing:-.4px; margin:0; line-height:1.2; }
   .csub { font-size:12.5px; color:var(--muted); margin-top:2px; font-weight:500; }
+  /* The recording code (2026-11-14): typed as the Otter recording title, the notes then file themselves here. Staff only. */
+  .rec-code-box { margin-top:8px; display:inline-block; background:var(--st-blue-bg); border:1px solid var(--st-blue-solid); border-radius:10px; padding:7px 12px; line-height:1.35; }
+  .rec-code-box[hidden] { display:none; }
+  .rec-code-box .rc-l { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--st-blue-fg); }
+  .rec-code-box .rc-v { font-size:19px; font-weight:800; color:var(--navy); letter-spacing:.04em; font-variant-numeric:tabular-nums; margin:0 6px 0 4px; user-select:all; }
+  .rec-code-box .rc-copy { border:1px solid var(--st-blue-solid); background:#fff; color:var(--navy); border-radius:7px; padding:3px 10px; font:inherit; font-size:12px; font-weight:600; cursor:pointer; min-height:28px; }
+  .rec-code-box .rc-copy:hover { background:#f5f8fc; }
+  .rec-code-box .rc-copy:focus-visible { outline:2px solid var(--st-focus, #2563eb); outline-offset:1px; }
+  .rec-code-box .rc-done { font-size:12px; color:var(--st-green-fg); font-weight:600; margin-left:8px; }
+  .rec-code-box .rc-hint { font-size:12px; color:var(--st-blue-fg); margin-top:2px; }
   .ctx-acts { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
   .iconbtn { width:36px; height:36px; border-radius:var(--r-sm); border:1px solid var(--border); background:#fff; color:var(--muted); display:inline-flex; align-items:center; justify-content:center; font-size:17px; cursor:pointer; text-decoration:none; transition:all .15s; }
   .iconbtn:hover { border-color:var(--navy); color:var(--navy); background:#f5f8fc; }
@@ -1161,7 +1181,12 @@ ${buildNavHeader(fromRetainers ? 'retainers' : 'consultations')}
       <div class="ctx-top">
         <div class="ctx-id">
           <div class="avatar" id="c-avatar">—</div>
-          <div><h1 class="cname" id="c-name">—</h1><div class="csub" id="c-sub">—</div></div>
+          <div><h1 class="cname" id="c-name">—</h1><div class="csub" id="c-sub">—</div>
+            <div class="rec-code-box" id="c-code" hidden>
+              <span class="rc-l">Recording code</span> <b class="rc-v" id="c-code-v"></b>
+              <button type="button" class="rc-copy" id="c-code-copy">Copy</button><span class="rc-done" id="c-code-done" role="status" aria-live="polite"></span>
+              <div class="rc-hint">Type this as the Otter recording title before you stop the recording</div>
+            </div></div>
         </div>
         <div class="ctx-acts" id="c-acts"></div>
       </div>
@@ -1715,6 +1740,18 @@ function render(d){
   document.getElementById('c-avatar').textContent=initials(d.name||d.leadId);
   document.getElementById('c-name').textContent=d.name||d.leadId;
   document.getElementById('c-sub').textContent=(d.serviceRequired||'—')+'  ·  '+(d.tier?('Tier '+d.tier):'')+'  ·  lead '+d.leadId;
+  /* The recording code: display only (made on the server from the record's id — recordingCode.js). */
+  var rcBox=document.getElementById('c-code');
+  if(rcBox){
+    rcBox.hidden=!d.recordingCode;
+    document.getElementById('c-code-v').textContent=d.recordingCode||'';
+    document.getElementById('c-code-copy').onclick=function(){
+      var done=document.getElementById('c-code-done'), code=String(d.recordingCode||'');
+      function said(ok){ done.textContent=ok?'Copied':'Select the code and copy it'; setTimeout(function(){ done.textContent=''; },4000); }
+      try { if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(code).then(function(){ said(true); },function(){ said(false); }); return; } } catch(e){}
+      said(false);
+    };
+  }
 
   var acts='';
   if(d.meetingLink) acts+='<a class="btn primary" href="'+escHtml(safeUrl(d.meetingLink))+'" target="_blank" rel="noopener">'+ICONS.video+' Join meeting</a>';
