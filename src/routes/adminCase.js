@@ -12,6 +12,7 @@
 const express = require('express');
 const { DEADLINE_CHANGE_CSS, DEADLINE_CHANGE_HTML, DEADLINE_CHANGE_JS } = require('./deadlineChangeUi');   // Change beside the Client deadline pill (2026-11-10)
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
+const { CASE_NOTES_CSS, caseNotesHtml, CASE_NOTES_JS } = require('./caseNotesWidget');   // the Consultation notes panel (switch CASE_NOTES_PANEL)
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS, STATUS_TONE_JS } = require('./adminShared');
 
@@ -19,8 +20,14 @@ function escAttr(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function buildCockpitHTML(caseRef) {
+/**
+ * @param {string} caseRef
+ * @param {{ notesPanel?: boolean }} [opts]  notesPanel: the Consultation notes panel beside the tabs — by default the
+ *   CASE_NOTES_PANEL switch. Off = the page is byte-for-byte what it was before the panel existed.
+ */
+function buildCockpitHTML(caseRef, opts = {}) {
   const safeRef = escAttr(caseRef);
+  const panel = opts.notesPanel === undefined ? require('../services/caseNotesService').enabled() : !!opts.notesPanel;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -171,7 +178,7 @@ function buildCockpitHTML(caseRef) {
     .sp-hint { font-size:11.5px; color:var(--light); margin-top:8px; line-height:1.5; }
     .sp-form { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0; }
     .sp-form input { padding:8px 10px; border:1px solid var(--border); border-radius:7px; font-size:12.5px; font-family:inherit; }
-    @media (max-width: 820px) { .sp-form { grid-template-columns:1fr; } }
+    ${panel ? '@container casemain (max-width: 820px) { .sp-form { grid-template-columns:1fr; } }' : '@media (max-width: 820px) { .sp-form { grid-template-columns:1fr; } }'}
 
     /* Document reminders card + dialog (block 2, 2026-11-06) */
     .rem-card { margin-bottom:16px; }
@@ -240,10 +247,10 @@ function buildCockpitHTML(caseRef) {
     .tl-title { font-size:13px; font-weight:700; color:var(--navy); margin-top:1px; }
     .tl-detail { font-size:12px; color:var(--muted); margin-top:1px; }
 
-    @media (max-width: 820px) {
+    ${panel ? '@container casemain (max-width: 820px) {' : '@media (max-width: 820px) {'}
       .grid-2, .grid-3 { grid-template-columns:1fr; }
       .doc-strip { grid-template-columns:repeat(3,1fr); }
-    }
+    }${panel ? '\n    /* the Consultation notes panel (caseNotesWidget.js): the main column narrows, so the rules above follow the main column, not the window */\n    ' + CASE_NOTES_CSS : ''}
   </style>
 </head>
 <body>
@@ -272,7 +279,7 @@ ${buildNavHeader('dashboard')}
       </div>
       <div class="pill-row" id="c-pills"></div>
       <div class="act-msg" id="folder-msg"></div>
-    </div>
+    </div>${panel ? '\n\n    <!-- the main column, then the Consultation notes beside every tab (after it in the page; shown as a bar above the tabs under 1100px) -->\n    <div class="case-body" id="case-body">\n    <div class="case-main">' : ''}
 
     <!-- Tabs -->
     <div class="tabbar" id="tabbar">
@@ -396,7 +403,7 @@ ${buildNavHeader('dashboard')}
         <div class="muted" style="margin-bottom:12px;max-width:var(--read-max)">The same thread Monday shows on this case — system notes and team comments, newest first. Lead-tagged entries are the pre-retainer history. Posting writes to the case's Monday thread.</div>
         ${updatesWidgetHtml('updw')}
       </div>
-    </div>
+    </div>${panel ? '\n    </div><!-- /case-main -->\n' + caseNotesHtml() + '\n    </div><!-- /case-body -->' : ''}
 
   </div><!-- /content -->
 </main>
@@ -409,7 +416,7 @@ ${SHARED_AUTH_JS}
 ${STATUS_TONE_JS}
 ${PAYMENT_UI_JS}
 ${DEADLINE_CHANGE_JS}
-tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/case-updates/' + encodeURIComponent(CASE_REF) });
+tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/case-updates/' + encodeURIComponent(CASE_REF) });${panel ? '\n' + CASE_NOTES_JS + '\ntdotCaseNotesMount({ caseRef: CASE_REF });' : ''}
 
 function escHtml(s) {
   return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

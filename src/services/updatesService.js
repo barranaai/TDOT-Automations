@@ -104,15 +104,17 @@ async function getCaseThread(caseRef) {
   const htmlQ = require('./htmlQuestionnaireService');
   const { itemId, clientName } = await htmlQ.validateAccessForStaff(String(caseRef).trim(), { skipFormVersioning: true });
 
-  const leadService = require('./leadService');
-  const leads = await leadService.findAllByColumnValue('clientMasterItemId', String(itemId)).catch(() => []);
+  // The SAME consultations as the case page's Consultation notes panel (caseNotesService.caseLeadSet): the leads
+  // linked by Client Master Item ID, a direct consultation for this case, the consultation copy's anchor.
+  // A failed lead read leaves the case row's own thread, as before.
+  const leads = await require('./caseNotesService').caseLeadSet(itemId, String(caseRef).trim()).then((r) => r.leads).catch(() => []);
 
   const threads = await Promise.all([
     getUpdatesForItem(itemId, { origin: 'case' }).catch(() => []),
-    ...leads.map((l) => getUpdatesForItem(l.id, { origin: 'lead' }).catch(() => [])),
+    ...leads.map((l) => getUpdatesForItem(l.leadId, { origin: 'lead' }).catch(() => [])),
   ]);
   const merged = threads.flat().sort((a, b) => String(b.at).localeCompare(String(a.at)));
-  return { caseRef: String(caseRef).trim(), cmItemId: String(itemId), clientName, leadIds: leads.map((l) => String(l.id)), updates: merged };
+  return { caseRef: String(caseRef).trim(), cmItemId: String(itemId), clientName, leadIds: leads.map((l) => String(l.leadId)), updates: merged };
 }
 
 // The normal cap, and the "Consultation summary (Otter)" one (step 2, 2026-11-09): an Otter
@@ -340,4 +342,4 @@ async function postOtterEntry(itemId, html) {
 
 function _resetConsultNotesGuard({ retryMs } = {}) { notesInFlight.clear(); notesRecent.clear(); notesItemSaved.clear(); if (retryMs != null) notesRetryMs = retryMs; }
 
-module.exports = { getUpdatesForItem, getCaseThread, postUpdate, getConsultNotes, isStaffTypedEntry, getOtterFiled, postOtterEntry, otterRefsIn, otterLinksOf, isFiledOtterEntry, htmlToText, MAX_UPDATE, MAX_OTTER, MAX_CONSULT_NOTES, OTTER_HEADER, _resetConsultNotesGuard };
+module.exports = { getUpdatesForItem, getCaseThread, postUpdate, postConsultNotes, getConsultNotes, parseNotesEntry, notesName, notesKey, isStaffTypedEntry, getOtterFiled, postOtterEntry, otterRefsIn, otterLinksOf, isFiledOtterEntry, htmlToText, MAX_UPDATE, MAX_OTTER, MAX_CONSULT_NOTES, OTTER_HEADER, _resetConsultNotesGuard };

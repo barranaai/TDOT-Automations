@@ -817,6 +817,12 @@ app.get('/admin/case-data/:caseRef', async (req, res) => {
   }
 });
 
+// Consultation notes on the case page (switch CASE_NOTES_PANEL; off = 404). The lead's own "📝 Consultation
+// notes" entries: read with the light access check, added only with a Monday sign-in (routes/caseNotesRoutes.js).
+// Not under /api, so staff signed in only with Monday can use them.
+app.get('/admin/case-notes/:caseRef', (req, res) => require('./routes/caseNotesRoutes').get(req, res, { resolveViewer, staffActor }));
+app.post('/admin/case-notes/:caseRef', express.json(), (req, res) => require('./routes/caseNotesRoutes').post(req, res, { resolveViewer, staffActor }));
+
 // Shared gate for cockpit WRITE actions: resolve the viewer + confirm they're
 // assigned to (or admin for) this case, returning the case overview so callers
 // can derive the linked lead server-side (never trust a client-supplied leadId).
