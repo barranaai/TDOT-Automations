@@ -26,6 +26,22 @@ test('the content file is the full guide', () => {
   for (const k of ['glossary', 'howto', 'firstday', 'emails', 'automatic']) assert.ok(Array.isArray(g[k]) && g[k].length, k);
 });
 
+test('every flowchart box has a "How do I…" list of 1 to 4 real answers, and every link in the guide leads somewhere (Gauri 2026-11-07)', () => {
+  const g = JSON.parse(guide.data());
+  const qs = new Set(g.howto.map((h) => h.q));
+  const ids = new Set(g.steps.map((s) => s.id));
+  assert.equal(qs.size, g.howto.length, 'no question twice');
+  assert.equal(ids.size, g.steps.length, 'no step id twice');
+  for (const n of g.workflow.nodes) {
+    assert.ok(Array.isArray(n.howto) && n.howto.length >= 1 && n.howto.length <= 4, `box ${n.id} has 1-4 how-tos`);
+    for (const q of n.howto) assert.ok(qs.has(q), `box ${n.id}: "${q}" is a real how-to`);
+    for (const s of n.steps || []) assert.ok(ids.has(s), `box ${n.id}: step ${s}`);
+  }
+  for (const h of g.howto) for (const s of h.step_ids || []) assert.ok(ids.has(s), `how-to "${h.q}": step ${s}`);
+  const page = guide.page();
+  assert.ok(page.includes('function nodeHowtos(n)') && page.includes("<h5>How do I…</h5>"), 'the box card shows them');
+});
+
 test('the data route answers only to the team key or a Monday staff sign-in', () => {
   const src = fs.readFileSync(require.resolve('../src/server'), 'utf8');
   const i = src.indexOf("app.get('/admin/guide/data'");

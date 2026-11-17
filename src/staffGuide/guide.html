@@ -807,15 +807,23 @@ function renderFirstDay(){
 }
 document.getElementById('fdPick').addEventListener('click',function(e){ var b=e.target.closest('[data-fd]'); if(!b) return; fdLane=b.dataset.fd; renderFirstDay(); });
 var howQ=document.getElementById('howQ');
+/* one "How do I…" answer, folded: the question, who asks it, the answer and its guide steps */
+function howItem(h){
+  var st=(h.step_ids||[]).filter(function(id){ return stepById[id]; });
+  return '<details style="--c:'+laneColor(h.lane)+'"><summary>'+esc(h.q)+'<span class="who">'+esc(laneName(h.lane))+'</span></summary><p>'+gx(h.answer||'',{})+'</p>'+(st.length?'<div class="related">'+st.map(function(id){ return '<button type="button" data-goto="'+esc(id)+'">'+esc(stepById[id].title)+'</button>'; }).join('')+'</div>':'')+'</details>';
+}
+/* the answers shown on a flowchart box: the box's own list (n.howto, by question), else those linked to its steps */
+function nodeHowtos(n){
+  var all=G.howto||[], byQ={}; all.forEach(function(h){ byQ[h.q]=h; });
+  if (Array.isArray(n.howto) && n.howto.length) return n.howto.map(function(q){ return byQ[q]; }).filter(Boolean);
+  var ids=n.steps||[]; return all.filter(function(h){ return (h.step_ids||[]).some(function(id){ return ids.indexOf(id)>=0; }); }).slice(0,4);
+}
 function renderHow(){
   var all=G.howto||[], v=(howQ.value||'').trim().toLowerCase(), words=v?v.split(/\s+/):[];
   var d=state.dept;
   var rows=all.filter(function(h){ var t=(h.q+' '+h.answer).toLowerCase(); return words.every(function(w){ return t.indexOf(w)>=0; }); });
   rows.sort(function(a,b){ var am=d&&a.lane===d?0:1, bm=d&&b.lane===d?0:1; return am-bm; });
-  document.getElementById('howList').innerHTML = rows.length ? rows.map(function(h){
-    var st=(h.step_ids||[]).filter(function(id){ return stepById[id]; });
-    return '<details style="--c:'+laneColor(h.lane)+'"><summary>'+esc(h.q)+'<span class="who">'+esc(laneName(h.lane))+'</span></summary><p>'+gx(h.answer||'',{})+'</p>'+(st.length?'<div class="related">'+st.map(function(id){ return '<button type="button" data-goto="'+esc(id)+'">'+esc(stepById[id].title)+'</button>'; }).join('')+'</div>':'')+'</details>';
-  }).join('') : '<p class="empty" style="color:var(--muted)">No question matches. Try one word, like “payment”.</p>';
+  document.getElementById('howList').innerHTML = rows.length ? rows.map(howItem).join('') : '<p class="empty" style="color:var(--muted)">No question matches. Try one word, like “payment”.</p>';
   document.getElementById('howSec').classList.toggle('hide',!all.length);
 }
 howQ.addEventListener('input',renderHow);
@@ -1181,6 +1189,8 @@ function openNode(id, from){
   h+='<h4>'+esc(n.title)+'</h4>'+(n.sub?'<p class="sum" style="color:var(--muted);margin-top:-2px">'+esc(n.sub)+'</p>':'');
   h+='<p class="sum">'+gx(n.detail||'',{})+'</p>';
   var st=(n.steps||[]).filter(function(x){ return stepById[x]; });
+  var hw=nodeHowtos(n);
+  if (hw.length){ h+='<h5>How do I…</h5><div class="how-list">'+hw.map(howItem).join('')+'</div>'; }
   if (st.length){ h+='<h5>Step by step in the guide</h5><div class="related">'+st.map(function(r){ var s=stepById[r]; return '<button type="button" data-goto="'+esc(r)+'" style="border-left:3px solid '+laneColor(s.lane)+'">'+esc(s.title)+'</button>'; }).join('')+'</div>'; }
   var au=(n.autos||[]).map(function(a){ return (G.automatic||[]).filter(function(x){ return x.id===a; })[0]; }).filter(Boolean);
   if (au.length){ h+='<h5>What the app does by itself</h5><ul>'+au.map(function(a){ return '<li><b>'+esc(a.name)+'</b> — '+esc(a.when)+(a.setting_note?' <span class="conf">('+esc(a.setting_note)+')</span>':'')+'</li>'; }).join('')+'</ul>'; }
