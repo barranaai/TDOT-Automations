@@ -71,6 +71,43 @@ test('caseSubject: a ref already in the base is taken out in every old style, th
   assert.equal(caseSubject('Line\r\nbreak', R, 'Internal\nReview'), 'Line break — 2026-SPE-016 · Internal Review', 'never a line break in a subject');
 });
 
+test('caseSubject: a "#", "ref" or "Ref:" label typed before the ref goes with it (staff-typed / board subjects)', () => {
+  const R = '2026-SPE-016', S = 'Internal Review';
+  const want = (t) => `${t} — ${R} · ${S}`;
+  assert.equal(caseSubject('Documents for case #2026-SPE-016', R, S), want('Documents for case'));
+  assert.equal(caseSubject('Your case (ref 2026-SPE-016)', R, S), want('Your case'));
+  assert.equal(caseSubject('Docs (Ref: 2026-SPE-016)', R, S), want('Docs'));
+  assert.equal(caseSubject('Docs (reference #2026-SPE-016)', R, S), want('Docs'));
+  assert.equal(caseSubject('#2026-SPE-016 documents', R, S), want('documents'));
+  assert.equal(caseSubject('Case #2026-SPE-016: docs', R, S), want('docs'));
+  // "ref" inside a word is not a label
+  assert.equal(caseSubject('Preferred 2026-SPE-016', R, S), want('Preferred'));
+});
+
+test('caseSubject: a subject already in the new format keeps one ref and one (current) stage', () => {
+  const R = '2026-SPE-016';
+  // pasted back with the same stage → unchanged
+  assert.equal(caseSubject('Docs — 2026-spe-016 · Document Collection Started', R, 'Document Collection Started'), 'Docs — 2026-SPE-016 · Document Collection Started');
+  // an old stage is replaced by the stage read now
+  assert.equal(caseSubject('Docs — 2026-SPE-016 · Stuck', R, 'Internal Review'), 'Docs — 2026-SPE-016 · Internal Review');
+  // now Stuck → the old stage goes and no stage is shown
+  assert.equal(caseSubject('Docs — 2026-SPE-016 · Internal Review', R, 'Stuck'), 'Docs — 2026-SPE-016');
+  // a "·" with no ref before it is ordinary subject text — kept
+  assert.equal(caseSubject('Docs · Super Visa', R, 'Internal Review'), 'Docs · Super Visa — 2026-SPE-016 · Internal Review');
+  // the whole subject round-trips
+  const once = caseSubject('Documents still needed', R, 'Document Collection Started');
+  assert.equal(caseSubject(once, R, 'Document Collection Started'), once);
+});
+
+test('escalation emails: the subject gets only the real case ref — never the name fallback (blank ref → base subject, no stage)', () => {
+  const src = read('src/services/escalationRoutingService.js');
+  assert.match(src, /const subjectRef = col\(CM\.caseRef\);/);
+  assert.match(src, /caseSubject\('Important update regarding your case', subjectRef, stageNow\)/);
+  assert.doesNotMatch(src, /caseSubject\([^)]*,\s*caseRef\s*,/, 'no subject built from the caseRef that falls back to the item name');
+  // what a blank ref gives
+  assert.equal(caseSubject('Important update regarding your case', '', 'Internal Review'), 'Important update regarding your case');
+});
+
 // ─── The notice ──────────────────────────────────────────────────────────────
 
 test('the three notice texts are Faran\'s approved wording, verbatim; "Important:" is bold; one helper renders all three', () => {
@@ -156,7 +193,7 @@ test('the case emails build their subject with caseSubject and the stage read at
     'src/services/revisionNotificationService.js': /client\.caseRef \|\| caseRef, client\.caseStage\)/,
     'src/services/missingFieldsEmailService.js': /caseSubject\('Information Still Needed for Your Case', caseRef, client\.caseStage\)/,
     'src/services/docReminderService.js': /caseSubject\(fillTokens\(subject[\s\S]{0,200}caseRef, o\.caseStage\)/,
-    'src/services/escalationRoutingService.js': /caseSubject\('Final Notice — Immediate action required', caseRef, stageNow\)/,
+    'src/services/escalationRoutingService.js': /caseSubject\('Final Notice — Immediate action required', subjectRef, stageNow\)/,
     'src/services/milestonePaymentService.js': /leadCaseSubject\(lead, `Your TDOT Immigration payment receipt — \$\{p\.label\}`/,
     'src/services/retainerCountersignService.js': /leadCaseSubject\(fresh \|\| lead, 'Your fully signed TDOT Immigration retainer agreement'/,
   };

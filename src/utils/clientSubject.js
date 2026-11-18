@@ -57,13 +57,20 @@ function stripCaseRef(base, caseRef) {
   const word = '(?<![A-Za-z])case(?:\\s+ref(?:erence)?)?(?:\\s*(?:no\\.?|number|#))?\\s*[:#]?\\s*';
   const edgeL = '(?<![A-Za-z0-9])';
   const edgeR = '(?![A-Za-z0-9])';
+  // a bare "ref" / "reference" / "#" label right before the ref ("(ref REF)", "case #REF", "Ref: REF")
+  // goes with it too; a "ref" inside a word ("Preferred") does not
+  const label = '(?:(?<![A-Za-z])ref(?:erence)?\\s*[:#]?\\s*|#\\s*)?';
+  // the new format's " · <stage>" tail right after a ref goes with it, so a subject already
+  // in the new format (pasted back by staff, or a board row) never shows the stage twice or stale;
+  // only the new format puts "·" after a ref, so ordinary subject text is never eaten
+  const stageTail = '(?:\\s*·[^—–|()\\[\\]]*)?';
   const out = text
     // "(2026-X-001)", "[Case 2026-X-001]", "(case ref: 2026-X-001)"
-    .replace(new RegExp(`\\s*[(\\[]\\s*(?:${word})?${edgeL}${r}${edgeR}\\s*[)\\]]`, 'gi'), '')
+    .replace(new RegExp(`\\s*[(\\[]\\s*(?:${word}|${label})${edgeL}${r}${edgeR}\\s*[)\\]]`, 'gi'), '')
     // " — Case 2026-X-001", "Case 2026-X-001 — …" at the start
-    .replace(new RegExp(`(?:^\\s*|\\s*[${SEP_CHARS}]\\s*)${word}${edgeL}${r}${edgeR}`, 'gi'), '')
+    .replace(new RegExp(`(?:^\\s*|\\s*[${SEP_CHARS}]\\s*)${word}${edgeL}${r}${edgeR}${stageTail}`, 'gi'), '')
     // " – 2026-X-001", " — 2026-X-001", "… case 2026-X-001 …" (the ref alone)
-    .replace(new RegExp(`\\s*(?:[${SEP_CHARS}]\\s*)?${edgeL}${r}${edgeR}`, 'gi'), '');
+    .replace(new RegExp(`\\s*(?:[${SEP_CHARS}]\\s*)?${label}${edgeL}${r}${edgeR}${stageTail}`, 'gi'), '');
   return trimSeparators(out);
 }
 

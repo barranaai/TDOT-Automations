@@ -1186,8 +1186,9 @@ function previewSafeHtml(html, { token } = {}) {
 /**
  * POST render: the finished email for the pop-up — read-only (no note, no email, no
  * cool-down; it reads the case's list and notes exactly as a preview does). The gate keeps
- * its refusals (409 / 503); a text that cannot go yet — reply wording, the final's last day
- * blank or past, an unknown level, an empty subject or text — is an answer, not an error:
+ * its refusals (409 / 503); a text that cannot go yet — the final's last day blank or past,
+ * an unknown level, an empty subject or text, a box over its size limit (the subject as sent,
+ * with the case ref and stage added) — is an answer, not an error:
  * { ok: true, html: '', problems: [...] }, so the pop-up shows it while staff type.
  */
 const SUBJECT_MAX = 200, BODY_MAX = 6000, EXTRA_MAX = 1000;

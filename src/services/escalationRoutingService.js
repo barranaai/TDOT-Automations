@@ -330,6 +330,9 @@ async function applyRule(item, rule) {
   const colVal = (id) => item.column_values.find((c) => c.id === id)?.value || '';
 
   const caseRef    = col(CM.caseRef)    || item.name;
+  // the subject gets only a REAL ref: the name fallback above is fine for logs and bodies, but in a
+  // subject it would sit where the ref goes and bring the stage with it (no ref → no ref, no stage)
+  const subjectRef = col(CM.caseRef);
   const clientName = (item.name || '').trim() || 'Client';
   const clientEmail= col(CM.clientEmail);
   const caseType   = col(CM.caseType);
@@ -446,7 +449,7 @@ async function applyRule(item, rule) {
     try {
       await sendEmail({
         to:      clientEmail,
-        subject: caseSubject('Important update regarding your case', caseRef, stageNow),
+        subject: caseSubject('Important update regarding your case', subjectRef, stageNow),
         html:    buildClientEmailHtml(body, caseRef, clientName, false, { accessToken: col(CM.accessToken) }),
         replyTo: CLIENT_REPLY_TO,
       });
@@ -464,7 +467,7 @@ async function applyRule(item, rule) {
     try {
       await sendEmail({
         to:      clientEmail,
-        subject: caseSubject('Final Notice — Immediate action required', caseRef, stageNow),
+        subject: caseSubject('Final Notice — Immediate action required', subjectRef, stageNow),
         html:    buildClientEmailHtml(body, caseRef, clientName, true, { accessToken: col(CM.accessToken) }),
         replyTo: CLIENT_REPLY_TO,
       });
