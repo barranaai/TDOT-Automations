@@ -66,6 +66,19 @@
  * sender whose subject has a word from src/config/emailLeadSkipWords.js makes no
  * lead — it is recorded as skipped (subject only, no sender) on the status page.
  * A sender we already know still gets the email as a note.
+ *
+ * Replies to the app's case emails (reply-thread change, Faran 2026-11-18): client
+ * emails now carry Reply-To info@ and a subject ending "— <case ref> · <stage>"
+ * (src/utils/clientSubject.js). An email whose subject names a case ref that is a
+ * Client Master case is noted ONLY on that case (or those cases, at most
+ * MAX_OPEN_CASES) — never fanned out to the sender's other cases, never a new lead,
+ * and the job/pitch subject words do not apply. A sender who is not that case's
+ * client email (a sponsor, a spouse, a second address) still lands there, with a
+ * "⚠️ Sent from an address that is not the client email on this case." line.
+ * The ref look-up THROWS on a Monday failure (retried like every other look-up
+ * here — never read as "no such case"); it runs BEFORE the 30-minute "recent"
+ * shortcut. No ref in the subject, or no ref that is a case → the rules above.
+ * The stage in the subject is ignored (it changes over a thread's life).
  */
 
 const axios     = require('axios');
@@ -91,6 +104,9 @@ const FOLDER_TTL_MS    = 6 * 3600 * 1000;
 const GRAPH_TIMEOUT_MS = 20000;
 const BODY_NOTE_MAX    = 4000;
 const SITUATION_MAX    = 1900;                   // a long-text column holds 2,000 characters
+/** A case ref anywhere in a subject: 2026-SPE-016, 2026-CEC-EE-110 (several letter parts), 3+ digits. */
+const SUBJECT_REF_RE   = /(?<![A-Za-z0-9-])\d{4}-[A-Z]+(?:-[A-Z]+)*-\d{3,}(?!\d)/gi;
+const FOREIGN_SENDER_LINE = '⚠️ Sent from an address that is not the client email on this case.';
 /** Case stages where the work is over — "Submitted" is NOT one (the client still waits on IRCC). */
 const FINISHED_STAGES  = new Set(['Approved', 'Refused', 'Closed', 'Withdrawn', 'Cancelled', 'Archived']);
 /** This app instance — tells "my own earlier run" from "another instance at work". */
@@ -332,8 +348,19 @@ function situationText(msg, box = mailbox()) {
   return cut(`Email to ${box} — ${subject}\n\n${bodyText(msg)}`, SITUATION_MAX - 1, '…').trim();
 }
 
-/** The note on the lead / case: who, when, the subject and the message (as text — Monday renders HTML). PURE. */
-function noteHtml(msg, { isNewLead = false, box = mailbox(), person = null, viaReplyTo = false } = {}) {
+/** The case refs named in a subject, upper-cased, de-duplicated, in order. PURE. */
+function subjectCaseRefs(subject) {
+  const out = [];
+  for (const m of String(subject || '').matchAll(SUBJECT_REF_RE)) {
+    const ref = m[0].toUpperCase();
+    if (!out.includes(ref)) out.push(ref);
+  }
+  return out;
+}
+
+/** The note on the lead / case: who, when, the subject and the message (as text — Monday renders HTML). PURE.
+ *  foreignSender: the email was filed on a case by the ref in its subject, from an address that is not that case's client email. */
+function noteHtml(msg, { isNewLead = false, box = mailbox(), person = null, viaReplyTo = false, foreignSender = false } = {}) {
   const p = person || senderOf(msg);
   const when = torontoTime(msg.receivedDateTime);
   const subject = String(msg.subject || '').trim() || '(no subject)';
@@ -344,6 +371,7 @@ function noteHtml(msg, { isNewLead = false, box = mailbox(), person = null, viaR
       ? `📧 <b>New lead from an email</b> to ${esc(box)}${when ? ` — ${esc(when)}` : ''}`
       : `📧 <b>Email received</b> at ${esc(box)}${when ? ` — ${esc(when)}` : ''}`,
     `From: ${esc(p.name || p.raw)}${p.name ? ` &lt;${esc(p.raw)}&gt;` : ''}${viaReplyTo ? ` (sent through ${esc(senderOf(msg).raw)} — a web form)` : ''}`,
+    ...(foreignSender ? [FOREIGN_SENDER_LINE] : []),
     `Subject: ${esc(subject)}`,
     '',
     body ? esc(cut(body, BODY_NOTE_MAX, '\n… (the rest is in the email)')).replace(/\n/g, '<br>') : '<i>(the email has no text)</i>',
@@ -383,6 +411,7 @@ const io = {
   // Monday look-ups that THROW on failure — a failed search must never read as "a new person"
   leadsByEmail: (email) => require('./leadService').findAllByColumnValue('email', email),
   casesByEmail: (email) => require('./clientMasterService').findCasesByEmail(email),
+  casesByRef: (ref) => require('./clientMasterService').findCasesByCaseRef(ref),
   // no automatic re-send: a timed-out create that did land must not make a second lead
   // (the retry, after the lock, finds it by the search above)
   createLead: (fields) => require('./leadService').createLead(fields, { createRetries: 0 }),
@@ -547,6 +576,28 @@ async function knownPerson(person) {
   return { leads: [...leads.values()], cases: cases || [] };
 }
 
+/**
+ * The Client Master cases the subject's refs name (at most MAX_OPEN_CASES, in the
+ * subject's order). Throws on a failed search — never read as "no such case".
+ */
+async function casesForRefs(refs) {
+  const found = new Map();
+  for (const ref of refs) {
+    for (const c of (await io.casesByRef(ref)) || []) {
+      if (c && c.id && String(c.caseRef || '').trim().toUpperCase() === ref && !found.has(String(c.id))) found.set(String(c.id), c);
+    }
+    if (found.size >= MAX_OPEN_CASES) break;
+  }
+  return [...found.values()].slice(0, MAX_OPEN_CASES);
+}
+
+/** Is `person` the case's client email? (The column may hold one address; compared lower-case.) */
+function isCaseClient(c, person) {
+  const mine = String((person && person.email) || '').trim().toLowerCase();
+  const theirs = String((c && c.email) || '').split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+  return !!mine && theirs.includes(mine);
+}
+
 /** Post the note unless this email's note is already on the item (a retry, a copy, a crash). */
 async function noteOnce(itemId, ref, html) {
   if ((await io.noteBodies(itemId)).some((t) => t.includes(`Email ref ${ref}`))) return false;
@@ -573,6 +624,20 @@ async function take(msg, state, entry, { person, viaReplyTo, box, renew }) {
     entry.leadId = String(madeLead);
     await noteOnce(madeLead, ref, noteHtml(msg, { isNewLead: true, box, person, viaReplyTo }));
     return { kind: 'lead', ids: [String(madeLead)] };
+  }
+
+  // A reply to one of our case emails: the subject names the case — note it there ONLY
+  // (before the "recent" shortcut, and whoever sent it). A failed look-up throws (retried).
+  const refs = subjectCaseRefs(msg.subject);
+  if (refs.length) {
+    const named = await casesForRefs(refs);
+    if (named.length) {
+      await renew();
+      for (const c of named) {
+        await noteOnce(String(c.id), ref, noteHtml(msg, { isNewLead: false, box, person, viaReplyTo, foreignSender: !isCaseClient(c, person) }));
+      }
+      return { kind: 'case-note', ids: named.map((c) => String(c.id)) };
+    }
   }
 
   const target = recent ? { kind: recent.kind, ids: recent.ids } : pickTargets(await knownPerson(person));
@@ -902,7 +967,7 @@ async function checkAccess() {
 module.exports = {
   runOnce, getStatus, checkAccess,
   // pure helpers + seams (tests)
-  classify, skipReason, subjectSkipWord, normalSubject, skipWords, senderOf, headerMap, leadNameFor, bodyText, situationText, noteHtml, messageRef, pickTargets, listUrl, rescueUrl, byMessageIdUrl, accessHint,
-  DEFAULT_SKIP_DOMAINS, FINISHED_STAGES, STATE_PATH, MAX_TRIES, MAX_PER_RUN, LEASE_MS, GIVE_UP_AFTER_MS, INSTANCE, io,
+  classify, skipReason, subjectSkipWord, normalSubject, skipWords, senderOf, headerMap, leadNameFor, bodyText, situationText, noteHtml, messageRef, pickTargets, subjectCaseRefs, listUrl, rescueUrl, byMessageIdUrl, accessHint,
+  DEFAULT_SKIP_DOMAINS, FINISHED_STAGES, FOREIGN_SENDER_LINE, STATE_PATH, MAX_TRIES, MAX_PER_RUN, LEASE_MS, GIVE_UP_AFTER_MS, INSTANCE, io,
   _reset: () => { _running = false; _status = { at: null, ok: null, outcome: 'not run yet', error: '', hint: '', counts: null }; for (const k of Object.keys(_quietUntil)) delete _quietUntil[k]; _folders = { at: 0, box: '', ids: new Set(), junk: '' }; },
 };

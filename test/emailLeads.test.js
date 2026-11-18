@@ -43,7 +43,7 @@ const msg = (over = {}) => {
 const key = (id) => EL.messageRef(made[id]);
 
 /** A fake world: inbox pages, a mailbox to fetch from, a OneDrive record with eTags, the boards. */
-function world({ access = 200, listAccess = 200, leads = [], cases = [], failCreate = 0, failCreateFor = [], failSearch = 0, failNote = 0, failSaveAt = [], blacklisted = [], junkSample = null, rescueRefused = false } = {}) {
+function world({ access = 200, listAccess = 200, leads = [], cases = [], failCreate = 0, failCreateFor = [], failSearch = 0, failRef = 0, failNote = 0, failSaveAt = [], blacklisted = [], junkSample = null, rescueRefused = false } = {}) {
   const w = { now: T0, gets: [], creates: [], createCalls: 0, notes: [], marks: [], warns: [], logs: [], blNotes: [], record: null, etag: 0, leads: leads.slice(), cases: cases.slice(), pages: [], rescuePages: [], list400: '' };
   let saveN = 0, runN = 0;
   const fail = (status, code, message) => { const e = new Error(message); e.response = { status, data: { error: { code, message } } }; return e; };
@@ -94,6 +94,7 @@ function world({ access = 200, listAccess = 200, leads = [], cases = [], failCre
     },
     leadsByEmail: async (email) => { if (failSearch > 0) { failSearch--; throw new Error('Monday 500'); } return w.leads.filter((l) => l.email === email); },
     casesByEmail: async (email) => w.cases.filter((c) => c.email.toLowerCase() === String(email).toLowerCase()),
+    casesByRef: async (ref) => { (w.refCalls = w.refCalls || []).push(ref); if (failRef > 0) { failRef--; throw new Error('Monday 500'); } return w.cases.filter((c) => c.caseRef === ref); },
     createLead: async (fields) => {
       w.createCalls++;
       if (w.failCreateFor.includes(fields.email)) throw new Error('Monday refused a column value');
@@ -874,4 +875,117 @@ test('a KNOWN sender (open case or lead) with a job word in the subject still ge
     assert.equal(w.creates.length, 0);
     assert.equal((await EL.getStatus()).skippedBySubject, 0);
   } finally { restore(); }
+});
+
+// ═══════════════════ Replies to the app's case emails (reply-thread change, Faran 2026-11-18) ═══════════════════
+
+test('subjectCaseRefs: refs anywhere in the subject, any case, upper-cased, de-duplicated, multi-part refs; nothing ref-like is invented', () => {
+  assert.deepEqual(EL.subjectCaseRefs('Re: Documents still needed — 2026-SPE-016 · Document Collection Started'), ['2026-SPE-016']);
+  assert.deepEqual(EL.subjectCaseRefs('RE: FW: action required — 2026-cec-ee-110 · Internal Review'), ['2026-CEC-EE-110']);
+  assert.deepEqual(EL.subjectCaseRefs('2026-SV-021 and 2026-sv-021, also 2026-CEC-PS-080'), ['2026-SV-021', '2026-CEC-PS-080']);
+  assert.deepEqual(EL.subjectCaseRefs('(2026-OINP-1234)'), ['2026-OINP-1234'], 'a 4-digit sequence');
+  for (const none of ['', null, 'Study permit question', '2026-SPE-01 (two digits)', 'x2026-SPE-016', 'A-2026-SPE-016', 'Call 416-555-0199', '2026-11-18 meeting']) {
+    assert.deepEqual(EL.subjectCaseRefs(none), [], String(none));
+  }
+});
+
+test('a reply naming a case ref → the note goes on THAT case only — not the sender\'s other open cases; the stage in the subject is ignored', async () => {
+  const w = await startedWorld({ cases: [
+    { id: '100', email: 'parent@gmail.com', caseRef: '2026-SV-001', caseStage: 'Document Collection Started' },
+    { id: '200', email: 'parent@gmail.com', caseRef: '2026-SPE-016', caseStage: 'Internal Review' },
+    { id: '300', email: 'parent@gmail.com', caseRef: '2026-VRE-002', caseStage: 'Application Submitted' },
+  ] });
+  try {
+    w.queue([msg({ id: 'r1', from: 'parent@gmail.com', subject: 'RE: Documents still needed — 2026-SPE-016 · Document Collection Started' })]);
+    const r = await run();
+    assert.equal(r.counts['case-note'], 1);
+    assert.deepEqual(w.notes.map((n) => n.id), ['200'], 'only the named case (the stage in the subject is an older one — ignored)');
+    assert.deepEqual(w.record.seen[key('r1')].ids, ['200']);
+    assert.match(w.notes[0].body, /📧 <b>Email received<\/b>/);
+    assert.doesNotMatch(w.notes[0].body, /not the client email/, 'the case\'s own client');
+    assert.deepEqual(w.refCalls, ['2026-SPE-016']);
+    // no ref → today's fan-out to the open cases
+    w.now += 5 * MIN; w.queue([msg({ id: 'r2', from: 'parent@gmail.com', subject: 'A question' })]);
+    await run();
+    assert.deepEqual(w.notes.slice(1).map((n) => n.id).sort(), ['100', '200', '300']);
+  } finally { restore(); }
+});
+
+test('a reply naming a case from an address that is NOT that case\'s client email (a sponsor) → noted on the case with the warning line; no new lead; job words do not apply', async () => {
+  const w = await startedWorld({ cases: [{ id: '200', email: 'client@gmail.com', caseRef: '2026-SOWP-017', caseStage: 'Document Collection Started' }] });
+  try {
+    w.queue([msg({ id: 'sp', from: 'sponsor.husband@yahoo.com', name: 'Faheem Khan', subject: 'Re: Application – my part (resume attached) — 2026-SOWP-017 · Document Collection Started' })]);
+    const r = await run();
+    assert.deepEqual([r.counts.lead, r.counts['case-note'], r.counts.skipped], [0, 1, 0]);
+    assert.equal(w.creates.length, 0, 'never a new lead');
+    assert.deepEqual(w.notes.map((n) => n.id), ['200']);
+    assert.ok(w.notes[0].body.includes(EL.FOREIGN_SENDER_LINE));
+    assert.equal(EL.FOREIGN_SENDER_LINE, '⚠️ Sent from an address that is not the client email on this case.');
+    assert.ok(w.notes[0].body.indexOf('From: Faheem Khan') < w.notes[0].body.indexOf(EL.FOREIGN_SENDER_LINE), 'right under the From line');
+  } finally { restore(); }
+});
+
+test('a ref that is no Client Master case → today\'s path exactly (a new sender becomes a lead; a known one gets the usual note)', async () => {
+  const w = await startedWorld({ cases: [{ id: '200', email: 'client@gmail.com', caseRef: '2026-SPE-016', caseStage: 'Document Collection Started' }] });
+  try {
+    w.queue([
+      msg({ id: 'u1', from: 'stranger@gmail.com', subject: 'About case 2026-XYZ-999', receivedDateTime: '2026-10-27T14:01:00Z' }),
+      msg({ id: 'u2', from: 'client@gmail.com', subject: 'Re: 2026-ABC-123', receivedDateTime: '2026-10-27T14:02:00Z' }),
+    ]);
+    const r = await run();
+    assert.deepEqual([r.counts.lead, r.counts['case-note']], [1, 1]);
+    assert.equal(w.creates[0].email, 'stranger@gmail.com');
+    assert.deepEqual(w.notes.map((n) => n.id), [w.creates[0].id, '200']);
+    assert.ok(!w.notes.some((n) => n.body.includes(EL.FOREIGN_SENDER_LINE)));
+  } finally { restore(); }
+});
+
+test('the ref look-up FAILS (Monday down) → never read as "no such case": nothing is created or noted, the email is retried and then lands on the named case', async () => {
+  const w = await startedWorld({ failRef: 1, cases: [{ id: '200', email: 'client@gmail.com', caseRef: '2026-SPE-016', caseStage: 'Document Collection Started' }] });
+  try {
+    w.queue([msg({ id: 'f1', from: 'new.address@gmail.com', subject: 'RE: Information Still Needed for Your Case — 2026-SPE-016' })]);
+    const r = await run();
+    assert.equal(r.ok, false);
+    assert.deepEqual([w.creates.length, w.notes.length], [0, 0]);
+    assert.equal(w.record.seen[key('f1')].o, 'pending');
+    w.now += 5 * MIN; w.queue([msg({ id: 'f1', from: 'new.address@gmail.com', subject: 'RE: Information Still Needed for Your Case — 2026-SPE-016' })]);
+    await run();
+    assert.equal(w.creates.length, 0);
+    assert.deepEqual(w.notes.map((n) => n.id), ['200']);
+    assert.ok(w.notes[0].body.includes(EL.FOREIGN_SENDER_LINE));
+  } finally { restore(); }
+});
+
+test('the ref route runs BEFORE the 30-minute "recent" shortcut, notes once (Email ref read first), caps at 3 cases, and a finished case still gets it', async () => {
+  const w = await startedWorld({ cases: [
+    { id: '200', email: 'client@gmail.com', caseRef: '2026-SPE-016', caseStage: 'Cancelled' },
+    { id: '201', email: 'x@gmail.com', caseRef: '2026-A-001', caseStage: '' }, { id: '202', email: 'x@gmail.com', caseRef: '2026-A-002', caseStage: '' },
+    { id: '203', email: 'x@gmail.com', caseRef: '2026-A-003', caseStage: '' }, { id: '204', email: 'x@gmail.com', caseRef: '2026-A-004', caseStage: '' },
+  ] });
+  try {
+    // a new person makes a lead (the "recent" memory), then replies about a case 2 minutes later
+    w.queue([msg({ id: 'rr1', from: 'ref.route.newcomer@gmail.com', subject: 'Hello', receivedDateTime: '2026-10-27T14:01:00Z' }),
+             msg({ id: 'rr2', from: 'ref.route.newcomer@gmail.com', subject: 'Re: 2026-SPE-016', receivedDateTime: '2026-10-27T14:02:00Z' })]);
+    const r0 = await run();
+    assert.equal(w.creates.length, 1, JSON.stringify(r0));
+    assert.deepEqual(w.notes.map((n) => n.id), [w.creates[0].id, '200'], 'the case named, though Cancelled and though the sender has a fresh lead');
+    // the same email again (a copy): its Email ref is on the case — no second note
+    w.now += 5 * MIN; w.queue([msg({ id: 'rr2', graphId: 'copy', from: 'ref.route.newcomer@gmail.com', subject: 'Re: 2026-SPE-016', receivedDateTime: '2026-10-27T14:02:00Z' })]);
+    await run();
+    assert.equal(w.notes.length, 2);
+    // four refs in one subject: the first three cases only
+    w.now += 5 * MIN; w.queue([msg({ id: 'rrmany', from: 'x@gmail.com', subject: 'Re: 2026-A-001, 2026-A-002, 2026-A-003, 2026-A-004' })]);
+    await run();
+    assert.deepEqual(w.notes.slice(2).map((n) => n.id), ['201', '202', '203']);
+  } finally { restore(); }
+});
+
+test('wiring: the ref look-up is the Client Master case-ref column and throws on failure; the default io reaches clientMasterService.findCasesByCaseRef', () => {
+  const src = fs.readFileSync(require.resolve('../src/services/emailLeadsService.js'), 'utf8');
+  assert.match(src, /casesByRef: \(ref\) => require\('\.\/clientMasterService'\)\.findCasesByCaseRef\(ref\)/);
+  const cm = fs.readFileSync(require.resolve('../src/services/clientMasterService.js'), 'utf8');
+  assert.match(cm, /async function findCasesByCaseRef\(caseRef\) \{[\s\S]*?return findCasesByColumn\(CASE_REF_COL, ref\);/);
+  // the ref route comes before the "recent" / pickTargets path in take()
+  const t = src.slice(src.indexOf('async function take('));
+  assert.ok(t.indexOf('subjectCaseRefs(msg.subject)') > 0 && t.indexOf('subjectCaseRefs(msg.subject)') < t.indexOf('pickTargets(await knownPerson(person))'));
 });
