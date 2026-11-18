@@ -197,12 +197,25 @@ test('Stage 1: the app\'s own KEPT copies (client emails in the mailbox\'s Sent 
     const copy = (o) => ({ ...msg(o), toRecipients: [{ emailAddress: { address: 'client@gmail.com' } }], singleValueExtendedProperties: [{ id: 'String {ea1cfd10-69d2-41c0-a9fc-1fc4288e039e} Name TdotCaseItemId', value: '555' }] });
     // the kept copy (from the office mailbox) — and even a Sent Items item whose From is a client address
     w.queue([copy({ id: 'kept', from: 'info@tdotimm.com', parentFolderId: 'F-sentitems', subject: 'Documents still needed — 2026-SPE-016 · Internal Review' }),
-      copy({ id: 'odd', from: 'client@gmail.com', parentFolderId: 'F-sentitems', subject: 'Re: Documents still needed — 2026-SPE-016' })]);
+      copy({ id: 'odd', from: 'client@gmail.com', parentFolderId: 'F-sentitems', subject: 'Re: Documents still needed — 2026-SPE-016' }),
+      msg({ id: 'junked', from: 'spammy@gmail.com', parentFolderId: 'F-junkemail', subject: 'You won' })]);
     const r = await run();
     assert.equal(r.ok, true);
     assert.equal(w.creates.length, 0); assert.equal(w.notes.length, 0);
-    assert.equal(r.counts.skipped, 2);
+    assert.equal(r.counts.skipped, 3);
     assert.ok(w.gets.some((g) => g.url.includes('/mailFolders/sentitems?$select=id')), 'the Sent Items folder id is looked up to be left out');
+    // the kept copies are marked seen (the overlap re-list needs it) but leave NO row on the run log — they would
+    // crowd the real leads / notes off the status page; any other left-out folder (Junk) is still logged
+    assert.equal(w.record.seen[key('kept')].o, 'skipped'); assert.equal(w.record.seen[key('odd')].o, 'skipped');
+    assert.deepEqual(w.record.log.map((e) => [e.from, e.outcome]), [['spammy@gmail.com', 'skipped']]);
+    assert.ok(!JSON.stringify(w.record.log).includes('2026-SPE-016'), 'no kept copy\'s subject on the log');
+    assert.ok(!JSON.stringify(await EL.getStatus()).includes('2026-SPE-016'), 'nor on the status page');
+    // listed again by the overlap → already done: still nothing logged, nothing counted
+    w.now += 5 * MIN;
+    w.queue([made.kept, made.odd]);
+    const r2 = await run();
+    assert.equal(r2.counts.skipped, 0);
+    assert.equal(w.record.log.length, 1);
   } finally { restore(); }
 });
 

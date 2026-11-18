@@ -35,7 +35,8 @@
  *        stamp — sent without it", logged once).
  *      403 / 404 from the office mailbox (sending as it refused, or no such mailbox) → once more the usual
  *        way: MS_FROM_EMAIL, saveToSentItems:false, no stamp, the same Reply-To. For the next 60 minutes
- *        client emails go straight the usual way; the refusal is logged at most once an hour.
+ *        client emails go straight the usual way; the refusal is logged at most once an hour — also when
+ *        that one resend fails (the error then goes up as today's).
  *      401 → as before (no resend here; the error goes up — a fresh token is fetched by the expiry rule).
  *      429, 5xx, a timeout or a network error → NO resend: Microsoft may have taken the email.
  *  - Returns { sendId, via: 'client' | 'fallback' | 'default', stamped }. sendId is the TdotSendId on
@@ -214,14 +215,26 @@ async function sendEmail({ to, subject, html, replyTo, attachments, tag, testCli
     return { sendId: null, via, stamped: false };
   };
 
-  /** 403/404 from the office mailbox: nothing was sent — once more the usual way, and remember it for an hour. */
+  /**
+   * 403/404 from the office mailbox: nothing was sent — once more the usual way, and remember it for an hour.
+   * The refusal is logged (at most once an hour) whether that resend goes or fails — otherwise a failed
+   * resend would leave the next hour of client emails skipping the office mailbox with no log line.
+   */
   const sendAsRefused = async () => {
     _mem.sendAsRefusedAt = io.now(); _mem.sendAsBox = box;
-    const out = await usualWay('fallback');
-    if (io.now() - _mem.sendAsLoggedAt >= SEND_AS_PAUSE_MS) {
+    const note = (how) => {
+      if (io.now() - _mem.sendAsLoggedAt < SEND_AS_PAUSE_MS) return;
       _mem.sendAsLoggedAt = io.now();
-      console.warn(`[Mail] Microsoft refused sending as ${box} — sent from the usual address`);
+      console.warn(`[Mail] Microsoft refused sending as ${box} — ${how}`);
+    };
+    let out;
+    try {
+      out = await usualWay('fallback');
+    } catch (e) {
+      note('the resend from the usual address failed too');
+      throw e;
     }
+    note('sent from the usual address');
     return out;
   };
 

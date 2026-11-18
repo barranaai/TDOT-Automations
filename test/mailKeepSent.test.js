@@ -258,6 +258,14 @@ test('two refusals in the same moment log once; a failing fallback goes up in to
   await withMail({ env: { CLIENT_MAIL_FROM: OFFICE }, answers: [{ status: 403 }, { status: 503, code: 'ServiceUnavailable' }] }, async (h) => {
     await assert.rejects(() => mail.sendEmail({ ...MSG, tag: TAG }), /^Error: sendMail failed \(503\): /);
     assert.equal(h.calls.length, 2, 'the usual-way resend is not retried');
+    // the refusal is still logged once, although its resend failed — the next hour is not silent
+    assert.deepEqual(h.warns, [`[Mail] Microsoft refused sending as ${OFFICE} — the resend from the usual address failed too`]);
+    assert.ok(mail._state().sendAsRefusedAt > 0);
+    // within the hour: straight the usual way (one request, no copy) — and no second warning
+    h.now += 30 * 60 * 1000;
+    assert.deepEqual(await mail.sendEmail({ ...MSG, tag: TAG }), { sendId: null, via: 'fallback', stamped: false });
+    assert.equal(h.calls.length, 3); assert.equal(h.calls[2].url, URL_OF(NOREPLY)); assert.equal(h.calls[2].raw, todayRaw());
+    assert.equal(h.warns.length, 1, 'still one warning within the hour');
   });
 });
 

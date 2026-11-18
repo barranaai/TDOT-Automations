@@ -227,8 +227,30 @@ test('Stage 1: every LIVE client send passes its case stamp (tag:) — exactly t
     (got[s.file] = got[s.file] || []).push(m[0]);
   }
   assert.deepEqual(got, TAGS);
-  for (const s of retired) assert.doesNotMatch(s.args, /\btag:/, `${s.file}:${s.line} is retired — no stamp`);
-  for (const s of sites.filter((x) => STAFF_ONLY[x.file] && x.file !== 'src/routes/clientMailRoutes.js')) assert.doesNotMatch(s.args, /\btag:|testClientFrom/, `${s.file}:${s.line} is a staff alert — no stamp, no copy`);
+  // no `tag:` key, no shorthand `tag`, no spread that could carry one (sendEmail treats ANY object tag as a client email)
+  for (const s of retired) assert.doesNotMatch(s.args, /\btag\b|\.\.\.|testClientFrom/, `${s.file}:${s.line} is retired — no stamp`);
+  for (const s of sites.filter((x) => STAFF_ONLY[x.file] && x.file !== 'src/routes/clientMailRoutes.js')) assert.doesNotMatch(s.args, /\btag\b|\.\.\.|testClientFrom/, `${s.file}:${s.line} is a staff alert — no stamp, no copy`);
+  // an aliased import hides its real send from the sendEmail( scan: the one alias today is pinned by its exact call,
+  // and any NEW alias (or a sendEmail passed around uncalled) fails here until it is added to the scan
+  const gate = read('src/services/stageGateService.js');
+  assert.match(gate, /await msSend\(\{ to, subject, html, replyTo: EMAIL_REPLY_TO \|\| undefined \}\);/);
+  assert.equal((gate.match(/\bmsSend\s*\(/g) || []).length, 1, 'stageGateService: the one real send is its helper');
+  assert.doesNotMatch(gate, /\btag\b|testClientFrom/, 'stageGateService sends team emails — no stamp, no copy');
+  const aliases = [], uncalled = [];
+  (function walk(d) {
+    for (const f of fs.readdirSync(d)) {
+      const p = path.join(d, f);
+      if (fs.statSync(p).isDirectory()) { walk(p); continue; }
+      if (!f.endsWith('.js')) continue;
+      const rel = path.relative(ROOT, p).split(path.sep).join('/');
+      if (rel === 'src/services/microsoftMailService.js') continue;
+      const src = fs.readFileSync(p, 'utf8');
+      if (/\{\s*sendEmail\s*:\s*\w+/.test(src)) aliases.push(rel);
+      if (/[=:,(]\s*(?:require\([^)]*\)|\w+)\.sendEmail\s*[;,)\n]/.test(src)) uncalled.push(rel);
+    }
+  })(path.join(ROOT, 'src'));
+  assert.deepEqual(aliases, ['src/services/stageGateService.js'], 'sendEmail imported under another name — add the file to this scan');
+  assert.deepEqual(uncalled, [], 'sendEmail passed around without a call — add the file to this scan');
   // the test send: a tag ONLY under the explicit "client": true flag
   const t = sites.filter((x) => x.file === 'src/routes/clientMailRoutes.js');
   assert.equal(t.length, 1);

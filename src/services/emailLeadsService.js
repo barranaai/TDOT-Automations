@@ -145,7 +145,8 @@ function skipDomains() {
 
 /** Our own addresses outside our domain: the e-transfer inbox, the app's reply-to and sending addresses (the
  *  usual one and CLIENT_MAIL_FROM, the client emails' mailbox), any listed. The app's own kept copies sit in that
- *  mailbox's Sent Items, which is never read (excludedFolderIds) — this is a second guard. */
+ *  mailbox's Sent Items, which the new-mail listing DOES return: they are skipped by folder (classify, via
+ *  excludedFolderIds) and are never a lead or a note — this is a second guard. */
 function skipAddresses() {
   const list = [process.env.ETRANSFER_EMAIL || 'admstdot@gmail.com', process.env.EMAIL_REPLY_TO, process.env.MS_FROM_EMAIL, process.env.CLIENT_MAIL_FROM, ...envList('EMAIL_LEADS_SKIP_ADDRESSES')];
   return new Set(list.map((a) => String(a || '').trim().toLowerCase()).filter(Boolean));
@@ -479,12 +480,14 @@ function accessHint(status, box = mailbox()) {
   return '';
 }
 
-let _folders = { at: 0, box: '', ids: new Set(), junk: '' };
+/** The left-out folders' ids (names order: junk = [0], sent = [2] — the mailbox's own Sent Items, where the app's
+ *  kept client-email copies sit: listed, skipped by folder, never a lead or a note, and kept off the run log). */
+let _folders = { at: 0, box: '', ids: new Set(), junk: '', sent: '' };
 async function excludedFolderIds(box) {
   if (_folders.box === box && io.now() - _folders.at < FOLDER_TTL_MS) return _folders.ids;
   const names = ['junkemail', 'drafts', 'sentitems', 'deleteditems', 'outbox'];
   const got = await Promise.all(names.map((n) => graphGet(`${GRAPH}/users/${encodeURIComponent(box)}/mailFolders/${n}?$select=id`)));
-  _folders = { at: io.now(), box, ids: new Set(got.map((f) => f && f.id).filter(Boolean)), junk: (got[0] && got[0].id) || '' };
+  _folders = { at: io.now(), box, ids: new Set(got.map((f) => f && f.id).filter(Boolean)), junk: (got[0] && got[0].id) || '', sent: (got[2] && got[2].id) || '' };
   return _folders.ids;
 }
 
@@ -697,6 +700,7 @@ async function run() {
   let excluded;
   try { excluded = await excludedFolderIds(box); }
   catch (err) { return noAccess(err); }
+  const sentFolder = _folders.box === box ? _folders.sent : '';   // this run's own Sent Items id (no log rows for it)
 
   // 2. The record of what was done. A first record is written only after a
   //    LIST worked — "from now on" starts when the app can really read mail.
@@ -755,7 +759,12 @@ async function run() {
       if (mode === 'main' || mode === 'retry') {
         const folder = /^in Junk/.test(c.reason);
         state.seen[key] = { o: 'skipped', at: nowIso(), ...(folder ? { folder: true } : {}) };
-        logEntry(msg, 'skipped', { reason: c.reason }); counts.skipped++; dirty = true;
+        // The mailbox's own Sent Items (the app's kept client-email copies, Stage 1): still marked seen (the
+        // overlap re-list and the per-run budget need it) and counted, but no log row — they would crowd
+        // the real leads / notes off the status page's recent list.
+        const ownSent = !!sentFolder && msg.parentFolderId === sentFolder;
+        if (!ownSent) logEntry(msg, 'skipped', { reason: c.reason });
+        counts.skipped++; dirty = true;
       }
       advance(); return true;
     }
@@ -943,7 +952,7 @@ async function getStatus() {
 async function checkAccess() {
   const box = mailbox();
   try {
-    _folders = { at: 0, box: '', ids: new Set(), junk: '' };
+    _folders = { at: 0, box: '', ids: new Set(), junk: '', sent: '' };
     const excluded = await excludedFolderIds(box);
     const { page, headers } = await listPage((select) => listUrl(box, isoSecond(io.now() - 7 * 24 * 3600 * 1000), { top: 1, select }));
     const sample = ((page && page.value) || [])[0];
@@ -971,5 +980,5 @@ module.exports = {
   // pure helpers + seams (tests)
   classify, skipReason, subjectSkipWord, normalSubject, skipWords, senderOf, headerMap, leadNameFor, bodyText, situationText, noteHtml, messageRef, pickTargets, subjectCaseRefs, listUrl, rescueUrl, byMessageIdUrl, accessHint,
   DEFAULT_SKIP_DOMAINS, FINISHED_STAGES, FOREIGN_SENDER_LINE, STATE_PATH, MAX_TRIES, MAX_PER_RUN, LEASE_MS, GIVE_UP_AFTER_MS, INSTANCE, io,
-  _reset: () => { _running = false; _status = { at: null, ok: null, outcome: 'not run yet', error: '', hint: '', counts: null }; for (const k of Object.keys(_quietUntil)) delete _quietUntil[k]; _folders = { at: 0, box: '', ids: new Set(), junk: '' }; },
+  _reset: () => { _running = false; _status = { at: null, ok: null, outcome: 'not run yet', error: '', hint: '', counts: null }; for (const k of Object.keys(_quietUntil)) delete _quietUntil[k]; _folders = { at: 0, box: '', ids: new Set(), junk: '', sent: '' }; },
 };
