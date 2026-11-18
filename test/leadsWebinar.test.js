@@ -100,16 +100,18 @@ function withWebIo(fn) {
 test('the standard webinar text: no promises, no "reply", no link or date; staff text replaces it; an empty box means the standard text', () => {
   const t = web.STANDARD_TEXT;
   assert.ok(t.length > 200 && t.length < web.MAX_LEN);
-  assert.ok(!/\breply\b/i.test(t), 'the mailbox is not read — never "reply"');
+  // replies are wanted since 2026-11-18 (Reply-To info@): the text asks for a reply, never "email us at info@"
+  assert.match(t, /please reply to this email/);
+  assert.doesNotMatch(t, /email us at/i);
   assert.ok(!/https?:|guarantee|will be approved|eligible/i.test(t));
-  assert.match(t, /info@tdotimm\.com/);
   assert.match(t, /paid/i);
   assert.equal(web.bodyText('  '), t);
   assert.equal(web.bodyText(' Hello\r\nthere '), 'Hello\nthere');
   const html = web.emailHtml({ firstName: '<Asha>', text: 'One & two\n\nThree <b>' });
   assert.ok(html.includes('Hi &lt;Asha&gt;,') && html.includes('<p>One &amp; two</p><p>Three &lt;b&gt;</p>'));
   assert.ok(!/Choose your consultation time|consultation fee|\/book\//i.test(html), 'no booking button, no fee, no booking link');
-  assert.ok(html.includes("Please don't reply to this email"));
+  assert.ok(!html.includes("don't reply"));
+  assert.ok(html.includes(require('../src/utils/clientContact').replyNoticeHtml('lead', { margin: '24px 0 0' })), 'the lead notice');
 });
 
 test('send: only to a lead whose outcome is Webinar and that has an email; the email goes first, then the note that the Leads list reads back', async () => {
@@ -120,6 +122,7 @@ test('send: only to a lead whose outcome is Webinar and that has an email; the e
     const r = await web.send({ leadId: '5', lead: { webinar: 'Yes', email: 'a@x.co', fullName: 'Asha Rao' }, message: '', by: 'Melanie' });
     assert.deepEqual(r, { ok: true, to: 'a@x.co', day: '2026-11-12', noted: true });
     assert.deepEqual([sent[0].to, sent[0].subject], ['a@x.co', web.SUBJECT]);
+    assert.equal(sent[0].replyTo, 'info@tdotimm.com', 'replies reach the office inbox');
     assert.ok(sent[0].html.includes('Hi Asha,') && sent[0].html.includes('upcoming immigration webinar'));
     assert.deepEqual(notes, [['5', '📧 <b>Webinar email sent</b> to a@x.co on 2026-11-12 by Melanie.']]);
     assert.deepEqual(status.classify(notes[0][1].replace(/<[^>]+>/g, '')), { kind: 'webinar' });

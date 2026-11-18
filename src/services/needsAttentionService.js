@@ -695,7 +695,7 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
       itemIds: [], caseRef: '', client: `Reminder Templates board — the "${row}" row`, stage: '', payment: '', manager: '', rows: [],
       since: '',
       why: `The ${row} text on the Monday Reminder Templates board cannot be used (${oneLine(t.reason, 160) || 'the row does not pass the checks'}). The reminders use the built-in text instead.`,
-      todo: 'Fix that row on the Reminder Templates board: plain text, the body must contain {MissingList}, and it must not tell the client to reply. It leaves the list at the next check (07:00, or Check now once the board has been re-read — up to half an hour after the fix).',
+      todo: 'Fix that row on the Reminder Templates board: plain text, and the body must contain {MissingList}. It leaves the list at the next check (07:00, or Check now once the board has been re-read — up to half an hour after the fix).',
     });
   }
 

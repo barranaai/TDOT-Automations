@@ -675,8 +675,9 @@ async function sendBookingConfirmation(lead, meeting, slotStr, meetingType) {
       <p style="margin-top:24px">Please complete this short form before your call so we can make the most of your time:</p>
       <p><a href="${preUrl}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Complete pre-consultation form</a></p>
       <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">${isInPerson ? 'See you soon.' : isPhone ? 'Speak to you then.' : 'See you on the call.'}</p>
+      ${require('../utils/clientContact').replyNoticeHtml('lead', { margin: '16px 0 0' })}
     </div></div>`;
-  await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation is booked', html });
+  await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation is booked', html, replyTo: require('../utils/clientContact').CLIENT_REPLY_TO });
 }
 
 /**
@@ -707,8 +708,9 @@ async function resendConsultationLinks(leadId) {
       <p style="margin-top:20px">Please complete this short form before your call so we can make the most of your time:</p>
       <p><a href="${e(preUrl)}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Complete pre-consultation form</a></p>
       <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">See you on the call.</p>
+      ${require('../utils/clientContact').replyNoticeHtml('lead', { margin: '16px 0 0' })}
     </div></div>`;
-  await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation links', html });
+  await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation links', html, replyTo: require('../utils/clientContact').CLIENT_REPLY_TO });
   console.log(`[Consult] Re-sent consultation links to ${lead.email} for lead ${leadId}`);
 }
 
@@ -858,11 +860,11 @@ async function _sendConsultationPackage(leadId, { overrides = {} } = {}) {
           ? `<b>Please complete the pre-consultation form at least 24 hours before your scheduled consultation.</b> If it is not completed in time, your consultation may be cancelled.`
           : `<b>Please complete both steps at least 24 hours before your scheduled consultation.</b> If they are not completed in time, your consultation may be cancelled.`}
       </div>
-      <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:20px">Any questions? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
+      ${require('../utils/clientContact').replyNoticeHtml('lead', { margin: '20px 0 0' })}
     </div></div>`;
 
   try {
-    await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation — details, form & agreement', html });
+    await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation — details, form & agreement', html, replyTo: require('../utils/clientContact').CLIENT_REPLY_TO });
   } catch (err) {
     // The signing request may already be out. The caller must know, so it never
     // writes a record that forgets the envelope — that is how a client is asked
@@ -1504,7 +1506,8 @@ async function sendReminderWindow(label, minH, maxH, markerTag) {
         await microsoftMail.sendEmail({
           to: lead.email,
           subject: `Reminder: your TDOT consultation (${L.bookedSlot} Toronto)`,
-          html: `<p>Hi ${escapeHtml((lead.name || 'there').split(' ')[0])}, this is a reminder of your consultation on <b>${escapeHtml(L.bookedSlot)}</b> (Toronto time).</p>${whereLine}`,
+          html: `<p>Hi ${escapeHtml((lead.name || 'there').split(' ')[0])}, this is a reminder of your consultation on <b>${escapeHtml(L.bookedSlot)}</b> (Toronto time).</p>${whereLine}${require('../utils/clientContact').replyNoticeHtml('lead', { margin: '16px 0 0' })}`,
+          replyTo: require('../utils/clientContact').CLIENT_REPLY_TO,
         });
       }
       await mondayApi.query(`mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
@@ -1534,7 +1537,8 @@ async function sendPreConsultReminders() {
       if (!tok) { console.warn(`[Consult] pre-consult chase skipped for ${L.id}: no link code could be made`); continue; }
       const preUrl = `${RENDER_URL}/consult/${lead.id}?t=${encodeURIComponent(tok)}`;
       if (lead.email) await microsoftMail.sendEmail({ to: lead.email, subject: 'Please complete your pre-consultation form',
-        html: `<p>Hi ${escapeHtml((lead.name || 'there').split(' ')[0])}, please complete your pre-consultation form before your call:</p><p><a href="${preUrl}">${preUrl}</a></p>` });
+        html: `<p>Hi ${escapeHtml((lead.name || 'there').split(' ')[0])}, please complete your pre-consultation form before your call:</p><p><a href="${preUrl}">${preUrl}</a></p>${require('../utils/clientContact').replyNoticeHtml('lead', { margin: '16px 0 0' })}`,
+        replyTo: require('../utils/clientContact').CLIENT_REPLY_TO });
       await mondayApi.query(`mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
         { itemId: String(L.id), body: '📋 pre-consult chase sent' });
       sent++;

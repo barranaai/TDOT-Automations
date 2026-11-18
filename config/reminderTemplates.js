@@ -10,9 +10,10 @@
  *
  * Reminder 1 / Reminder 2 / Final are Gauri's texts (2026-11-07), personalised:
  * "Hello {ClientName}," and the client's own lists. Changed from her drafts only
- * where a rule forces it — the second reminder's "Please reply to this email
- * once…" became "Please let us know once…" (the sender is a no-reply mailbox),
- * the final names {LastDay} in its "immediately" sentence (the Needs-attention
+ * where a rule forced it — the second reminder's "Please reply to this email
+ * once…" became "Please let us know once…" (then a no-reply sender; replies are
+ * welcome since 2026-11-18, but the text is unchanged — the live board holds the
+ * team's own copy), the final names {LastDay} in its "immediately" sentence (the Needs-attention
  * rule 'final-last-day-passed' reads that date), two grammar fixes in the final
  * ("and/or your completed questionnaire", "started again, and additional charges
  * will apply"), her first reminder's lines 3 and 4 joined into one paragraph,
@@ -34,9 +35,11 @@
  * (with a warning) when the client's questionnaire is unfinished — or, when the
  * text has no documents list either, before the sign-off. Keep each
  * list token on its own paragraph. The portal button and the "email us"
- * closing line are added by the app OUTSIDE the template, so they cannot be
- * edited away. Never write "just reply" / "reply to this email": the sender is
- * a no-reply mailbox (src/utils/clientContact.js).
+ * notice ("Important: Please reply directly to this email…", src/utils/clientContact.js)
+ * are added by the app OUTSIDE the template, so they cannot be edited away.
+ * Subjects: the app appends " — <case ref> · <Case Stage>" to the final subject
+ * (src/utils/clientSubject.js), so the defaults no longer end "— {CaseRef}"; a
+ * board subject that still has it is fine — the ref is taken out and appended once.
  */
 
 const TOKENS = Object.freeze(['ClientName', 'CaseRef', 'CaseType', 'MissingList', 'QuestionnaireList', 'MissingCount', 'Deadline', 'PromisedDate', 'LastDay', 'PortalLink', 'StaffName']);
@@ -47,7 +50,7 @@ const LEVEL_ROWS = Object.freeze({ 1: 'Reminder 1', 2: 'Reminder 2', 3: 'Final',
 
 const DEFAULTS = Object.freeze({
   'Reminder 1': {
-    subject: 'Reminder: documents and questionnaire for your {CaseType} application — {CaseRef}',
+    subject: 'Reminder: documents and questionnaire for your {CaseType} application',
     body: `Hello {ClientName},
 
 I hope you are doing well.
@@ -70,7 +73,7 @@ TDOT Immigration Services`,
   },
 
   'Reminder 2': {
-    subject: 'Second reminder: documents and questionnaire for your {CaseType} application — {CaseRef}',
+    subject: 'Second reminder: documents and questionnaire for your {CaseType} application',
     body: `Hello {ClientName},
 
 Please let us know once you have uploaded your documents and completed the questionnaire.
@@ -96,7 +99,7 @@ TDOT Immigration Services`,
   // nothing and starts no timer after {LastDay} — staff decide, by hand. Gauri's
   // text (2026-11-07) replaced the earlier refund / stuck-applications wording.
   'Final': {
-    subject: 'Final reminder: please complete your documents and questionnaire by {LastDay} — {CaseRef}',
+    subject: 'Final reminder: please complete your documents and questionnaire by {LastDay}',
     body: `Hello {ClientName},
 
 This is the final reminder regarding your pending documents and questionnaire required to proceed with your application.
@@ -122,7 +125,7 @@ TDOT Immigration Services`,
 
   // Sent by the app itself (real deadline, under 50 % uploaded) — no staff name.
   'Automatic': {
-    subject: 'Documents needed for your {CaseType} application — {CaseRef}',
+    subject: 'Documents needed for your {CaseType} application',
     body: `Dear {ClientName},
 
 Your {CaseType} application must be submitted by {Deadline}. We can only proceed once we have the documents below, which are still missing:

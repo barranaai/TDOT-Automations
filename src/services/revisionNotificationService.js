@@ -5,7 +5,8 @@ const mondayApi     = require('./mondayApi');
 const { clientMasterBoardId } = require('../../config/monday');
 
 const BASE_URL       = process.env.RENDER_URL    || 'https://tdot-automations.onrender.com';
-const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
+const { CLIENT_REPLY_TO, replyNoticeHtml } = require('../utils/clientContact');
+const { caseSubject } = require('../utils/clientSubject');
 
 // Batch window — wait this many ms after the last change before sending
 const BATCH_DELAY_MS = 2 * 60 * 1000; // 2 minutes
@@ -78,7 +79,8 @@ async function getClientByCaseRef(caseRef) {
            column_values(ids: [
              "text_mm0xw6bp",
              "text_mm142s49",
-             "text_mm0x6haq"
+             "text_mm0x6haq",
+             "color_mm0x8faa"
            ]) { id text }
          }
        }
@@ -95,6 +97,7 @@ async function getClientByCaseRef(caseRef) {
     clientEmail:  col('text_mm0xw6bp'),
     caseRef:      col('text_mm142s49'),
     accessToken:  col('text_mm0x6haq'),
+    caseStage:    col('color_mm0x8faa'),   // Case Stage, read when the batch is sent — for the subject
   };
 }
 
@@ -141,7 +144,7 @@ function buildRevisionEmailHtml({ clientName, caseRef, accessToken, questionnair
     <p style="margin:0 0 20px;">
 ${tokenParam ? `<a href="${documentsUrl}" style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-size:.9rem;">
         Upload Documents →
-      </a>` : `Need your portal link again? Please ${require('../utils/clientContact').EMAIL_US}.`}
+      </a>` : 'Need your portal link again? Reply to this email and we will send it to you.'}
     </p>` : '';
 
   const totalCount = questionnaire.length + documents.length;
@@ -161,9 +164,9 @@ ${tokenParam ? `<a href="${documentsUrl}" style="display:inline-block;padding:10
       </p>
       ${qSection}
       ${dSection}
-      <p style="margin:24px 0 0;font-size:.82rem;color:#94a3b8;border-top:1px solid #f1f5f9;padding-top:16px;">
-        If you have any questions please ${require('../utils/clientContact').EMAIL_US} or contact your case manager. ${require('../utils/clientContact').NO_REPLY}
-        <br>TDOT Immigration Services
+      ${replyNoticeHtml('items', { margin: '24px 0 0' })}
+      <p style="margin:16px 0 0;font-size:.82rem;color:#94a3b8;border-top:1px solid #f1f5f9;padding-top:16px;">
+        TDOT Immigration Services
       </p>
     </div>
   </div>
@@ -230,13 +233,14 @@ async function flushQueue(caseRef) {
   }
 
   const totalCount = questionnaire.length + documents.length;
-  const subject    = `Action Required: ${totalCount} item${totalCount !== 1 ? 's' : ''} need${totalCount === 1 ? 's' : ''} your attention — Case ${caseRef}`;
+  const subject    = caseSubject(`Action Required: ${totalCount} item${totalCount !== 1 ? 's' : ''} need${totalCount === 1 ? 's' : ''} your attention`,
+    client.caseRef || caseRef, client.caseStage);
 
   await sendEmail({
     to:      client.clientEmail,
     subject,
     html:    buildRevisionEmailHtml({ ...client, questionnaire, documents }),
-    replyTo: EMAIL_REPLY_TO || undefined,
+    replyTo: CLIENT_REPLY_TO,
   });
 
   // Only remove from queue AFTER successful send — prevents data loss on failure

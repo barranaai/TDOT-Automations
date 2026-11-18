@@ -65,7 +65,8 @@ const { clientMasterBoardId } = require('../../config/monday');
 
 const ESC_BOARD_ID   = process.env.MONDAY_ESCALATION_MATRIX_BOARD_ID || '18402406604';
 const BASE_URL       = process.env.RENDER_URL || 'https://tdot-automations.onrender.com';
-const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
+const { CLIENT_REPLY_TO, replyNoticeHtml } = require('../utils/clientContact');
+const { caseSubject } = require('../utils/clientSubject');
 
 // ─── Column IDs — Escalation Routing Matrix Board ────────────────────────────
 
@@ -435,15 +436,19 @@ async function applyRule(item, rule) {
     await notifyAll(supIds, taskText, itemId);
   }
 
+  // The stage the board shows when the emails go out: the rule's new stage when it
+  // just changed it (step 5 above), else the stage read for this pass — for the subject.
+  const stageNow = rule.changeCaseStatus && rule.changeCaseStatus !== 'No Change' ? rule.changeCaseStatus : col(CM.caseStage);
+
   // ── 7. Send Client Reminder email ────────────────────────────────────────────
   if (rule.sendClientReminder && clientEmail && rule.clientMsgTemplate) {
     const body = renderTemplate(rule.clientMsgTemplate, { clientName, caseType, caseRef });
     try {
       await sendEmail({
         to:      clientEmail,
-        subject: `Important update regarding your case – ${caseRef}`,
+        subject: caseSubject('Important update regarding your case', caseRef, stageNow),
         html:    buildClientEmailHtml(body, caseRef, clientName, false, { accessToken: col(CM.accessToken) }),
-        replyTo: EMAIL_REPLY_TO || undefined,
+        replyTo: CLIENT_REPLY_TO,
       });
       console.log(`[EscRouting] ✉ Client reminder sent to ${clientEmail} for ${caseRef}`);
     } catch (err) {
@@ -459,9 +464,9 @@ async function applyRule(item, rule) {
     try {
       await sendEmail({
         to:      clientEmail,
-        subject: `Final Notice — Immediate action required — ${caseRef}`,
+        subject: caseSubject('Final Notice — Immediate action required', caseRef, stageNow),
         html:    buildClientEmailHtml(body, caseRef, clientName, true, { accessToken: col(CM.accessToken) }),
-        replyTo: EMAIL_REPLY_TO || undefined,
+        replyTo: CLIENT_REPLY_TO,
       });
       console.log(`[EscRouting] ✉ Final notice sent to ${clientEmail} for ${caseRef}`);
     } catch (err) {
@@ -505,11 +510,11 @@ function buildClientEmailHtml(bodyText, caseRef, clientName, isFinal = false, { 
   <div class="btn-row">
     ${qLink ? `<a href="${qLink}"  class="btn btn-q">Complete Questionnaire</a>` : ''}
     ${docLink ? `<a href="${docLink}" class="btn btn-d">Upload Documents</a>` : ''}
-    ${!qLink && !docLink ? `<p>Need your portal link again? Please ${require('../utils/clientContact').EMAIL_US}.</p>` : ''}
+    ${!qLink && !docLink ? '<p>Need your portal link again? Reply to this email and we will send it to you.</p>' : ''}
   </div>
+  ${replyNoticeHtml('items', { margin: '0 0 14px' })}
   <hr>
   <p style="font-size:.84rem;color:#4b5563">
-    Need help? Please ${require('../utils/clientContact').EMAIL_US} or contact your case officer directly. ${require('../utils/clientContact').NO_REPLY}<br>
     Case Reference: <strong>${caseRef}</strong>
   </p>
   <p class="footer">TDOT Immigration &nbsp;|&nbsp; This email was sent regarding your active immigration case.</p>

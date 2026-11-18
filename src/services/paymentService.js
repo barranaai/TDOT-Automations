@@ -306,10 +306,12 @@ async function sendRetainerPaymentLink(leadId, { amountCents, label } = {}) {
         <p>Hi ${esc((lead.fullName || 'there').split(' ')[0])},</p>
         <p>Thank you for signing your retainer agreement. To begin work on your file, please complete your ${label ? `first payment (<b>${esc(label)}</b>)` : 'retainer payment'} of <strong>${dollars}</strong>:</p>
         <p><a href="${esc(url)}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Pay your retainer securely</a></p>
-        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Once your payment is received, we'll begin onboarding right away. Questions about the fee? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
+        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Once your payment is received, we'll begin onboarding right away.</p>
+        ${require('../utils/clientContact').replyNoticeHtml('case', { margin: '16px 0 0' })}
       </div></div>`;
     try {
-      await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration retainer payment link', html });
+      // retired sender (no caller) — wording + Reply-To only, no case-subject read added
+      await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration retainer payment link', html, replyTo: require('../utils/clientContact').CLIENT_REPLY_TO });
     } catch (err) {
       // The link is preserved (Square + the backup note above), so no lock — but
       // make the failed delivery VISIBLE so staff re-share, not just a log line.

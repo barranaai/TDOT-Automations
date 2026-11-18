@@ -26,10 +26,12 @@ const CM = {
   caseSubType: 'dropdown_mm0x4t91',
   clientEmail: 'text_mm0xw6bp',
   accessToken: 'text_mm0x6haq',
+  caseStage:   'color_mm0x8faa',   // Case Stage — the exact label goes in the correction email's subject
 };
 
 const BASE_URL       = process.env.RENDER_URL    || 'https://tdot-automations.onrender.com';
-const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
+const { CLIENT_REPLY_TO, replyNoticeHtml } = require('../utils/clientContact');
+const { caseSubject } = require('../utils/clientSubject');
 
 /**
  * Read a case's assignee ids (person + team) from the Client Master people
@@ -124,7 +126,8 @@ async function getCaseDetails(caseRef) {
            name
            column_values(ids: [
              "${CM.caseRef}", "${CM.caseType}", "${CM.caseSubType}",
-             "${CM.clientEmail}", "${CM.accessToken}", "${Q_COMPLETION_COL}"
+             "${CM.clientEmail}", "${CM.accessToken}", "${Q_COMPLETION_COL}",
+             "${CM.caseStage}"
            ]) { id text }
          }
        }
@@ -145,6 +148,7 @@ async function getCaseDetails(caseRef) {
     caseSubType: col(CM.caseSubType) || null,
     clientEmail: col(CM.clientEmail),
     accessToken: col(CM.accessToken),
+    caseStage:   col(CM.caseStage),   // read with the rest when staff send — the subject shows it as it stands
     qCompletionStatus: col(Q_COMPLETION_COL),   // "Done" / "Working on it" — the export's last-resort status signal
   };
 }
@@ -159,7 +163,7 @@ async function getCaseDetails(caseRef) {
  *   flags:      { [key]: { label, section, comment, flaggedBy } }
  */
 async function sendCorrectionEmail({ caseRef, formKey, caseDetails, flags, formFields, staffName, memberLabel: shownLabel }) {
-  const { itemId, clientEmail, clientName, caseType, accessToken } = caseDetails;
+  const { itemId, clientEmail, clientName, caseType, accessToken, caseStage } = caseDetails;
 
   if (!clientEmail) {
     throw new Error('No client email address on record for this case.');
@@ -227,9 +231,9 @@ async function sendCorrectionEmail({ caseRef, formKey, caseDetails, flags, formF
 
   await sendEmail({
     to:      clientEmail,
-    subject: `Action Required — Please Update Your Questionnaire${memberNote} (${caseRef})`,
+    subject: caseSubject(`Action Required — Please Update Your Questionnaire${memberNote}`, caseRef, caseStage),
     html,
-    replyTo: EMAIL_REPLY_TO || undefined,
+    replyTo: CLIENT_REPLY_TO,
   });
 
   // Post an audit comment on the Monday item
@@ -255,7 +259,7 @@ async function sendCorrectionEmail({ caseRef, formKey, caseDetails, flags, formF
  *   memberEntries: [{ memberKey, formKey, label, type, flags, formFields }]
  */
 async function sendConsolidatedCorrectionEmail({ caseRef, memberEntries, caseDetails, staffName }) {
-  const { itemId, clientEmail, clientName, caseType, accessToken } = caseDetails;
+  const { itemId, clientEmail, clientName, caseType, accessToken, caseStage } = caseDetails;
 
   if (!clientEmail) {
     throw new Error('No client email address on record for this case.');
@@ -315,9 +319,9 @@ async function sendConsolidatedCorrectionEmail({ caseRef, memberEntries, caseDet
 
   await sendEmail({
     to:      clientEmail,
-    subject: `Action Required — Please Update Your Questionnaire (${caseRef})`,
+    subject: caseSubject('Action Required — Please Update Your Questionnaire', caseRef, caseStage),
     html,
-    replyTo: EMAIL_REPLY_TO || undefined,
+    replyTo: CLIENT_REPLY_TO,
   });
 
   // Post a single audit comment listing all members
@@ -432,10 +436,7 @@ function buildConsolidatedCorrectionEmailHtml({ clientName, caseRef, caseType, m
           </td></tr>
         </table>
 
-        <p style="font-size:13px;color:#94a3b8;line-height:1.6;margin:0;">
-          If you have questions, please ${require('../utils/clientContact').EMAIL_US} or contact your consultant directly. ${require('../utils/clientContact').NO_REPLY}
-          Please include your Case Reference Number in any correspondence.
-        </p>
+        ${replyNoticeHtml('items', { margin: '0' })}
       </td></tr>
 
       <tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;border-radius:0 0 12px 12px;padding:20px 32px;text-align:center;">
@@ -538,10 +539,7 @@ function buildCorrectionEmailHtml({ clientName, caseRef, caseType, flaggedItems,
           </td></tr>
         </table>
 
-        <p style="font-size:13px;color:#94a3b8;line-height:1.6;margin:0;">
-          If you have questions, please ${require('../utils/clientContact').EMAIL_US} or contact your consultant directly. ${require('../utils/clientContact').NO_REPLY}
-          Please include your Case Reference Number in any correspondence.
-        </p>
+        ${replyNoticeHtml('items', { margin: '0' })}
       </td></tr>
 
       <tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;border-radius:0 0 12px 12px;padding:20px 32px;text-align:center;">

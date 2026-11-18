@@ -76,6 +76,8 @@ test('reminder 1 goes at 48 hours and reminder 2 at 5 days after the first invit
   await at(w, T0 + 47 * HOUR); assert.equal(w.emails.length, 0, 'not before 48 hours');
   await at(w, T0 + 48 * HOUR); assert.equal(w.emails.length, 1);
   assert.match(w.emails[0].subject, /^Reminder: book your consultation/);
+  assert.equal(w.emails[0].replyTo, 'info@tdotimm.com', 'Reply-To the office inbox');
+  assert.match(w.emails[0].html, /<strong>Important:<\/strong> If you need to contact us about this email, please reply directly to it/, 'the lead notice');
   await at(w, T0 + 49 * HOUR); await at(w, T0 + 100 * HOUR); assert.equal(w.emails.length, 1, 'reminder 1 only once');
   await at(w, T0 + 119 * HOUR); assert.equal(w.emails.length, 1, 'not before 5 days');
   await at(w, T0 + 120 * HOUR); assert.equal(w.emails.length, 2);
@@ -327,9 +329,11 @@ test('the booking invite still uses the same layout, heading, link and fee sente
           ${bodyHtml}
           <p><a href="${url}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Choose your consultation time</a></p>
           <p>You'll see our real-time availability and can pick whatever works for you. ${feeLine}</p>
-          <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">This link is personal to you — please don't share it. Questions? Please ${cc.EMAIL_US}. ${cc.NO_REPLY}</p>
+          <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">This link is personal to you — please don't share it.</p>
+          ${cc.replyNoticeHtml('lead', { margin: '16px 0 0' })}
         </div></div>`;
   assert.equal(sent[0].html, expected);
+  assert.equal(sent[0].replyTo, 'info@tdotimm.com', 'replies reach the office inbox (reply-thread change 2026-11-18)');
   assert.match(feeLine, /^The consultation fee is <b>/, 'a priced consultant');
 });
 

@@ -30,8 +30,9 @@
  *  - Not Applicable, optional-not-sent and Rework Required rows are never listed (the
  *    client already got the rework email; the reminder only counts them);
  *  - no token → no email at all (never a bare link); every client link carries ?t=;
- *  - the portal button and the "email us" closing line are added OUTSIDE the template;
- *  - no nested <p>; never "just reply" (src/utils/clientContact.js);
+ *  - the portal button and the "Important: please reply…" notice are added OUTSIDE the template;
+ *  - no nested <p>; the subject ends " — <ref> · <stage>" (caseSubject), checked against
+ *    SUBJECT_MAX as sent; Reply-To is info@ (CLIENT_REPLY_TO) — replies are wanted since 2026-11-18;
  *  - the claim note is posted BEFORE the email, the failure note after; a hidden
  *    DOCREM:<origin>:<Toronto day> marker is the once-per-day key (auto never follows
  *    a staff send the same day); the marker is matched in BOTH the raw body and
@@ -48,7 +49,8 @@ const { memberTypeOfLabel } = require('../utils/familyRoleLabels');
 const { torontoTime } = require('../utils/torontoTime');
 
 const BASE_URL       = process.env.RENDER_URL    || 'https://tdot-automations.onrender.com';
-const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
+const { CLIENT_REPLY_TO, replyNoticeHtml, replyNoticeText } = require('../utils/clientContact');
+const { caseSubject } = require('../utils/clientSubject');
 
 /** DOC_REMINDERS_AUTO — the automatic daily email. OFF unless exactly "1"/"true", read at call time. Ships OFF. */
 function isAutoEnabled() {
@@ -334,7 +336,6 @@ function caseTypeText(v) {
   if (!/[A-Za-z0-9]/.test(t) || /^not set$/i.test(t)) return '';
   return t;
 }
-const REPLY_REFUSAL = (what) => `The reminder text cannot be sent: the ${what} tells the client to reply — the sender is a no-reply mailbox; say "email us at info@tdotimm.com" instead.`;
 
 // The imaginary-deadline variant of the automatic email (DOC_REMINDERS_IMAGINARY, ships
 // OFF): the same "Automatic" template with its "must be submitted by {Deadline}" sentence
@@ -352,7 +353,7 @@ function imaginaryBody(body) {
 /**
  * The reminder email, ready to send: { subject, html, text, to (masked), recipient, warnings, template }.
  * Never sends. Throws when it cannot be a safe email (no token, no email, no last day on the
- * final, a body that tells the client to reply).
+ * final, a text the template rules refuse, a final subject over SUBJECT_MAX).
  *
  * @param {object} o
  * @param {1|2|3|'auto'} o.level
@@ -360,6 +361,7 @@ function imaginaryBody(body) {
  * @param {string} o.clientName        the case's client (the overview fields)
  * @param {string} o.clientEmail
  * @param {string} o.caseType
+ * @param {string} [o.caseStage]       the exact Case Stage label (read with the case) — in the subject
  * @param {string} o.accessToken       the Case Access Token — required
  * @param {object} o.missing           missingDocuments()'s answer
  * @param {object} [o.deadline]        the stored answer: { type, actualDeadline, promisedSubmissionDate } (deadlineService.fromLead)
@@ -390,8 +392,6 @@ async function buildReminderEmail(o = {}) {
   const variant = level === 'auto' && o.variant === 'imaginary' ? 'imaginary' : 'real';
   if (variant === 'imaginary') body = imaginaryBody(body);
   if (o.subjectOverride != null && String(o.subjectOverride).trim()) subject = templates.stripHtml(o.subjectOverride).replace(/\s*\n\s*/g, ' ');
-  // the subject is checked whatever its source (a subject-only edit used to slip past the body branch)
-  if (templates.tellsToReply(subject)) throw new Error(REPLY_REFUSAL('subject'));
   let listAppended = false;
   if (o.bodyOverride != null && String(o.bodyOverride).trim()) {
     // checked again at send: the dialog's text is the staff's, the rules are not editable
@@ -432,10 +432,12 @@ async function buildReminderEmail(o = {}) {
   if (!dl.actualDeadline && !imaginaryFill && /\{Deadline\}/.test(`${subject}\n${body}`)) warnings.push('the text names the deadline, but this case has no actual deadline — it reads "not set"');
   if (imaginaryFill && /\{Deadline\}/.test(subject)) warnings.push('the subject named {Deadline} — this case has an imaginary deadline, so the promised date was used');
 
-  const subjectOut = fillTokens(subject, { ...values, MissingList: `${missing.count} documents`, QuestionnaireList: 'questionnaire', PortalLink: '' }).replace(/\s+/g, ' ').trim();
+  // the case subject: "<text> — <ref> · <exact Case Stage>" — a {CaseRef} the board text still has is
+  // taken out and the ref appended once; the length limit is checked on THIS, the subject as sent
+  const subjectOut = caseSubject(fillTokens(subject, { ...values, MissingList: `${missing.count} documents`, QuestionnaireList: 'questionnaire', PortalLink: '' }).replace(/\s+/g, ' ').trim(), caseRef, o.caseStage);
+  if (subjectOut.length > SUBJECT_MAX) throw new Error(`The reminder text cannot be sent: the subject is too long (max ${SUBJECT_MAX} characters, with the case reference and stage added).`);
   const bodyFilled = fillTokens(body, { ...values, MissingList: '{MissingList}', QuestionnaireList: Q_TOKEN, PortalLink: '{PortalLink}' });
   const extra = String(o.extraLine || '').replace(/<[^>]*>/g, '').trim();
-  if (extra && templates.tellsToReply(extra)) throw new Error(REPLY_REFUSAL('extra line'));   // the staff's free line obeys the same rule as the template
   const progress = o.progress || missing.progress;
   // a Rework Required row counts as received (IN_PIPELINE) — the line says it still needs a new copy (review round 2 [2])
   const progressLine = progress && progress.total > 0
@@ -499,9 +501,7 @@ ${progressLine ? `        <p style="font-size:13px;color:#64748b;margin:0 0 20px
           </td></tr>
         </table>
 
-        <p style="font-size:14px;color:#64748b;line-height:1.65;margin:0;">
-          Questions? Please ${require('../utils/clientContact').EMAIL_US} and include your case reference <strong>${esc(caseRef)}</strong>. ${require('../utils/clientContact').NO_REPLY}
-        </p>
+        ${replyNoticeHtml('items', { margin: '0' })}
 
       </td></tr>
 
@@ -520,12 +520,11 @@ ${progressLine ? `        <p style="font-size:13px;color:#64748b;margin:0 0 20px
 </body>
 </html>`;
 
-  const contact = require('../utils/clientContact');
   const text = [
     bodyText,
     progressLine,
     `Open your portal: ${portalUrl}\nUpload page: ${documentsUrl}`,
-    `Questions? Please email us at ${contact.CLIENT_CONTACT_EMAIL} and include your case reference ${caseRef}. ${contact.NO_REPLY}`,
+    replyNoticeText('items'),
   ].filter(Boolean).join('\n\n');
 
   return {
@@ -534,7 +533,7 @@ ${progressLine ? `        <p style="font-size:13px;color:#64748b;margin:0 0 20px
     text,
     to: clientPortalService.maskEmail(clientEmail),
     recipient: clientEmail,
-    replyTo: EMAIL_REPLY_TO || undefined,
+    replyTo: CLIENT_REPLY_TO,
     warnings,
     template: { name: base.name, source: base.source, edited: Boolean(o.bodyOverride || o.subjectOverride), listAppended, questionnaireAppended, variant },
     questionnaire: questionnaireView(q),
@@ -1145,6 +1144,7 @@ function finalLastDay(lv, lastDay, today) {
 function staffEmailOptions({ overview, p, level, lastDay, subject, body, extra, actor, accessToken }) {
   return {
     level, caseRef: p.caseRef, clientName: overview.clientName, clientEmail: overview.clientEmail, caseType: overview.caseType,
+    caseStage: overview.caseStage,   // the fresh case read of this request (gateStaff checked it)
     accessToken, missing: p.missing, deadline: p.deadline, lastDay,
     staffName: senderName(actor), extraLine: extra, subjectOverride: subject, bodyOverride: body,
     questionnaire: overview.questionnaire,
@@ -1288,7 +1288,7 @@ async function sendStaffReminder({ overview, level, subject, body, extra, lastDa
 
   // 3. The email.
   try {
-    await io.sendEmail({ to: email.recipient, subject: email.subject, html: email.html, ...(email.replyTo ? { replyTo: email.replyTo } : {}) });
+    await io.sendEmail({ to: email.recipient, subject: email.subject, html: email.html, replyTo: CLIENT_REPLY_TO });
   } catch (err) {
     io.warn(`[DocReminders] ${p.caseRef}: reminder ${lv} did not go out: ${err.message}`);
     await Promise.resolve(io.postNote(overview.itemId, failureNote({ level: lv, reason: 'the email could not be sent', now: io.now(), day: today, claimId: mine })))
@@ -1419,6 +1419,7 @@ async function runCandidate(row, sel, { now, today, dryRun }) {
   try {
     email = await buildReminderEmail({
       level: 'auto', variant: sel.variant, caseRef: row.ref, clientName: row.name, clientEmail: row.email, caseType: row.caseType, accessToken: row.token,
+      caseStage: row.stage,   // this run's board read (selectByColumns let only Document Collection Started through)
       missing, deadline: { type: row.deadlineType, actualDeadline: row.actualDeadline, promisedSubmissionDate: row.promised }, staffName: 'TDOT Immigration',
       questionnaire,
     });
@@ -1440,7 +1441,7 @@ async function runCandidate(row, sel, { now, today, dryRun }) {
   } catch (_) { /* cannot re-read: our claim stands, send */ }
   // 3. the email
   try {
-    await io.sendEmail({ to: email.recipient, subject: email.subject, html: email.html, ...(email.replyTo ? { replyTo: email.replyTo } : {}) });
+    await io.sendEmail({ to: email.recipient, subject: email.subject, html: email.html, replyTo: CLIENT_REPLY_TO });
   } catch (err) {
     io.warn(`[DocReminders] ${row.ref}: the automatic reminder did not go out: ${err.message}`);
     await Promise.resolve(io.postNote(row.id, failureNote({ level: 'auto', reason: 'the email could not be sent', now: io.now(), day: today, claimId: mine })))

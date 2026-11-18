@@ -260,7 +260,7 @@ test('reminder and rework emails: with a code both buttons carry it; with no cod
   assert.match(withCode, /\/documents\/2026-X-001\?t=ab%20c" class="btn btn-d">Upload Documents/);
   const noCode = buildChasingEmail('R1', { clientName: 'Ana', caseRef: '2026-X-001', token: '', qLink: '' }).html;
   assert.doesNotMatch(noCode, /class="btn btn-[qd]"|\/documents\/|\/questionnaire\//, 'no dead buttons');
-  assert.match(noCode, /Need your portal link again\? Please email us at .*info@tdotimm\.com/);
+  assert.match(noCode, /Need your portal link again\? Reply to this email and we will send it to you\./);
   const chasingSrc = fs.readFileSync(require.resolve('../src/services/chasingLoopService.js'), 'utf8');
   assert.doesNotMatch(chasingSrc, /\/questionnaire\/\$\{encodeURIComponent\(caseRef\)\}/, 'the retired /questionnaire page is never linked');
   const rw = buildRevisionEmailHtml({ clientName: 'Ana', caseRef: '2026-X-001', accessToken: 'tok', questionnaire: [], documents: [{ name: 'Passport', notes: '' }] });

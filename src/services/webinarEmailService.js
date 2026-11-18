@@ -5,8 +5,8 @@
  * page, where the "Webinar Email" card takes the place of the booking invite.
  *
  * The body is ONE standard text, pre-filled on the page and editable before sending. It carries no case commentary
- * and no promises (the firm's rule for the booking invite, 2026-07-31) and never says "reply" (the app's mailbox is
- * not read — utils/clientContact). There is NO joining link or date in it yet: the webinar is paid, and the link and
+ * and no promises (the firm's rule for the booking invite, 2026-07-31). Since 2026-11-18 client replies are wanted:
+ * Reply-To is info@ and the lead notice asks the client to reply to this email (utils/clientContact). There is NO joining link or date in it yet: the webinar is paid, and the link and
  * time will come from the Microsoft Teams meeting once the client has paid — a later piece of work.
  *
  * Proof of sending is the note on the lead ("Webinar email sent to … on …"). The lead page and the send itself read
@@ -26,7 +26,7 @@ const STANDARD_TEXT = [
   'Thank you for your interest in TDOT Immigration.',
   'We would like to invite you to our upcoming immigration webinar. In this online session our team explains the main Canadian immigration pathways and how each process works in general, and answers common questions.',
   'The webinar is a paid group session. Once your registration and payment are confirmed, we will email you the date, the time and your personal link to join.',
-  'If you would like to attend, or if you have any questions, please email us at info@tdotimm.com and our team will help you with the next steps.',
+  'If you would like to attend, or if you have any questions, please reply to this email and our team will help you with the next steps.',
 ].join('\n\n');
 
 const io = {
@@ -60,7 +60,7 @@ function emailHtml({ firstName, text }) {
         <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
           <p>Hi ${esc(firstName || 'there')},</p>
           ${paras}
-          <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Questions? Please ${C.EMAIL_US}. ${C.NO_REPLY}</p>
+          ${C.replyNoticeHtml('lead', { margin: '24px 0 0' })}
         </div></div>`;
 }
 
@@ -105,7 +105,7 @@ async function send({ leadId, lead, message, by = '', again = false }) {
   const who = String(by || '').replace(/\s+/g, ' ').trim().slice(0, 60);
   const day = io.now().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
   try {
-    await io.sendEmail({ to: lead.email, subject: SUBJECT, html: emailHtml({ firstName, text }) });
+    await io.sendEmail({ to: lead.email, subject: SUBJECT, html: emailHtml({ firstName, text }), replyTo: require('../utils/clientContact').CLIENT_REPLY_TO });
   } catch (err) {
     // The mail service answered "no" = nothing went. No answer at all (a timeout, a dropped line) = not known:
     // it may have gone, so never tell staff to simply press again.

@@ -10,8 +10,10 @@
  * deploy. Read with a 30-minute cache (caseReadinessService.loadThresholds pattern).
  *
  * Every row is checked at load AND the chosen text is checked again at send
- * (docReminderService): plain text only (tags stripped), {MissingList} present, no
- * "just reply" wording, unknown {Token}s left visible and flagged. {QuestionnaireList}
+ * (docReminderService): plain text only (tags stripped), {MissingList} present,
+ * unknown {Token}s left visible and flagged. (The old "never tell the client to reply"
+ * check is gone since 2026-11-18: client emails now carry Reply-To: info@tdotimm.com
+ * and ASK the client to reply — src/utils/clientContact.js.) {QuestionnaireList}
  * is a known token but NOT required here — this check knows nothing about the case;
  * the email builder adds it after the documents list (with a warning) when the
  * client's questionnaire is unfinished and the text lacks it. A row that fails,
@@ -26,9 +28,6 @@ const { TOKENS, ROW_NAMES, LEVEL_ROWS, DEFAULTS } = require('../../config/remind
 const CACHE_TTL_MS = 30 * 60 * 1000;   // a board edit shows within half an hour
 const FAIL_TTL_MS  = 5 * 60 * 1000;    // an unreadable board is retried sooner, not on every send
 
-// the no-reply rule — built from pieces because test/clientContactAndConvert.test.js scans
-// every service line for the same phrases (a board edit is the one place they could reappear)
-const REPLY_WORDING = new RegExp(['(just|simply|please) reply', 'reply to (this|the) (email|message)', 'reply with (it|the file|the document)', 'reply (back )?to us'].join('|'), 'i');
 const TOKEN_RE = /\{([A-Za-z]+)\}/g;
 const KNOWN = new Set(TOKENS);
 
@@ -44,9 +43,6 @@ function stripHtml(s) {
     .replace(/&nbsp;/gi, ' ').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'").replace(/&amp;/gi, '&')
     .replace(/\r\n?/g, '\n').trim();
 }
-
-/** Does a text (tags stripped) tell the client to reply? The one check for the subject, the body and the staff's extra line. */
-function tellsToReply(text) { return REPLY_WORDING.test(stripHtml(text)); }
 
 /** The token names used in a text that are not merge tokens ({Foo} stays visible in the email). */
 function unknownTokens(text) {
@@ -65,7 +61,6 @@ function validate({ subject, body }) {
   const problems = [], warnings = [];
   if (!b) problems.push('the body is empty');
   if (b && !b.includes('{MissingList}')) problems.push('the body has no {MissingList} — the missing documents would not be listed');
-  if (REPLY_WORDING.test(b) || REPLY_WORDING.test(s)) problems.push('the text tells the client to reply — the sender is a no-reply mailbox; say "email us at info@tdotimm.com" instead');
   const unknown = unknownTokens(`${s}\n${b}`);
   if (unknown.length) warnings.push(`unknown merge field${unknown.length === 1 ? '' : 's'} left as typed: ${unknown.map((t) => `{${t}}`).join(', ')}`);
   return { ok: problems.length === 0, subject: s, body: b, problems, warnings };
@@ -182,4 +177,4 @@ function boardProblems() {
 
 function _resetForTests() { _cache = null; _cacheAge = 0; _cacheTtl = CACHE_TTL_MS; }
 
-module.exports = { loadTemplates, templateFor, validate, stripHtml, unknownTokens, tellsToReply, diagnostics, boardProblem, boardCause, boardProblemFor, boardProblems, TOKENS, ROW_NAMES, LEVEL_ROWS, DEFAULTS, _resetForTests };
+module.exports = { loadTemplates, templateFor, validate, stripHtml, unknownTokens, diagnostics, boardProblem, boardCause, boardProblemFor, boardProblems, TOKENS, ROW_NAMES, LEVEL_ROWS, DEFAULTS, _resetForTests };

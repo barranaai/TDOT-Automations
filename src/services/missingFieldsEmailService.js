@@ -30,12 +30,14 @@ const THROTTLE_FILENAME       = 'email-throttle.json';
 const THROTTLE_HOURS          = 24;
 
 const BASE_URL       = process.env.RENDER_URL    || 'https://tdot-automations.onrender.com';
-const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
+const { CLIENT_REPLY_TO, replyNoticeHtml } = require('../utils/clientContact');
+const { caseSubject } = require('../utils/clientSubject');
 
 const CM_COLS = {
   clientEmail: 'text_mm0xw6bp',
   caseRef:     'text_mm142s49',
   accessToken: 'text_mm0x6haq',
+  caseStage:   'color_mm0x8faa',   // Case Stage — the exact label goes in the subject
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -55,7 +57,7 @@ async function getClientByCaseRef(caseRef) {
        ) {
          items {
            id name
-           column_values(ids: ${JSON.stringify([CM_COLS.clientEmail, CM_COLS.accessToken])}) { id text }
+           column_values(ids: ${JSON.stringify([CM_COLS.clientEmail, CM_COLS.accessToken, CM_COLS.caseStage])}) { id text }
          }
        }
      }`,
@@ -68,6 +70,7 @@ async function getClientByCaseRef(caseRef) {
     clientName:  (item.name || '').trim() || 'Client',
     clientEmail: col(CM_COLS.clientEmail),
     accessToken: col(CM_COLS.accessToken),
+    caseStage:   col(CM_COLS.caseStage),
   };
 }
 
@@ -172,9 +175,7 @@ function buildEmailHtml({ clientName, caseRef, formUrl, missingByMember, totalMi
       </a>
     </div>
 
-    <p style="font-size:12px; color:#6B7280; margin-top:22px; line-height:1.5;">
-      If you have any questions, please ${require('../utils/clientContact').EMAIL_US} and your case officer will get back to you. ${require('../utils/clientContact').NO_REPLY}
-    </p>
+    ${replyNoticeHtml('items', { margin: '22px 0 0' })}
     </div>
   </div>
 </body></html>`;
@@ -225,7 +226,7 @@ async function sendMissingFieldsEmail({ caseRef, isSubmit, manual, missingByMemb
   const tokenParam = client.accessToken ? `?t=${encodeURIComponent(client.accessToken)}` : '';
   const formUrl    = `${BASE_URL}/q/${encodeURIComponent(caseRef)}${tokenParam}`;
 
-  const subject = `Information Still Needed for Your Case — ${caseRef}`;
+  const subject = caseSubject('Information Still Needed for Your Case', caseRef, client.caseStage);
   const html    = buildEmailHtml({
     clientName: client.clientName,
     caseRef,
@@ -238,7 +239,7 @@ async function sendMissingFieldsEmail({ caseRef, isSubmit, manual, missingByMemb
     to:      client.clientEmail,
     subject,
     html,
-    replyTo: EMAIL_REPLY_TO || undefined,
+    replyTo: CLIENT_REPLY_TO,
   });
 
   console.log(`[MissingEmail] Sent to ${client.clientEmail} for ${caseRef} — ${totalMissing} field(s) across ${list.length} member(s) (${isSubmit ? 'submit' : 'manual save'})`);

@@ -1124,7 +1124,8 @@ function bookingEmailHtml({ heading, first, bodyHtml, url, feeLine }) {
           ${bodyHtml}
           <p><a href="${url}" style="display:inline-block;background:${BRAND.primary};color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none">Choose your consultation time</a></p>
           <p>You'll see our real-time availability and can pick whatever works for you. ${feeLine}</p>
-          <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">This link is personal to you — please don't share it. Questions? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
+          <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">This link is personal to you — please don't share it.</p>
+          ${require('../utils/clientContact').replyNoticeHtml('lead', { margin: '16px 0 0' })}
         </div></div>`;
 }
 
@@ -1176,6 +1177,7 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
       to: lead.email,
       subject: 'Book your consultation with TDOT Immigration',
       html: bookingEmailHtml({ heading: 'Book your consultation', first, bodyHtml, url, feeLine }),
+      replyTo: require('../utils/clientContact').CLIENT_REPLY_TO,
     });
   } catch (err) {
     console.error(`[Booking] Invite email FAILED for ${leadId}: ${err.message}`);

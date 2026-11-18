@@ -41,7 +41,9 @@ const oneDrive          = require('./oneDriveService');
 const caseSchemaService = require('./caseSchemaService');
 const { planMembersFromLead, planMembersFromConsultant } = require('./familyCompositionService');
 const { resolveMemberTypes, formEmbedsMembers } = require('../../config/questionnaireFormMap');
-const { BASE_URL, EMAIL_REPLY_TO, STAGES_REQUIRING_RESEND, maskAddr } = require('./emailService');
+const { BASE_URL, STAGES_REQUIRING_RESEND, maskAddr } = require('./emailService');
+const { CLIENT_REPLY_TO, replyNoticeHtml } = require('../utils/clientContact');
+const { caseSubject } = require('../utils/clientSubject');
 const { LOGO_URL } = require('../branding');
 
 const CM = {
@@ -351,7 +353,7 @@ function planEnsure({ sponsor, composition, manifest = null, marker = null, mode
  * PURE. The sponsor's email. Every value goes through escHtml; the token
  * travels in the link only. Names only — never a pronoun.
  */
-function buildSponsorEmail({ variant = 'onboarding', sponsorName, clientName, caseRef, caseType, roleLabel, docs = [], sectionMode, sectionLabel, badge, portalUrl } = {}) {
+function buildSponsorEmail({ variant = 'onboarding', sponsorName, clientName, caseRef, caseType, caseStage, roleLabel, docs = [], sectionMode, sectionLabel, badge, portalUrl } = {}) {
   const resend = variant === 'resend';
   const paFullName = s(clientName) || 'The client';
   const paFirst = escHtml(paFullName.split(' ')[0] || paFullName);
@@ -362,9 +364,10 @@ function buildSponsorEmail({ variant = 'onboarding', sponsorName, clientName, ca
   const role = escHtml(s(roleLabel) || 'sponsor');
   const url = escHtml(s(portalUrl));
 
-  const subject = resend
-    ? `Your portal link for ${paFullName}'s application — ${s(caseRef)}`
-    : `Action Required — Your part in ${paFullName}'s ${s(caseType) || 'immigration'} application (${s(caseRef)})`;
+  // Case subject: "<text> — <ref> · <exact Case Stage>" (src/utils/clientSubject.js).
+  const subject = caseSubject(resend
+    ? `Your portal link for ${paFullName}'s application`
+    : `Action Required — Your part in ${paFullName}'s ${s(caseType) || 'immigration'} application`, s(caseRef), s(caseStage));
   const title = resend ? 'Your portal link' : 'Your part in this application — Action Required';
 
   // No article before the case type ("a Inland Spousal Sponsorship"), and on a
@@ -477,10 +480,7 @@ ${docItems}
           </td></tr>
         </table>
 
-        <p style="font-size:14px;color:#64748b;line-height:1.65;margin:0;">
-          If you have any questions, please ${require('../utils/clientContact').EMAIL_US} (quoting the case reference <strong>${ref}</strong>)
-          or contact the assigned consultant. ${require('../utils/clientContact').NO_REPLY}
-        </p>
+        ${replyNoticeHtml(resend ? 'case' : 'items', { margin: '0' })}
 
       </td></tr>
 
@@ -951,10 +951,11 @@ async function ensureSponsor({ itemId, caseRef, mode = 'onboard', actor = null, 
     const portalUrl = `${BASE_URL}/client/${encodeURIComponent(cm.caseRef)}?t=${encodeURIComponent(token)}`;
     const { subject, html } = buildSponsorEmail({
       variant: plan.variant, sponsorName: sponsor.name, clientName: cm.clientName, caseRef: cm.caseRef, caseType: cm.caseType,
+      caseStage: cm.caseStage,   // read by readCase at the start of this pass
       roleLabel: sponsor.roleLabel, docs: sponsor.docs, sectionMode: sponsor.sectionMode, sectionLabel, badge: plan.badge, portalUrl,
     });
     try {
-      await io.sendEmail({ to: sponsor.email, subject, html, replyTo: EMAIL_REPLY_TO || undefined });
+      await io.sendEmail({ to: sponsor.email, subject, html, replyTo: CLIENT_REPLY_TO });
     } catch (err) {
       await io.writeMarker({ clientName: cm.clientName, caseRef: cm.caseRef, marker: { ...base, status: 'failed', startedAt, failedAt: new Date(io.now()).toISOString(), error: s(err.message).slice(0, 200) } })
         .catch((e2) => console.error(`[Sponsor] Marker write after a failed send also failed for ${cm.caseRef}: ${e2.message}`));

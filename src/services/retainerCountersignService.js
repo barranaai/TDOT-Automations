@@ -225,11 +225,15 @@ async function recordRetainerCountersignComplete(lead, { signedPdf, stored } = {
       <div style="background:${BRAND.lightCard};padding:28px;border-radius:0 0 12px 12px;border:1px solid ${BRAND.border}">
         <p>Hi ${esc((lead.fullName || 'there').split(' ')[0])},</p>
         <p>Your retainer agreement has now been signed by both you and your consultant. Your copy of the fully signed agreement is attached to this email for your records.</p>
-        <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">Any questions? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
+        ${require('../utils/clientContact').replyNoticeHtml('case', { margin: '24px 0 0' })}
       </div></div>`;
     try {
+      // the case normally opened at the client's signature: "<text> — <ref> · <stage>" from the case
+      // read now (the fresh lead's Client Master id); no case or a failed read → the plain subject
+      const subject = await require('./clientMasterService').leadCaseSubject(fresh || lead, 'Your fully signed TDOT Immigration retainer agreement', '[RetainerCountersign]');
       await require('./microsoftMailService').sendEmail({
-        to: lead.email, subject: 'Your fully signed TDOT Immigration retainer agreement', html,
+        to: lead.email, subject, html,
+        replyTo: require('../utils/clientContact').CLIENT_REPLY_TO,
         attachments: [{ filename: 'retainer-agreement-signed.pdf', buffer: pdf, mimeType: 'application/pdf' }],
       });
       emailed = true;

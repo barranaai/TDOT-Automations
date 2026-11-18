@@ -5,7 +5,8 @@ const { resolveForm } = require('../../config/questionnaireFormMap');
 
 const SLA_BOARD_ID   = process.env.MONDAY_SLA_CONFIG_BOARD_ID || '18402401449';
 const BASE_URL       = process.env.RENDER_URL    || 'https://tdot-automations.onrender.com';
-const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
+const { CLIENT_REPLY_TO, replyNoticeHtml } = require('../utils/clientContact');
+const { caseSubject } = require('../utils/clientSubject');
 
 // ─── Column IDs — Client Master Board ────────────────────────────────────────
 const CM = {
@@ -163,7 +164,7 @@ function buildChasingEmail(type, { clientName, caseRef, token, qLink }) {
 
   const config = {
     'R1': {
-      subject: `Action Required: Documents needed for your case – ${caseRef}`,
+      subject: 'Action Required: Documents needed for your case',
       heading: 'A friendly reminder from your immigration team',
       body: `
         <p>Hi ${name},</p>
@@ -174,7 +175,7 @@ function buildChasingEmail(type, { clientName, caseRef, token, qLink }) {
       urgencyLabel:  'Reminder',
     },
     'R2': {
-      subject: `Second Reminder: Your case ${caseRef} needs your attention`,
+      subject: 'Second Reminder: Your case needs your attention',
       heading: 'Please take action — your case needs your documents',
       body: `
         <p>Hi ${name},</p>
@@ -185,7 +186,7 @@ function buildChasingEmail(type, { clientName, caseRef, token, qLink }) {
       urgencyLabel:  'Second Reminder',
     },
     'FINAL': {
-      subject: `⚠️ Final Notice – Immediate action required for case ${caseRef}`,
+      subject: '⚠️ Final Notice – Immediate action required for your case',
       heading: '⚠️ Final Notice — Your case is at risk',
       body: `
         <p>Hi ${name},</p>
@@ -226,18 +227,19 @@ function buildChasingEmail(type, { clientName, caseRef, token, qLink }) {
   <div class="btn-row">
     ${qLink ? `<a href="${qLink}" class="btn btn-q">Complete Questionnaire</a>` : ''}
     ${docLink ? `<a href="${docLink}" class="btn btn-d">Upload Documents</a>` : ''}
-    ${!qLink && !docLink ? `<p>Need your portal link again? Please ${require('../utils/clientContact').EMAIL_US}.</p>` : ''}
+    ${!qLink && !docLink ? '<p>Need your portal link again? Reply to this email and we will send it to you.</p>' : ''}
   </div>
+  ${replyNoticeHtml('items', { margin: '0 0 14px' })}
   <hr class="divider">
   <p style="font-size:.84rem;color:#4b5563">
-    Need help? Please ${require('../utils/clientContact').EMAIL_US} or contact your case officer directly. ${require('../utils/clientContact').NO_REPLY}<br>
     Case Reference: <strong>${caseRef}</strong>
   </p>
   <p class="footer">TDOT Immigration &nbsp;|&nbsp; This email was sent regarding your active immigration case.</p>
 </div>
 </body></html>`;
 
-  return { subject: t.subject, html };
+  // retired sender (runChasingLoop returns early) — it only ever chased Document Collection Started cases
+  return { subject: caseSubject(t.subject, caseRef, CHASING_STAGE), html };
 }
 
 // ─── Send one chasing email ───────────────────────────────────────────────────
@@ -258,7 +260,7 @@ async function sendChasingEmail(type, { clientEmail, clientName, caseRef, token,
     to:      clientEmail,
     subject,
     html,
-    replyTo: EMAIL_REPLY_TO || undefined,
+    replyTo: CLIENT_REPLY_TO,
   });
   console.log(`[ChasingLoop] ✉ ${type} email sent to ${clientEmail} for case ${caseRef}`);
   return true;

@@ -31,7 +31,11 @@ const textOf = (html) => html.replace(/<\/?(p|div|li|ul|td|tr|table|title|br)\b[
 
 test('subjects and titles, both variants', () => {
   const on = S.buildSponsorEmail(base());
-  assert.equal(on.subject, "Action Required — Your part in Aisha Khan's SOWP application (2026-SOWP-017)");
+  // the case subject (2026-11-18): "<text> — <ref> · <exact Case Stage>"; no stage given → the ref alone
+  assert.equal(on.subject, "Action Required — Your part in Aisha Khan's SOWP application — 2026-SOWP-017");
+  assert.equal(S.buildSponsorEmail(base({ caseStage: 'Document Collection Started' })).subject,
+    "Action Required — Your part in Aisha Khan's SOWP application — 2026-SOWP-017 · Document Collection Started");
+  assert.equal(S.buildSponsorEmail(base({ variant: 'resend', caseStage: 'Stuck' })).subject, "Your portal link for Aisha Khan's application — 2026-SOWP-017", 'Stuck is never shown');
   assert.equal(on.title, 'Your part in this application — Action Required');
   assert.match(on.html, /<title>Your part in this application — Action Required<\/title>/);
   const re = S.buildSponsorEmail(base({ variant: 'resend' }));
@@ -98,7 +102,11 @@ test('the case-details box: reference, type, principal applicant, role — and N
     assert.match(textOf(html), /You and Aisha share one portal for this case\./);
     assert.match(textOf(html), /This is the same portal link Aisha received\./);
     assert.match(textOf(html), /Please do not forward this email\. The link opens Aisha's application as well as your part of it\./);
-    assert.match(textOf(html), /please email us at info@tdotimm\.com \(quoting the case reference 2026-SOWP-017\) or contact the assigned consultant\. Please don't reply to this email — this inbox isn't monitored\./);
+    // the reply notice (2026-11-18): onboarding asks for items, a resend asks for nothing
+    assert.match(textOf(html), variant === 'onboarding'
+      ? /Important: Please reply directly to this email rather than starting a new one, so that all correspondence stays on your file\. Documents should be uploaded through your secure portal link, not sent as attachments\./
+      : /Important: If you need to contact us about this email, please reply directly to it rather than starting a new one, so that all correspondence stays on your file\. Writing to us in a separate email may delay your case\./);
+    assert.doesNotMatch(textOf(html), /don't reply|isn't monitored/);
     assert.match(textOf(html), /This email was sent to you because you are named on Aisha Khan's application\./);
   }
 });
@@ -175,7 +183,8 @@ test('the portal link in the sponsor email is the same bytes as in the client\'s
     const spHref = /href="([^"]*\/client\/[^"]*)"/.exec(sentSp[0].html)[1];
     assert.equal(spHref, paHref);
     assert.equal(sentSp[0].to, 'faheem@example.com');
-    assert.equal(sentSp[0].replyTo, emailSvc.EMAIL_REPLY_TO || undefined);
+    assert.equal(sentSp[0].replyTo, 'info@tdotimm.com', 'the sponsor\'s reply reaches the office inbox (filed on the case by the ref in the subject)');
+    assert.equal(sentSp[0].subject, "Action Required — Your part in Jasnoor Kaur's SOWP application — 2026-OINP-006 · Document Collection Started", 'the stage readCase read');
   } finally {
     Object.assign(S.io, real);
     if (prevEnv === undefined) delete process.env.SPONSOR_ONBOARDING; else process.env.SPONSOR_ONBOARDING = prevEnv;

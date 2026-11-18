@@ -1,13 +1,15 @@
 'use strict';
 
 // Gauri's walkthrough (2026-10-08) — two quick fixes (Faran 2026-10-15):
-//  1. App emails come from a no-reply mailbox, so none may say "just reply":
-//     every client email points at info@tdotimm.com and says replies aren't read.
-//     The retainer email's "reply with the signed copy" now says where to send it.
+//  1. (Superseded 2026-11-18 by the reply-thread change.) App emails used to say
+//     "don't reply — this inbox isn't monitored". Now every client email carries
+//     Reply-To: info@tdotimm.com and the highlighted notice asks the client to reply
+//     to THIS email (src/utils/clientContact.js); no client email may still say
+//     "don't reply" / "isn't monitored" / "not as a reply". The retainer email's
+//     second step says "Reply to this email" with the signed copy.
 //     The staff-name list says "Melanie", not "Melini".
 //  2. "Convert to direct retainer": the lead being converted is never shown as a
 //     duplicate of itself ("already exists — merge?"), and stays the one record.
-
 const test   = require('node:test');
 const assert = require('node:assert/strict');
 const fs     = require('fs');
@@ -15,38 +17,42 @@ const path   = require('path');
 
 const SERVICES = path.join(__dirname, '..', 'src', 'services');
 
-test('no client email or page tells the client to reply (the sender is a no-reply mailbox); the contact line is info@tdotimm.com', () => {
-  const { CLIENT_CONTACT_EMAIL, EMAIL_US, NO_REPLY } = require('../src/utils/clientContact');
-  assert.equal(CLIENT_CONTACT_EMAIL, 'info@tdotimm.com');
-  assert.equal(EMAIL_US, 'email us at <a href="mailto:info@tdotimm.com" style="color:inherit">info@tdotimm.com</a>');
-  assert.equal(NO_REPLY, "Please don't reply to this email — this inbox isn't monitored.");
+
+test('no client email still says "don\'t reply" / "isn\'t monitored" / "not as a reply"; the client emails use the shared reply notice; the contact is info@tdotimm.com', () => {
+  const C = require('../src/utils/clientContact');
+  assert.equal(C.CLIENT_CONTACT_EMAIL, 'info@tdotimm.com');
+  assert.equal(C.CLIENT_REPLY_TO, 'info@tdotimm.com');
+  assert.equal(C.EMAIL_US, 'email us at <a href="mailto:info@tdotimm.com" style="color:inherit">info@tdotimm.com</a>');   // pages only (the client portal)
+  assert.equal(C.NO_REPLY, undefined, 'the old "don\'t reply" sentence is gone');
   const offenders = [];
   for (const f of fs.readdirSync(SERVICES).filter((x) => x.endsWith('.js'))) {
     const src = fs.readFileSync(path.join(SERVICES, f), 'utf8');
     src.split('\n').forEach((line, i) => {
       if (/^\s*(\/\/|\*)/.test(line)) return;                                   // comments
-      if (/just reply|simply reply|reply to this email|reply to the email|reply with it attached/i.test(line)) offenders.push(`${f}:${i + 1}: ${line.trim().slice(0, 90)}`);
+      if (/don'?t reply|do not reply to|isn'?t monitored|is not monitored|not monitored|not as a reply|NO_REPLY/i.test(line)) offenders.push(`${f}:${i + 1}: ${line.trim().slice(0, 90)}`);
     });
   }
-  assert.deepEqual(offenders, [], 'every "reply" line was replaced');
-  // the files that carried one now use the shared line, as a real template expression
+  assert.deepEqual(offenders, [], 'every "don\'t reply" line was replaced by the reply notice');
+  // every file that sends a client email shows the shared notice (as a template expression)
   for (const f of ['intakeFormService', 'paymentService', 'sponsorOnboardingService', 'consultationFormService', 'retainerCountersignService', 'bookingService',
     'htmlQuestionnaireReviewService', 'emailService', 'consultAgreementService', 'milestonePaymentService', 'chasingLoopService', 'escalationRoutingService',
-    'revisionNotificationService', 'missingFieldsEmailService', 'consultationService', 'retainerService2', 'clientPortalService',
-    'docReminderService']) {   // the document reminders (block 2, 2026-11-06): the closing line is added outside the template
+    'revisionNotificationService', 'missingFieldsEmailService', 'consultationService', 'retainerService2', 'webinarEmailService',
+    'docReminderService']) {   // the document reminders: the notice is added outside the template
     const src = fs.readFileSync(path.join(SERVICES, `${f}.js`), 'utf8');
-    assert.match(src, /\$\{require\('\.\.\/utils\/clientContact'\)\.(EMAIL_US|CLIENT_CONTACT_EMAIL)\}/, f);
+    assert.match(src, /replyNoticeHtml\((?:'(?:items|case|lead)'|resend \? 'case' : 'items')/, f);
   }
-  // the retainer email: where the signed copy goes
+  // the retainer email: the signed copy comes back as a reply
   const r2 = fs.readFileSync(path.join(SERVICES, 'retainerService2.js'), 'utf8');
-  assert.match(r2, /<b>2\. Email the signed copy to us<\/b> at <a href="mailto:\$\{require\('\.\.\/utils\/clientContact'\)\.CLIENT_CONTACT_EMAIL\}">/);
+  assert.match(r2, /<b>2\. Reply to this email<\/b> with the signed agreement attached\./);
+  assert.doesNotMatch(r2, /Email the signed copy to us/);
 });
 
-test('the booking invite email (the one Gauri read out) renders the new line, not "just reply"', () => {
+test('the booking invite email (the one Gauri read out) ends with its own line and the lead notice', () => {
   const src = fs.readFileSync(path.join(SERVICES, 'bookingService.js'), 'utf8');
   const line = src.split('\n').find((l) => /This link is personal to you/.test(l));
   const html = new Function('BRAND', 'require', `return \`${line.trim()}\`;`)({ mutedOnLight: '#6B7280' }, (p) => require(path.join(SERVICES, p)));
-  assert.equal(html.replace(/<[^>]+>/g, ''), "This link is personal to you — please don't share it. Questions? Please email us at info@tdotimm.com. Please don't reply to this email — this inbox isn't monitored.");
+  assert.equal(html.replace(/<[^>]+>/g, ''), "This link is personal to you — please don't share it.");
+  assert.match(src, /This link is personal to you — please don't share it\.<\/p>\n\s*\$\{require\('\.\.\/utils\/clientContact'\)\.replyNoticeHtml\('lead'/);
 });
 
 test('the staff-name list says Melanie (was the "Melini" typo)', () => {

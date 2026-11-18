@@ -124,7 +124,7 @@ test('SOWP-017 end to end (onboard): reads, then row → manifest → pending �
   assert.ok(names().indexOf('sendEmail') > names().indexOf('writeMarker'), 'pending is written BEFORE the send');
   const email = calls.find((c) => c[0] === 'sendEmail');
   assert.equal(email[1], 'faheem@example.com');
-  assert.match(email[2], /^Action Required — Your part in Aisha Khan's SOWP application \(2026-SOWP-017\)$/);
+  assert.match(email[2], /^Action Required — Your part in Aisha Khan's SOWP application — 2026-SOWP-017 · Document Collection Started$/);
   const m = store.marker;
   assert.equal(m.status, 'sent'); assert.equal(m.version, 1); assert.equal(m.caseRef, '2026-SOWP-017'); assert.equal(m.leadId, '9001');
   assert.deepEqual(m.sponsor, { name: 'Faheem Khan', emailMasked: 'f***@example.com', emailKey: S.emailKeyOf('faheem@example.com') }, 'the address fingerprint, never the address');
@@ -457,7 +457,7 @@ test("'staff' with the marker sent: one more send, sends.length 2, variant resen
   assert.deepEqual(store.marker.sends.map((x) => x.by), ['auto:dcs', 'Gauri']);
   assert.deepEqual(store.marker.sends.map((x) => x.variant), ['onboarding', 'resend']);
   const emails = calls.filter((c) => c[0] === 'sendEmail');
-  assert.match(emails[1][2], /^Your portal link for Aisha Khan's application — 2026-SOWP-017$/);
+  assert.match(emails[1][2], /^Your portal link for Aisha Khan's application — 2026-SOWP-017 · Document Collection Started$/);
   const notes = calls.filter((c) => c[0] === 'postNote');
   assert.match(notes[1][2], /Sponsor portal email re-sent by Gauri to f\*\*\*@example\.com \(Worker Spouse\)/);
   assert.ok(!/Questionnaire section .* created/.test(notes[1][2]), 'nothing was created on the resend');
@@ -478,7 +478,7 @@ test('a RESEND that failed: the next staff send is still a resend (the sponsor h
   const r = await staff();
   assert.equal(r.sent, true); assert.equal(r.variant, 'resend');
   const emails = calls.filter((c) => c[0] === 'sendEmail');
-  assert.match(emails[emails.length - 1][2], /^Your portal link for Aisha Khan's application — 2026-SOWP-017$/, 'not the "has retained TDOT" onboarding wording again');
+  assert.match(emails[emails.length - 1][2], /^Your portal link for Aisha Khan's application — 2026-SOWP-017 · Document Collection Started$/, 'not the "has retained TDOT" onboarding wording again');
   assert.match(calls.filter((c) => c[0] === 'postNote').pop()[2], /re-sent by Gauri/);
   assert.deepEqual(store.marker.sends.map((x) => x.variant), ['onboarding', 'resend']);
 }));
@@ -1037,7 +1037,7 @@ test('inviter changed after a send: the card says not emailed (and whom the earl
   assert.equal(r.sent, true); assert.equal(r.variant, 'onboarding'); assert.equal(r.to, 'r***@example.com');
   const email = calls.slice(before).find((c) => c[0] === 'sendEmail');
   assert.equal(email[1], 'rahim@example.com');
-  assert.match(email[2], /^Action Required — Your part in Aisha Khan's SOWP application \(2026-SOWP-017\)$/);
+  assert.match(email[2], /^Action Required — Your part in Aisha Khan's SOWP application — 2026-SOWP-017 · Document Collection Started$/);
   assert.match(email[3], /Hi Rahim,/);
   assert.doesNotMatch(email[3], /\bagain\b/, 'a first email to this person, not "here is the link again"');
   assert.equal(store.marker.sendCount, 1, 'the new person\'s own count');
@@ -1486,7 +1486,7 @@ test("a stale 'pending' that got as far as its send: the next automatic pass sen
   const r = await onboard();
   assert.equal(r.sent, true); assert.equal(r.variant, 'resend');
   const email = calls.find((c) => c[0] === 'sendEmail');
-  assert.match(email[2], /^Your portal link for Aisha Khan's application — 2026-SOWP-017$/);
+  assert.match(email[2], /^Your portal link for Aisha Khan's application — 2026-SOWP-017 · Document Collection Started$/);
   assert.doesNotMatch(email[2], /Action Required/);
   const note = calls.find((c) => c[0] === 'postNote')[2];
   assert.match(note, /Sponsor portal email re-sent automatically to f\*\*\*@example\.com \(Worker Spouse\) — .* \(Toronto\)\./);

@@ -36,6 +36,7 @@
 
 const leadService = require('./leadService');
 const mondayApi   = require('./mondayApi');
+const { CLIENT_REPLY_TO } = require('../utils/clientContact');
 
 // The Toronto calendar day: a payment recorded at 8:30 pm Toronto is dated that
 // evening, not tomorrow (UTC) — and "the same amount, the same day" means one day.
@@ -247,7 +248,8 @@ function etransferInstructionsHtml({ firstName, label, dollars, reference }) {
         <p style="margin:10px 0 0">In the e-transfer <b>message/memo</b>, please include this reference so we can match your payment:</p>
         <p style="margin:4px 0;font-size:15px"><b>${esc(reference)}</b></p>
       </div>
-      <p style="font-size:13px;color:${BRAND.mutedOnLight}">Once we receive your e-transfer we'll confirm it and send your receipt. Questions? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
+      <p style="font-size:13px;color:${BRAND.mutedOnLight}">Once we receive your e-transfer we'll confirm it and send your receipt.</p>
+      ${require('../utils/clientContact').replyNoticeHtml('case', { margin: '16px 0 0' })}
     </div></div>`;
 }
 
@@ -275,7 +277,8 @@ function paymentReceiptHtml({ firstName, label, amountCents, paidCents, totalCen
         <p style="margin:0 0 8px"><b>Balance remaining: ${esc(dollarsCAD(balance))}</b></p>
         <p style="margin:4px 0">When you are ready, please send an Interac e-Transfer of <b>${esc(dollarsCAD(balance))}</b> to <b>${esc(ETRANSFER_EMAIL)}</b>${payReference ? ` with the reference <b>${esc(payReference)}</b> in the message` : ''}.</p>
       </div>`}
-      <p style="font-size:13px;color:${BRAND.mutedOnLight}">This is your receipt — please keep it for your records. Questions? Please ${require('../utils/clientContact').EMAIL_US}. ${require('../utils/clientContact').NO_REPLY}</p>
+      <p style="font-size:13px;color:${BRAND.mutedOnLight}">This is your receipt — please keep it for your records.</p>
+      ${require('../utils/clientContact').replyNoticeHtml('case', { margin: '16px 0 0' })}
     </div></div>`;
 }
 
@@ -328,9 +331,12 @@ async function sendMilestoneEtransferRequest(leadId, index) {
     let emailed = false;   // the page says what really happened (2026-11-04: phone-only clients exist)
     if (lead.email) {
       try {
+        // a case email addressed through the lead: "<text> — <ref> · <stage>" from the case read now (plain subject if that read fails)
+        const subject = await require('./clientMasterService').leadCaseSubject(lead, `Your TDOT Immigration payment — ${row.label}`, '[Milestone]');
         await require('./microsoftMailService').sendEmail({
-          to: lead.email, subject: `Your TDOT Immigration payment — ${row.label}`,
+          to: lead.email, subject,
           html: etransferInstructionsHtml({ firstName: (lead.fullName || 'there').split(' ')[0], label: row.label, dollars, reference }),
+          replyTo: CLIENT_REPLY_TO,
         });
         emailed = true;
       } catch (err) { console.warn(`[Milestone] e-transfer request email failed for ${leadId}#${index}: ${err.message}`); }
@@ -546,11 +552,12 @@ async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', 
 async function _emailReceipt(lead, p) {
   if (!paymentReceiptsEnabled() || !lead || !lead.email) return false;
   try {
+    const subject = await require('./clientMasterService').leadCaseSubject(lead, `Your TDOT Immigration payment receipt — ${p.label}`, '[Milestone]');
     await require('./microsoftMailService').sendEmail({
       to: lead.email,
-      subject: `Your TDOT Immigration payment receipt — ${p.label}`,
+      subject,
       html: paymentReceiptHtml({ firstName: (lead.fullName || 'there').split(' ')[0], ...p }),
-      replyTo: process.env.EMAIL_REPLY_TO || undefined,
+      replyTo: CLIENT_REPLY_TO,
     });
     return true;
   } catch (err) { console.warn(`[Milestone] receipt email failed for ${lead.id}: ${err.message}`); return false; }
@@ -564,4 +571,5 @@ module.exports = {
   parsePayments, scheduleRows,
   // part-payments (2026-10-13)
   ledgerOf, paidCentsOf, settlingIndexOf, ledgerComplete, todayISO, paymentReceiptHtml, paymentReceiptsEnabled, LEDGER_MAX,
+  _emailReceipt,   // tests (the reply-thread change: subject, Reply-To, best-effort case read)
 };

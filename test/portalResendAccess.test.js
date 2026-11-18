@@ -50,7 +50,10 @@ test('sendIntakeEmail(resend): "link again" wording, same links, token not print
     const r = await emailSvc.sendIntakeEmail('12652949990', { resend: true });
     assert.deepEqual(r, { sent: true, to: 'jasnoor.k@example.com', caseRef: '2026-OINP-006' });
     assert.equal(sent.length, 1);
-    assert.equal(sent[0].subject, 'Your Client Portal link — 2026-OINP-006');
+    // the case subject (2026-11-18): the ref, then the exact Case Stage read with the row
+    assert.equal(sent[0].subject, 'Your Client Portal link — 2026-OINP-006 · Profile Created');
+    assert.equal(sent[0].replyTo, 'info@tdotimm.com');
+    assert.match(sent[0].html, /<strong>Important:<\/strong> If you need to contact us about this email/, 'a resend asks for nothing: the "case" notice');
     assert.match(sent[0].html, /Here is your Client Portal link again/);
     assert.ok(!/Your case has been set up/.test(sent[0].html), 'no onboarding wording');
     assert.ok(sent[0].html.includes('/client/2026-OINP-006?t=TDOT-abc'), 'same portal link, same token');
@@ -66,7 +69,8 @@ test('sendIntakeEmail: the onboarding email is unchanged, and a missing address 
   try {
     const r = await emailSvc.sendIntakeEmail('12652949990');
     assert.equal(r.sent, true);
-    assert.match(sent[0].subject, /^Action Required — Your OINP Case Is Ready/);
+    assert.equal(sent[0].subject, 'Action Required — Your OINP Case Is Ready — 2026-OINP-006 · Profile Created');
+    assert.match(sent[0].html, /<strong>Important:<\/strong> Please reply directly to this email/, 'the onboarding email asks for items: the "items" notice');
     assert.match(sent[0].html, /Your case has been set up/);
     assert.match(sent[0].html, /Access Token<\/td>/);
   } finally { restore.reverse().forEach((r) => r()); }

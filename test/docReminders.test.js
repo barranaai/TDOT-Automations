@@ -85,7 +85,8 @@ test('the code defaults: four rows, every body valid, every body has {MissingLis
     assert.doesNotMatch(cfg.DEFAULTS[name].body, /<[a-z]/i, `${name} is plain text`);
     // each list token is a paragraph of its own (a token mid-sentence would cut the sentence in two), the questionnaire right after the documents
     assert.match(cfg.DEFAULTS[name].body, /\n\n\{MissingList\}\n\n\{QuestionnaireList\}\n\n/, `${name}: the two lists, each on its own paragraph`);
-    assert.ok(!tpl.tellsToReply(cfg.DEFAULTS[name].body) && !tpl.tellsToReply(cfg.DEFAULTS[name].subject), `${name}: no reply wording (the sender is a no-reply mailbox)`);
+    // the subject no longer carries {CaseRef}: the app appends " — <ref> · <stage>" (caseSubject, 2026-11-18)
+    assert.doesNotMatch(cfg.DEFAULTS[name].subject, /\{CaseRef\}/, `${name}: the ref is appended by the app, once`);
   }
   // Gauri's three texts (2026-11-07): personalised greeting, her wording, the sign-off
   for (const name of ['Reminder 1', 'Reminder 2', 'Final']) {
@@ -97,9 +98,8 @@ test('the code defaults: four rows, every body valid, every body has {MissingLis
   assert.match(r1, /I hope you are doing well\.\n\nPlease ensure that you complete the questionnaire to 100% and upload at least 80% of the required documents to your client portal\. Please note that both requirements must be fulfilled before we can assign your application to an officer for further processing\.\n\n\{MissingList\}/);
   assert.match(r1, /We kindly request you to complete the questionnaire and upload the pending documents as soon as possible to avoid any delays in your application process\./);
   assert.match(r1, /\n\nThank you for your cooperation\.\n\nKind regards,/);
-  // the second reminder: "Please reply to this email once…" is a no-reply-safe sentence
+  // the second reminder: the code default still reads "Please let us know once…" (the text is unchanged; replies are welcome since 2026-11-18)
   assert.match(r2, /^Hello \{ClientName\},\n\nPlease let us know once you have uploaded your documents and completed the questionnaire\.\n\n/);
-  assert.doesNotMatch(r2, /reply/i);
   assert.match(r2, /at least 80% of the requested documents and information must be completed and available in your file\.\n\n\{MissingList\}/);
   assert.match(r2, /If your current immigration status is approaching expiry, please keep track of the expiry date and inform our office well in advance\./);
   assert.match(r2, /We will be happy to assist\.\n\nThank you for your cooperation\./);
@@ -118,16 +118,18 @@ test('the code defaults: four rows, every body valid, every body has {MissingLis
   assert.deepEqual(tpl.validate({ subject: '', body: '{MissingList} {QuestionnaireList}' }).warnings, [], '{QuestionnaireList} is a known merge field');
 });
 
-test('validate: tags are stripped, a body without {MissingList} or with "reply" wording is refused, an unknown {Token} is a warning only', () => {
+test('validate: tags are stripped, a body without {MissingList} is refused, "reply" wording is ALLOWED (2026-11-18), an unknown {Token} is a warning only', () => {
   const v = tpl.validate({ subject: 'Hi <b>there</b>', body: '<p>Dear {ClientName},</p><p>Send {MissingList} &amp; more <script>alert(1)</script></p>' });
   assert.equal(v.ok, true);
   assert.equal(v.subject, 'Hi there');
   assert.equal(v.body, 'Dear {ClientName},\n\nSend {MissingList} & more alert(1)');
   assert.equal(tpl.validate({ subject: '', body: 'Dear {ClientName}, send the papers.' }).problems[0], 'the body has no {MissingList} — the missing documents would not be listed');
-  for (const bad of ['Just reply to this message with {MissingList}', 'Reply to this email with {MissingList}', 'Please reply with it attached {MissingList}']) {
-    assert.match(tpl.validate({ subject: '', body: bad }).problems.join(' '), /tells the client to reply/, bad);
+  // the old "never tell the client to reply" rule is gone: client emails carry Reply-To info@ and ask for replies
+  for (const fine of ['Just reply to this message with {MissingList}', 'Reply to this email with {MissingList}', 'Please reply to this email once done. {MissingList}']) {
+    assert.deepEqual(tpl.validate({ subject: '', body: fine }).problems, [], fine);
   }
-  assert.match(tpl.validate({ subject: 'Reply to the email', body: 'x {MissingList}' }).problems.join(' '), /tells the client to reply/, 'the subject too');
+  assert.deepEqual(tpl.validate({ subject: 'Reply to the email', body: 'x {MissingList}' }).problems, [], 'the subject too');
+  assert.equal(tpl.tellsToReply, undefined, 'the reply check is gone');
   const w = tpl.validate({ subject: '', body: '{MissingList} by {Deadlne} for {ClientName}' });
   assert.equal(w.ok, true);
   assert.deepEqual(w.warnings, ['unknown merge field left as typed: {Deadlne}']);
@@ -185,18 +187,20 @@ test('a board row with no Subject keeps the default subject; a row switched off 
 test('an invalid board row → its code default + a diagnostic naming the row and the fault; the valid rows still come from the board', async () => {
   await withBoard([
     { name: 'Reminder 1', body: 'Dear {ClientName}, please send the papers.' },                       // no {MissingList}
-    { name: 'Final', body: 'Just reply to this message with everything {MissingList} {LastDay}' },      // reply wording
+    { name: 'Final', body: 'Just reply to this message with everything {LastDay}' },                    // no {MissingList} (reply wording is fine since 2026-11-18)
     { name: 'Reminder 2', body: 'Fine {MissingList} {Deadlne}' },                                       // unknown token = warning only
+    { name: 'Automatic', body: 'Please reply to this email once done. {MissingList}' },                  // reply wording — USED (2026-11-18)
   ], async () => {
     assert.equal((await tpl.templateFor(1)).source, 'default');
     assert.equal((await tpl.templateFor(3)).source, 'default');
+    assert.equal((await tpl.templateFor('auto')).source, 'board', 'a board text that asks for a reply is used');
     const t2 = await tpl.templateFor(2);
     assert.equal(t2.source, 'board');
     assert.deepEqual(t2.warnings, ['unknown merge field left as typed: {Deadlne}']);
     const d = tpl.diagnostics();
     assert.deepEqual(d.map((x) => x.row), ['Reminder 1', 'Final']);
     assert.match(d[0].problems[0], /board template "Reminder 1" is invalid — the body has no \{MissingList\}.*the code default is used/);
-    assert.match(d[1].problems[0], /tells the client to reply/);
+    assert.match(d[1].problems[0], /board template "Final" is invalid — the body has no \{MissingList\}/);
     d[0].problems.push('mutated'); assert.equal(tpl.diagnostics()[0].problems.length, 1, 'the getter hands out copies');
   });
 });
@@ -205,13 +209,13 @@ test('boardProblemFor / boardProblems (review 2026-11-07 [23]): the staff-facing
   await withBoard([
     { name: 'Reminder 1', body: 'No list here' },
     { name: 'Reminder 2', body: 'Fine {MissingList}' },
-    { name: 'Final', body: 'Please reply to this email {MissingList}' },
+    { name: 'Final', body: 'Please reply to this email' },
   ], async () => {
     await tpl.loadTemplates();
     assert.equal(tpl.boardProblemFor('Reminder 1'), 'The Reminder 1 text on the Monday board could not be used (the body has no {MissingList} — the missing documents would not be listed) — the built-in text is used instead.');
     assert.equal(tpl.boardProblemFor('Reminder 2'), '', 'a board row in use');
     assert.equal(tpl.boardProblemFor('Automatic'), '', 'not written yet is not a fault');
-    assert.match(tpl.boardProblemFor('Final'), /^The Final text on the Monday board could not be used \(the text tells the client to reply[^)]*\) — the built-in text is used instead\.$/);
+    assert.match(tpl.boardProblemFor('Final'), /^The Final text on the Monday board could not be used \(the body has no \{MissingList\}[^)]*\) — the built-in text is used instead\.$/);
     assert.deepEqual(tpl.boardProblems().map((x) => x.slice(0, 14)), ['The Reminder 1', 'The Final text']);
     assert.equal(tpl.diagnostics()[0].reason, 'the body has no {MissingList} — the missing documents would not be listed');
   });
@@ -315,7 +319,7 @@ test('buildReminderEmail: every token filled for every level; the list sits wher
     assert.match(r.text, /  - Passport\n/);
     assert.equal(r.to, 'a***@example.com');
     assert.equal(r.recipient, 'asha.client@example.com');
-    assert.equal(r.replyTo, process.env.EMAIL_REPLY_TO || undefined);
+    assert.equal(r.replyTo, 'info@tdotimm.com', 'Reply-To the office inbox — a code constant, never the EMAIL_REPLY_TO env value (2026-11-18)');
     assert.deepEqual(r.warnings, [], `level ${level}`);
     assert.equal(r.template.source, 'default');
   }
@@ -326,6 +330,10 @@ test('buildReminderEmail: every token filled for every level; the list sits wher
   assert.equal(r2.subject, 'Second reminder: documents and questionnaire for your Super Visa application — 2026-TEST-001');
   const r3 = await svc.buildReminderEmail(baseOpts({ level: 3, lastDay: '2026-11-14' }));
   assert.equal(r3.subject, 'Final reminder: please complete your documents and questionnaire by 14 Nov 2026 — 2026-TEST-001');
+  // the case subject (2026-11-18): the exact Case Stage after the ref; never "Stuck", never blank
+  assert.equal((await svc.buildReminderEmail(baseOpts({ caseStage: 'Document Collection Started' }))).subject,
+    'Reminder: documents and questionnaire for your Super Visa application — 2026-TEST-001 · Document Collection Started');
+  assert.equal((await svc.buildReminderEmail(baseOpts({ caseStage: 'Stuck' }))).subject, 'Reminder: documents and questionnaire for your Super Visa application — 2026-TEST-001');
   assert.match(r3.html, /upload all pending documents immediately, and no later than 14 Nov 2026\./);
   assert.match(r3.text, /upload all pending documents immediately, and no later than 14 Nov 2026\./);
   assert.match(r3.html, /closed or marked inactive/);
@@ -362,19 +370,20 @@ test('buildReminderEmail: a blank or placeholder case type ("—", "-", "Not set
   const S = staffStubs();
   try {
     const p = await svc.previewStaffReminder({ overview: OV({ caseType: '—' }), level: 1 });
-    assert.equal(p.subject, 'Reminder: documents and questionnaire for your immigration application — 2026-TEST-001');
+    // the dialog's subject box is the template's text; the email adds " — <ref> · <stage>" (p.email.subject)
+    assert.equal(p.subject, 'Reminder: documents and questionnaire for your immigration application');
+    assert.equal(p.email.subject, 'Reminder: documents and questionnaire for your immigration application — 2026-TEST-001 · Document Collection Started');
     assert.doesNotMatch(p.subject + p.body, /your — application|your - application/);
   } finally { S.restore(); }
 });
 
-test('buildReminderEmail: the layout — logo header like the intake email, the EMAIL_US closing line and the no-reply line OUTSIDE the template, no nested <p>, ?t= on every link, the portal button + the plain documents link', async () => {
+test('buildReminderEmail: the layout — logo header like the intake email, the "items" reply notice OUTSIDE the template (html + text), no nested <p>, ?t= on every link, the portal button + the plain documents link', async () => {
   const r = await svc.buildReminderEmail(baseOpts());
-  const { EMAIL_US, NO_REPLY } = require('../src/utils/clientContact');
-  assert.ok(r.html.includes(EMAIL_US), 'EMAIL_US');
-  assert.ok(r.html.includes(NO_REPLY), 'NO_REPLY');
-  assert.ok(r.text.includes('email us at info@tdotimm.com'));
-  assert.ok(r.text.includes(NO_REPLY));
-  assert.ok(!cfg.DEFAULTS['Reminder 1'].body.includes('info@tdotimm.com'), 'the closing line is not in the template');
+  const C = require('../src/utils/clientContact');
+  assert.ok(r.html.includes(C.replyNoticeHtml('items', { margin: '0' })), 'the highlighted notice');
+  assert.ok(r.text.endsWith(C.replyNoticeText('items')), 'the plain-text notice closes the text part');
+  assert.doesNotMatch(r.html + r.text, /don't reply|isn't monitored|email us at/i);
+  assert.ok(!cfg.DEFAULTS['Reminder 1'].body.includes('Important:'), 'the notice is not in the template');
   assert.match(r.html, /<img src="[^"]+\/assets\/tdot-logo\.png" alt="TDOT Immigration"/);
   assert.match(r.html, /Open your portal →/);
   assert.doesNotMatch(r.html, /<p[^>]*>(?:(?!<\/p>)[\s\S])*<p\b/, 'no <p> inside a <p>');
@@ -388,7 +397,6 @@ test('buildReminderEmail: the layout — logo header like the intake email, the 
   assert.match(r.text, PORTAL); assert.match(r.text, DOCS);
   assert.deepEqual(r.links, { portalUrl: r.links.portalUrl, documentsUrl: r.links.documentsUrl });
   assert.match(r.links.portalUrl, PORTAL); assert.match(r.links.documentsUrl, DOCS);
-  assert.doesNotMatch(r.html, /just reply|reply to this email(?!.*isn)/i);
 });
 
 test('buildReminderEmail: HTML in a board template, a document name or the staff line is stripped or escaped — never rendered', async () => {
@@ -411,7 +419,7 @@ test('buildReminderEmail: HTML in a board template, a document name or the staff
 
 test('buildReminderEmail: the staff edits — subject and body overrides are re-checked at send; reply wording throws; a body without {MissingList} gets the list appended + a warning; unknown tokens and a missing deadline are flagged', async () => {
   const r = await svc.buildReminderEmail(baseOpts({ subjectOverride: 'Hello {ClientName} <b>!</b>', bodyOverride: 'Dear {ClientName}, here is what we need:\n{MissingList}\nBy {Deadline} please, {Deadlne}.' }));
-  assert.equal(r.subject, 'Hello Asha Client !');
+  assert.equal(r.subject, 'Hello Asha Client ! — 2026-TEST-001', 'the ref is appended to an edited subject too');
   assert.match(r.html, /here is what we need:<\/p>\n<table/);
   assert.match(r.html, /By 16 Dec 2026 please, \{Deadlne\}\./, 'unknown token left visible');
   assert.deepEqual(r.warnings, ['unknown merge field left as typed: {Deadlne}']);
@@ -424,15 +432,16 @@ test('buildReminderEmail: the staff edits — subject and body overrides are re-
     'the text names the deadline, but this case has no actual deadline — it reads "not set"',
   ]);
   assert.match(r2.html, /by not set\./);
-  await assert.rejects(svc.buildReminderEmail(baseOpts({ bodyOverride: 'Just reply to this message with {MissingList}' })), /cannot be sent: the text tells the client to reply/);
-  await assert.rejects(svc.buildReminderEmail(baseOpts({ bodyOverride: '{MissingList}', subjectOverride: 'Reply to the email' })), /tells the client to reply/);
-  // review 2026-11-07: a subject-only edit and the staff's extra line obey the same rule (they used to slip past the body branch)
-  await assert.rejects(svc.buildReminderEmail(baseOpts({ subjectOverride: 'Please reply to this message' })), /cannot be sent: the subject tells the client to reply/);
-  await assert.rejects(svc.buildReminderEmail(baseOpts({ extraLine: 'Just reply with the file attached.' })), /cannot be sent: the extra line tells the client to reply/);
-  await assert.rejects(svc.buildReminderEmail(baseOpts({ extraLine: 'You can <b>simply reply</b> to us.' })), /extra line tells the client to reply/, 'tags do not hide it');
-  const fine = await svc.buildReminderEmail(baseOpts({ subjectOverride: 'Documents — {CaseRef}', extraLine: 'Please email us if a document is hard to get.' }));
-  assert.equal(fine.subject, 'Documents — 2026-TEST-001');
-  assert.ok(tpl.tellsToReply('Reply to the email') && !tpl.tellsToReply('Please email us at info@tdotimm.com'));
+  // reply wording is allowed since 2026-11-18 (Reply-To info@): the body, the subject and the staff's extra line
+  const rep = await svc.buildReminderEmail(baseOpts({ bodyOverride: 'Just reply to this message with {MissingList}', subjectOverride: 'Please reply to this message', extraLine: 'You can <b>simply reply</b> to us.' }));
+  assert.equal(rep.subject, 'Please reply to this message — 2026-TEST-001');
+  assert.match(rep.html, /Just reply to this message with/);
+  assert.match(rep.html, /You can simply reply to us\./);
+  // a {CaseRef} the subject already has is taken out and the ref appended once
+  const fine = await svc.buildReminderEmail(baseOpts({ subjectOverride: 'Documents — {CaseRef}', extraLine: 'Please email us if a document is hard to get.', caseStage: 'Document Collection Started' }));
+  assert.equal(fine.subject, 'Documents — 2026-TEST-001 · Document Collection Started');
+  // the length limit is checked on the subject as sent (ref + stage added)
+  await assert.rejects(svc.buildReminderEmail(baseOpts({ subjectOverride: 'x'.repeat(190), caseStage: 'Document Collection Started' })), /subject is too long \(max 200 characters, with the case reference and stage added\)/);
   // the real variant warns when the SUBJECT names a deadline the case does not have (it used to check the body only)
   const sdl = await svc.buildReminderEmail(baseOpts({ subjectOverride: 'Documents by {Deadline} — {CaseRef}', deadline: { type: '', actualDeadline: '', promisedSubmissionDate: '' } }));
   assert.equal(sdl.subject, 'Documents by not set — 2026-TEST-001');
@@ -474,10 +483,11 @@ test('the helpers: dates read "16 Dec 2026"; one instruction line; the automatic
   } finally { if (keep === undefined) delete process.env.DOC_REMINDERS_AUTO; else process.env.DOC_REMINDERS_AUTO = keep; }
 });
 
-test('source rules: the closing line is the shared EMAIL_US expression, the documents link carries the code, the templates never write, and the service writes/sends ONLY through its io seam', () => {
+test('source rules: the closing notice is the shared replyNoticeHtml(\'items\'), the documents link carries the code, the templates never write, and the service writes/sends ONLY through its io seam', () => {
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const svcSrc = read('src/services/docReminderService.js'), tplSrc = read('src/services/docReminderTemplates.js');
-  assert.match(svcSrc, /\$\{require\('\.\.\/utils\/clientContact'\)\.EMAIL_US\}/);
+  assert.match(svcSrc, /\$\{replyNoticeHtml\('items', \{ margin: '0' \}\)\}/);
+  assert.match(svcSrc, /replyNoticeText\('items'\)/, 'the text part carries the plain notice');
   assert.match(svcSrc, /documentsUrl = `\$\{BASE_URL\}\/documents\/\$\{encodedRef\}\?t=\$\{encodeURIComponent\(accessToken\)\}`/);
   assert.doesNotMatch(tplSrc, /mutation\s*[({]/, 'no Monday write'); assert.doesNotMatch(tplSrc, /sendEmail\(/, 'nothing sends here');
   assert.match(tplSrc, /items_page\(limit: 50\)/);
@@ -807,7 +817,8 @@ test('previewStaffReminder: the template with the merge fields filled except the
     assert.match(shared.body, /\nTDOT Immigration\n/);
     assert.equal(svc.senderName(null), 'TDOT Immigration');
     assert.equal(p.to, 'a***@example.com');
-    assert.equal(p.subject, 'Reminder: documents and questionnaire for your Super Visa application — 2026-TEST-001');
+    assert.equal(p.subject, 'Reminder: documents and questionnaire for your Super Visa application', 'the box holds the text; the app appends the ref and stage');
+    assert.equal(p.email.subject, 'Reminder: documents and questionnaire for your Super Visa application — 2026-TEST-001 · Document Collection Started');
     assert.match(p.body, /^Hello Asha Client,\n/);
     assert.ok(p.body.includes('{MissingList}') && p.body.includes('{QuestionnaireList}'), 'the app-inserted tokens stay');
     assert.ok(!/\{(ClientName|CaseRef|CaseType|MissingCount|Deadline|PromisedDate|StaffName)\}/.test(p.body), 'every other merge field is filled');
@@ -867,7 +878,9 @@ test('sendStaffReminder: the claim note goes BEFORE the email, to the real addre
     assert.equal(S.sent.length, 1);
     const m = S.sent[0];
     assert.equal(m.to, 'asha.client@example.com', 'the email goes to the real address');
-    assert.equal(m.subject, 'Final notice — 2026-TEST-001');
+    // the case subject: the typed {CaseRef} is taken out, then " — <ref> · <the overview's fresh Case Stage>"
+    assert.equal(m.subject, 'Final notice — 2026-TEST-001 · Document Collection Started');
+    assert.equal(m.replyTo, 'info@tdotimm.com', 'replies reach the office inbox');
     assert.match(m.html, /Last call\./);
     assert.match(m.html, /We wait until 21 Nov 2026\./);
     assert.match(m.html, /We are still looking for the lease &amp; the letter/, 'the free text is tag-stripped and escaped');
@@ -885,7 +898,7 @@ test('sendStaffReminder: the claim note goes BEFORE the email, to the real addre
   function nextIdAfter() { return 1001; }
 });
 
-test('sendStaffReminder refusals (nothing posted, nothing sent): bad level, the final without a last day or with one in the past, the staff\'s text telling the client to reply, the gate, 0 missing rows, 3 failed tries today', async () => {
+test('sendStaffReminder refusals (nothing posted, nothing sent): bad level, the final without a last day or with one in the past, a subject too long as sent, the gate, 0 missing rows, 3 failed tries today', async () => {
   const S = staffStubs();
   try {
     const nothing = () => assert.equal(S.posted.length + S.sent.length, 0);
@@ -893,7 +906,8 @@ test('sendStaffReminder refusals (nothing posted, nothing sent): bad level, the 
     await assert.rejects(svc.sendStaffReminder({ overview: OV(), level: 3, subject: 'x', body: '{MissingList}', lastDay: '' }), (e) => e.status === 400 && e.reason === 'bad-last-day'); nothing();
     await assert.rejects(svc.sendStaffReminder({ overview: OV(), level: 3, subject: 'x', body: '{MissingList}', lastDay: '2026-11-06' }), (e) => e.status === 400 && /is in the past/.test(e.message)); nothing();
     await assert.rejects(svc.sendStaffReminder({ overview: OV(), level: 3, subject: 'x', body: '{MissingList}', lastDay: 'next week' }), (e) => e.status === 400 && e.reason === 'bad-last-day'); nothing();
-    await assert.rejects(svc.sendStaffReminder({ overview: OV(), level: 1, subject: 'x', body: 'Just reply to this email with {MissingList}' }), (e) => e.status === 400 && e.reason === 'bad-text' && /tells the client to reply/.test(e.message)); nothing();
+    // reply wording is fine since 2026-11-18; a subject too long once the ref and stage are added is still a bad text
+    await assert.rejects(svc.sendStaffReminder({ overview: OV(), level: 1, subject: 'x'.repeat(190), body: 'Just reply to this email with {MissingList}' }), (e) => e.status === 400 && e.reason === 'bad-text' && /subject is too long/.test(e.message)); nothing();
     await assert.rejects(svc.sendStaffReminder({ overview: OV({ automationLock: 'Yes' }), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.status === 409 && e.reason === 'locked'); nothing();
     await assert.rejects(svc.sendStaffReminder({ overview: OV({ group: { id: '', title: 'Leads' } }), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.reason === 'not-a-case'); nothing();
     await assert.rejects(svc.sendStaffReminder({ overview: OV({ group: { id: 'group_mm3b9tap', title: 'Cancel /Did not retained' } }), level: 1, subject: 'x', body: '{MissingList}' }), (e) => e.reason === 'not-a-case'); nothing();
@@ -1080,12 +1094,9 @@ test('routes: the service\'s refusals keep their status and reason; the text lim
     routes._resetForTests();
     let res = fakeRes(); await routes.send(req({ body: { level: 3, subject: 'x', body: '{MissingList}', lastDay: '' } }), res, deps('staff'));
     assert.equal(res.statusCode, 400); assert.equal(res.body.reason, 'bad-last-day');
-    res = fakeRes(); await routes.send(req({ body: { level: 1, subject: 'x', body: 'please reply to this email {MissingList}' } }), res, deps('staff'));
-    assert.equal(res.statusCode, 400); assert.equal(res.body.reason, 'bad-text');
-    res = fakeRes(); await routes.send(req({ body: { level: 1, subject: 'x', body: '{MissingList}', extra: 'Just reply to this email with the lease.' } }), res, deps('staff'));
-    assert.equal(res.statusCode, 400); assert.equal(res.body.reason, 'bad-text'); assert.match(res.body.error, /extra line tells the client to reply/);
-    res = fakeRes(); await routes.send(req({ body: { level: 1, subject: 'Reply to the email', body: '{MissingList}' } }), res, deps('staff'));
-    assert.equal(res.statusCode, 400); assert.equal(res.body.reason, 'bad-text'); assert.match(res.body.error, /subject tells the client to reply/);
+    // (reply wording is allowed since 2026-11-18) — the subject as SENT (ref + stage added) over the limit is a bad text
+    res = fakeRes(); await routes.send(req({ body: { level: 1, subject: 'x'.repeat(190), body: 'please reply to this email {MissingList}' } }), res, deps('staff'));
+    assert.equal(res.statusCode, 400); assert.equal(res.body.reason, 'bad-text'); assert.match(res.body.error, /subject is too long \(max 200 characters, with the case reference and stage added\)/);
     assert.equal(S.posted.length + S.sent.length, 0, 'a refused text posts no note and sends nothing');
     res = fakeRes(); await routes.send(req({ body: { level: 1, subject: 'x'.repeat(201), body: '{MissingList}' } }), res, deps('staff'));
     assert.equal(res.statusCode, 400); assert.match(res.body.error, /subject is too long/);
@@ -1294,12 +1305,13 @@ test('AUTO run: one row is emailed (claim note BEFORE the email, to the real add
     // exactly one email, to the real address, with the list and the deadline
     assert.equal(w.sent.length, 1);
     assert.equal(w.sent[0].to, 'asha.client@example.com');
-    assert.match(w.sent[0].subject, /Documents needed for your Super Visa application — 2026-ISS-009/);
+    // the case subject: the stage this run's board read (only Document Collection Started gets here)
+    assert.equal(w.sent[0].subject, 'Documents needed for your Super Visa application — 2026-ISS-009 · Document Collection Started');
+    assert.equal(w.sent[0].replyTo, 'info@tdotimm.com');
     assert.match(w.sent[0].html, /must be submitted by <strong>10 Dec 2026<\/strong>|must be submitted by 10 Dec 2026/);
     assert.match(w.sent[0].html, /Documents still needed \(4\)/);
     assert.ok(w.sent[0].html.includes(`?t=${TOKEN}`));
-    assert.doesNotMatch(w.sent[0].html, /just reply/i);
-    assert.ok(w.sent[0].html.includes(require('../src/utils/clientContact').EMAIL_US), 'the shared "email us" closing line');
+    assert.ok(w.sent[0].html.includes(require('../src/utils/clientContact').replyNoticeHtml('items', { margin: '0' })), 'the shared "items" reply notice');
     // the claim note went first, on the right case, with the hidden marker, the %, the deadline and the masked address
     assert.equal(w.posted.length, 1);
     assert.equal(w.posted[0].itemId, '5001');
@@ -1828,11 +1840,10 @@ test('io.questionnaireState: READ ONLY — the case lookup without form versioni
   assert.doesNotMatch(src, /loadMembers\(|writeProgressToMonday|syncProgressToMonday|saveMembers\(/, 'the reminders never seed the manifest or write the questionnaire columns');
 });
 
-test('no reply wording anywhere in the defaults (the no-reply sender) — the same phrases test/clientContactAndConvert scans the services for', () => {
-  const PHRASES = /just reply|simply reply|reply to this email|reply to the email|reply with it attached/i;
+test('the defaults never tell the client NOT to reply (replies are wanted since 2026-11-18), and no default subject carries {CaseRef} (the app appends it once)', () => {
   for (const name of cfg.ROW_NAMES) {
-    assert.doesNotMatch(cfg.DEFAULTS[name].subject + '\n' + cfg.DEFAULTS[name].body, PHRASES, name);
-    assert.equal(tpl.tellsToReply(cfg.DEFAULTS[name].body), false, name);
+    assert.doesNotMatch(cfg.DEFAULTS[name].subject + '\n' + cfg.DEFAULTS[name].body, /don'?t reply|do not reply|isn'?t monitored|not monitored/i, name);
+    assert.doesNotMatch(cfg.DEFAULTS[name].subject, /\{CaseRef\}|—\s*$/, name);
   }
 });
 
@@ -2070,7 +2081,7 @@ test('renderStaffReminder: the SAME email the send makes from the same boxes —
   try {
     const input = { overview: OV(), level: 3, subject: 'Final notice — {CaseRef}', body: RENDER_BODY, extra: 'We are still <b>looking</b> for the lease & one=two', lastDay: '2026-11-21', actor: { name: 'Mahesh Sharma', email: 'mahesh@tdotimm.com', verified: true } };
     const r = await svc.renderStaffReminder(input);
-    assert.deepEqual([r.ok, r.problems, r.subject], [true, [], 'Final notice — 2026-TEST-001']);
+    assert.deepEqual([r.ok, r.problems, r.subject], [true, [], 'Final notice — 2026-TEST-001 · Document Collection Started']);
     assert.equal(S.posted.length + S.sent.length + S.deleted.length, 0, 'the view never writes, sends or deletes');
     // the client's code is nowhere in it; the links are "#" with the note, the stand-in only in the shown text
     assert.ok(!r.html.includes(TOKEN) && !r.html.includes(encodeURIComponent(TOKEN)), 'no access code');
@@ -2109,7 +2120,7 @@ test('renderStaffReminder: the sign-off is the VERIFIED sign-in only — the sha
   } finally { S.restore(); }
 });
 
-test('renderStaffReminder: a text that cannot go yet is an ANSWER with problems (no html) — bad level, the final\'s last day blank or past, reply wording in the subject / text / extra line, an empty box; the gate keeps its refusals', async () => {
+test('renderStaffReminder: a text that cannot go yet is an ANSWER with problems (no html) — bad level, the final\'s last day blank or past, a subject too long as sent, an empty box; the gate keeps its refusals; reply wording is fine (2026-11-18)', async () => {
   const S = staffStubs();
   try {
     const ok = { overview: OV(), level: 1, subject: 'Docs', body: '{MissingList}', extra: '', lastDay: '', actor: { name: 'Mahesh Sharma', verified: true } };
@@ -2117,9 +2128,7 @@ test('renderStaffReminder: a text that cannot go yet is an ANSWER with problems 
       [{ level: 'x' }, /Choose reminder 1, 2 or the final reminder/],
       [{ level: 3, lastDay: '' }, /Enter the last day you will wait/],
       [{ level: 3, lastDay: '2026-11-01' }, /is in the past/],
-      [{ subject: 'Reply to this email' }, /tells the client to reply/],
-      [{ body: 'Please reply to this email. {MissingList}' }, /tells the client to reply/],
-      [{ extra: 'Just reply with the lease.' }, /extra line tells the client to reply/],
+      [{ subject: 'x'.repeat(190) }, /subject is too long \(max 200 characters, with the case reference and stage added\)/],
       [{ subject: '   ' }, /^The subject is empty\.$/],
       [{ body: '' }, /^The text is empty\.$/],
     ];
@@ -2157,7 +2166,7 @@ test('routes.render: 401 (loginUrl) / 403 keep their codes, every answer is no-s
     res = fakeRes(); await routes.render(req({ body: { level: 1, subject: 'Docs', body: 'Hi,\n{MissingList}\n{StaffName}', extra: '', lastDay: '', actor: 'Evil Name', staffName: 'Evil' } }), res, deps('staff'));
     assert.equal(res.statusCode, 200, JSON.stringify(res.body));
     assert.deepEqual(Object.keys(res.body).sort(), ['html', 'ok', 'problems', 'subject', 'warnings']);
-    assert.deepEqual([res.body.ok, res.body.subject, res.body.problems, res.headers['Cache-Control']], [true, 'Docs', [], 'no-store']);
+    assert.deepEqual([res.body.ok, res.body.subject, res.body.problems, res.headers['Cache-Control']], [true, 'Docs — 2026-TEST-001 · Document Collection Started', [], 'no-store'], 'the subject as the client gets it (ref + stage appended)');
     assert.match(res.body.html, /Mahesh Sharma/); assert.doesNotMatch(res.body.html, /Evil/);
     assert.ok(!res.body.html.includes(TOKEN));
     res = fakeRes(); await routes.render(req({ body: { level: 1, subject: 'Docs', body: '{StaffName}', extra: '' } }), res, deps('admin'));
@@ -2167,7 +2176,7 @@ test('routes.render: 401 (loginUrl) / 403 keep their codes, every answer is no-s
       [{ level: 1, subject: 'x', body: '{MissingList}' + 'y'.repeat(6000) }, /The text is too long \(max 6000 characters\)\./],
       [{ level: 1, subject: 'x', body: '{MissingList}', extra: 'e'.repeat(1001) }, /The extra line is too long \(max 1000 characters\)\./],
       [{ level: 3, subject: 'x', body: '{MissingList}', lastDay: '' }, /Enter the last day/],
-      [{ level: 1, subject: 'x', body: 'please reply to this email {MissingList}' }, /tells the client to reply/],
+      [{ level: 1, subject: 'x'.repeat(190), body: 'please reply to this email {MissingList}' }, /with the case reference and stage added/],
       [{ level: 7, subject: 'x', body: '{MissingList}' }, /Choose reminder 1, 2 or the final reminder/],
     ]) {
       res = fakeRes(); await routes.render(req({ body }), res, deps('staff'));
@@ -2178,7 +2187,7 @@ test('routes.render: 401 (loginUrl) / 403 keep their codes, every answer is no-s
     res = fakeRes(); await routes.render(req({ body: { level: 3, subject: 'Final reminder: documents needed by {LastDay} ({MissingCount})', body: '{MissingList}', lastDay: '2026-11-21' } }), res, deps('staff'));
     assert.equal(res.statusCode, 200, JSON.stringify(res.body).slice(0, 200));
     assert.doesNotMatch(res.body.subject, /\{LastDay\}|\{MissingCount\}/);
-    assert.equal(res.body.subject, 'Final reminder: documents needed by 21 Nov 2026 (4)');
+    assert.equal(res.body.subject, 'Final reminder: documents needed by 21 Nov 2026 (4) — 2026-TEST-001 · Document Collection Started');
     res = fakeRes(); await routes.render(req({ body: { level: 1, subject: 'x', body: '{MissingList}' } }), res, deps('staff', { overview: OV({ automationLock: 'Yes' }) }));
     assert.deepEqual([res.statusCode, res.body.ok, res.body.reason], [409, false, 'locked']);
     res = fakeRes(); await routes.render(req({ body: { level: 1, subject: 'x', body: '{MissingList}' } }), res, deps('staff', { overview: OV({ cmUnavailable: true }) }));
@@ -2342,11 +2351,17 @@ test('one trip on open: the preview carries `email` — exactly what the email v
     // the shared key signs as the office in the view too
     const k = await svc.previewStaffReminder({ overview: OV(), level: 1, actor: { name: 'Unidentified (shared admin key)', verified: false } });
     assert.match(k.email.html, /TDOT Immigration/);
-    // a board row with reply wording is refused by the templates (the built-in text is used), so the first view is a real email
+    // a board row with reply wording is USED since 2026-11-18 (replies are wanted), and its first view is a real email
     await withBoard([{ name: 'Reminder 2', subject: 'Please reply to this email', body: 'Fine {MissingList}' }], async () => {
       const p = await svc.previewStaffReminder({ overview: OV(), level: 2 });
-      assert.deepEqual([p.template.source, p.email.problems], ['default', []]);
+      assert.deepEqual([p.template.source, p.email.problems], ['board', []]);
+      assert.equal(p.email.subject, 'Please reply to this email — 2026-TEST-001 · Document Collection Started');
       assert.ok(p.email.html.length > 0);
+    });
+    // a board row with no {MissingList} is still refused (the built-in text is used)
+    await withBoard([{ name: 'Reminder 2', subject: 'Docs', body: 'No list here' }], async () => {
+      const p = await svc.previewStaffReminder({ overview: OV(), level: 2 });
+      assert.deepEqual([p.template.source, p.email.problems], ['default', []]);
     });
     assert.equal(svc.textProblem('x'.repeat(201), '', ''), 'The subject is too long (max 200 characters).');
     assert.equal(svc.textProblem('', 'y'.repeat(6001), ''), 'The text is too long (max 6000 characters).');
@@ -2500,8 +2515,8 @@ test('routes (the pop-up\'s speed): the preview answers with `email` + a handle;
     c.reset();
     res = fakeRes(); await routes.render(req({ body: ask({ subject: 'x'.repeat(201) }) }), res, d);
     assert.deepEqual([res.statusCode, res.body.problems, c.gate], [200, ['The subject is too long (max 200 characters).'], 0]);
-    res = fakeRes(); await routes.render(req({ body: ask({ subject: 'Reply to this email' }) }), res, d);
-    assert.deepEqual([res.statusCode, res.body.html, c.gate], [200, '', 0]); assert.match(res.body.problems[0], /reply/);
+    res = fakeRes(); await routes.render(req({ body: ask({ subject: 'x'.repeat(190) }) }), res, d);
+    assert.deepEqual([res.statusCode, res.body.html, c.gate], [200, '', 0]); assert.match(res.body.problems[0], /with the case reference and stage added/);
     // misses: another person, another case, another level → the full read (and that person's own handle back)
     const other = { ...deps('staff'), resolveViewer: () => ({ isAdmin: false, email: 'deeksha@tdotimm.com' }), staffActor: () => ({ name: 'Deeksha Sharma', email: 'deeksha@tdotimm.com', verified: true }),
       resolveCaseForWrite: async () => ({ viewer: { isAdmin: false, email: 'deeksha@tdotimm.com' }, overview: OV() }) };

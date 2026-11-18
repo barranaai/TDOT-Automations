@@ -65,7 +65,8 @@ test('escalation email: the questionnaire button opens the client\'s own /q link
   const noCode = buildClientEmailHtml('Please finish.', '2026-PGWP-030', 'Ana', true);
   assert.doesNotMatch(noCode, /Complete Questionnaire|\/questionnaire\//);
   assert.doesNotMatch(noCode, /Upload Documents|\/documents\//, 'no code → no dead documents button');
-  assert.match(noCode, /Need your portal link again\? Please email us at .*info@tdotimm\.com/, 'the house contact line, never "reply"');
+  assert.match(noCode, /Need your portal link again\? Reply to this email and we will send it to you\./, 'replies reach info@ (reply-thread change 2026-11-18)');
+  assert.match(noCode, /<strong>Important:<\/strong> Please reply directly to this email/, 'the "items" notice');
   assert.match(noCode, /Final Notice/);
 });
 

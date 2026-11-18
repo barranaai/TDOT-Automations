@@ -3,6 +3,8 @@ const mondayApi      = require('./mondayApi');
 const { ensureAccessToken } = require('./accessTokenService');
 const { clientMasterBoardId } = require('../../config/monday');
 const { LOGO_URL } = require('../branding');  // self-hosted logo on the CURRENT public domain
+const { CLIENT_REPLY_TO, replyNoticeHtml } = require('../utils/clientContact');
+const { caseSubject } = require('../utils/clientSubject');
 
 const CM_COLS = {
   clientEmail:   'text_mm0xw6bp',
@@ -27,7 +29,7 @@ const STAGES_REQUIRING_RESEND = new Set([
 ]);
 
 const BASE_URL       = process.env.RENDER_URL    || 'https://tdot-automations.onrender.com';
-const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || '';
+// Client emails reply to info@ (CLIENT_REPLY_TO, src/utils/clientContact.js) — never the EMAIL_REPLY_TO env value.
 
 async function getClientDetails(itemId) {
   const data = await mondayApi.query(
@@ -50,6 +52,7 @@ async function getClientDetails(itemId) {
     caseRef:     col(CM_COLS.caseRef),
     caseType:    col(CM_COLS.caseType),
     accessToken: col(CM_COLS.accessToken),
+    caseStage:   col(CM_COLS.caseStage),   // the exact Case Stage label, for the subject (read at send time)
   };
 }
 
@@ -129,10 +132,7 @@ function buildEmailHtml({ clientName, caseRef, caseType, accessToken, portalUrl,
           </td></tr>
         </table>
 
-        <p style="font-size:14px;color:#64748b;line-height:1.65;margin:0;">
-          If you have any questions, please ${require('../utils/clientContact').EMAIL_US} or contact your assigned consultant directly. ${require('../utils/clientContact').NO_REPLY}
-          Please include your <strong>Case Reference Number</strong> in any correspondence.
-        </p>
+        ${replyNoticeHtml(resend ? 'case' : 'items', { margin: '0' })}
 
       </td></tr>
 
@@ -313,11 +313,11 @@ async function sendIntakeEmail(itemId, opts = {}) {
 
   await mail.sendEmail({
     to:      client.clientEmail,
-    subject: resend
-      ? `Your Client Portal link — ${client.caseRef}`
-      : `Action Required — Your ${client.caseType || 'Immigration'} Case Is Ready (${client.caseRef})`,
+    subject: caseSubject(resend
+      ? 'Your Client Portal link'
+      : `Action Required — Your ${client.caseType || 'Immigration'} Case Is Ready`, client.caseRef, client.caseStage),
     html:    buildEmailHtml({ ...client, portalUrl, questionnaireUrl, documentsUrl, resend }),
-    replyTo: EMAIL_REPLY_TO || undefined,
+    replyTo: CLIENT_REPLY_TO,
   });
 
   console.log(`[Email] ${resend ? 'Portal access email re-sent' : 'Intake email sent'} to ${maskAddr(client.clientEmail)} for case ${client.caseRef}`);
@@ -331,7 +331,7 @@ function maskAddr(email) {
   return at < 1 ? '***' : Array.from(s)[0] + '***' + s.slice(at);
 }
 
-// BASE_URL / EMAIL_REPLY_TO / STAGES_REQUIRING_RESEND / maskAddr are shared with
+// BASE_URL / STAGES_REQUIRING_RESEND / maskAddr are shared with
 // sponsorOnboardingService so the sponsor's link and gates are the client's.
 /**
  * The AUTOMATIC onboarding starts (stage webhook, deferred paid start, case-ref resume)
@@ -365,5 +365,5 @@ async function sendIntakeEmailAuto(itemId) {
   return r;
 }
 
-module.exports = { sendIntakeEmail, sendIntakeEmailAuto, onClientEmailChanged, BASE_URL, EMAIL_REPLY_TO, STAGES_REQUIRING_RESEND, maskAddr,
+module.exports = { sendIntakeEmail, sendIntakeEmailAuto, onClientEmailChanged, BASE_URL, STAGES_REQUIRING_RESEND, maskAddr,
   _setRetryMsForTests: (ms) => { EMAIL_CHANGE_RETRY_MS = ms; } };

@@ -210,8 +210,55 @@ async function findCasesByPhone(phone) {
   return [...seen.values()];
 }
 
+/**
+ * Client Master cases whose Case Reference Number is exactly `caseRef` (the email
+ * reader's subject-ref routing). THROWS on a Monday failure — never read a failed
+ * look-up as "no such case" (the emailLeadsService rule).
+ */
+async function findCasesByCaseRef(caseRef) {
+  const ref = String(caseRef || '').trim();
+  if (!ref) return [];
+  return findCasesByColumn(CASE_REF_COL, ref);
+}
+
+/** One Client Master case by item id: caseRow (id, name, email, caseRef, caseType, caseStage, paymentStatus), or null. Throws on a Monday failure. */
+async function getCaseRow(itemId) {
+  const id = String(itemId || '').trim();
+  if (!/^\d+$/.test(id)) return null;
+  const data = await mondayApi.query(
+    `query($ids: [ID!]){ items(ids: $ids){ id name column_values(ids:${CASE_FETCH_COLS}){ id text } } }`,
+    { ids: [id] }
+  );
+  const it = data?.items?.[0];
+  return it ? caseRow(it) : null;
+}
+
+/**
+ * The subject of a CASE email addressed through the lead (milestone e-transfer
+ * request, payment receipt, fully-signed retainer copy): the lead stores only the
+ * Client Master item id, so the ref and the stage are read from that case NOW.
+ * Best-effort by rule (Faran 2026-11-18): a missing stage or a failed read must
+ * never block a payment/receipt email — the base subject goes and the miss is logged.
+ */
+async function leadCaseSubject(lead, base, tag = '[CaseSubject]') {
+  const { caseSubject } = require('../utils/clientSubject');
+  const cmId = String((lead && lead.clientMasterItemId) || '').trim();
+  if (!cmId) return caseSubject(base, '', '');
+  try {
+    const row = await getCaseRow(cmId);
+    if (!row) { console.warn(`${tag} case ${cmId} not found for lead ${lead && lead.id} — the subject has no case reference`); return caseSubject(base, '', ''); }
+    return caseSubject(base, row.caseRef, row.caseStage);
+  } catch (err) {
+    console.warn(`${tag} case ${cmId} could not be read for lead ${lead && lead.id} (${String(err && err.message).slice(0, 160)}) — sent with the plain subject`);
+    return caseSubject(base, '', '');
+  }
+}
+
 module.exports = {
   getBoardColumnMap,
+  findCasesByCaseRef,
+  getCaseRow,
+  leadCaseSubject,
   getDocumentCollectionStartedItems,
   findItemByCaseRef,
   findCasesByEmail,
