@@ -304,21 +304,12 @@ app.post('/api/square-booking-preflight', async (req, res) => {
 // Send a diagnostic email through the SAME Microsoft Graph path the retainer /
 // consultation emails use, to isolate mailbox-delivery vs recipient-filtering.
 // Usage: POST /api/test-email  { "to": "someone@example.com" }
-app.post('/api/test-email', express.json(), async (req, res) => {
-  try {
-    const to = String((req.body && req.body.to) || '').trim();
-    if (!to) return res.status(400).json({ ok: false, error: 'Provide "to" in the JSON body.' });
-    const stamp = new Date().toISOString();
-    await require('./services/microsoftMailService').sendEmail({
-      to,
-      subject: `TDOT mail delivery test — ${stamp}`,
-      html: `<p>This is a delivery test from the TDOT app, sent via Microsoft Graph from <b>${process.env.MS_FROM_EMAIL || '(unset)'}</b>.</p><p>If you received this, the sending mailbox delivers to this address. Sent at ${stamp}.</p>`,
-    });
-    res.json({ ok: true, to, from: process.env.MS_FROM_EMAIL || null, sentAt: stamp, note: 'Graph accepted the message. Check the inbox (and spam).' });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+// With "client": true (Stage 1, Faran 2026-11-19): the CLIENT-email path — from CLIENT_MAIL_FROM when it is
+// set, else from the office mailbox (this route only, so it can be proven with the switch still off), with
+// the client emails' Reply-To and the stamp { kind: 'test' }. Answers { sendId, via, stamped }; then
+// GET /admin/client-mail/check?sendId=… shows whether Microsoft kept the copy and the stamp.
+// The handler lives in routes/clientMailRoutes.js (tests run it with the mail service stubbed).
+app.post('/api/test-email', express.json(), (req, res) => require('./routes/clientMailRoutes').testEmail(req, res));
 
 // Reporting/KPIs for the consultations dashboard — aggregates the Lead Board for a
 // given month (?month=YYYY-MM; omit for all-time). Admin-gated like the other /api/*.
@@ -882,6 +873,12 @@ app.post('/admin/email-leads/run', async (req, res) => {
   if (!resolveAdminOrReject(req, res, 'Only an admin can run the email → lead check.')) return;
   res.json(await require('./services/emailLeadsService').runOnce({ reason: 'admin' }));
 });
+
+// ─── Client emails from the office mailbox (Stage 1, Faran 2026-11-19): READ-ONLY check ─────────
+// NAMED admins only (the shared key alone is refused). Counts and booleans only: is the switch
+// (CLIENT_MAIL_FROM) on, can the app read that mailbox's Sent Items, and — with ?sendId= from a
+// POST /api/test-email {"client": true} — was the copy kept, and which stamp fields came back.
+app.get('/admin/client-mail/check', (req, res) => require('./routes/clientMailRoutes').check(req, res, { staff: tryStaffAuth, isAdminEmail: caseAccess.isAdminEmail }));
 
 // ─── Otter notes in OneDrive: READ-ONLY look (Faran 2026-10-28) ────────────────
 // Where Otter saves meeting notes (noreply@tdotimm.com's OneDrive) and what the files

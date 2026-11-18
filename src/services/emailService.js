@@ -318,6 +318,7 @@ async function sendIntakeEmail(itemId, opts = {}) {
       : `Action Required — Your ${client.caseType || 'Immigration'} Case Is Ready`, client.caseRef, client.caseStage),
     html:    buildEmailHtml({ ...client, portalUrl, questionnaireUrl, documentsUrl, resend }),
     replyTo: CLIENT_REPLY_TO,
+    tag:     { caseRef: client.caseRef, caseItemId: itemId, kind: resend ? 'portal-link' : 'case-ready' },
   });
 
   console.log(`[Email] ${resend ? 'Portal access email re-sent' : 'Intake email sent'} to ${maskAddr(client.clientEmail)} for case ${client.caseRef}`);

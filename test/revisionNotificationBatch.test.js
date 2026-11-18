@@ -16,7 +16,7 @@ const sent = [];
 let duringSend = null;   // a test hook: runs while the email is "being sent" (the await window)
 set('../src/services/microsoftMailService', { sendEmail: async (m) => { if (duringSend) { const f = duringSend; duringSend = null; await f(); } sent.push(m); } });
 set('../src/services/mondayApi', {
-  query: async () => ({ items_page_by_column_values: { items: [{ name: 'Ada Client', column_values: [
+  query: async (q) => ({ items_page_by_column_values: { items: [{ ...(/items \{\s*id\s+name/.test(q) ? { id: '7001' } : {}), name: 'Ada Client', column_values: [
     { id: 'text_mm0xw6bp', text: 'ada@example.com' }, { id: 'text_mm142s49', text: 'R1' }, { id: 'text_mm0x6haq', text: 'tok' },
     { id: 'color_mm0x8faa', text: 'Internal Review' },
   ] }] } }),
@@ -68,6 +68,8 @@ test('queued twice before the flush, second note non-empty → the email carries
     // the case subject (2026-11-18): "<text> — <ref> · <exact Case Stage>", read with the client
     assert.equal(sent[0].subject, 'Action Required: 1 item needs your attention — R1 · Internal Review');
     assert.equal(sent[0].replyTo, 'info@tdotimm.com');
+    // the case stamp (Stage 1): the item id comes from the same client read (id asked for in the query)
+    assert.deepEqual(sent[0].tag, { caseRef: 'R1', caseItemId: '7001', kind: 'revision' });
     assert.match(sent[0].html, /<strong>Important:<\/strong> Please reply directly to this email rather than starting a new one/);
     assert.match(sent[0].html, /second note/);
     assert.ok(!/first note/.test(sent[0].html), 'the older text is gone');

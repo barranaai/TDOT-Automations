@@ -710,7 +710,7 @@ async function resendConsultationLinks(leadId) {
       <p style="color:${BRAND.mutedOnLight};font-size:13px;margin-top:24px">See you on the call.</p>
       ${require('../utils/clientContact').replyNoticeHtml('lead', { margin: '16px 0 0' })}
     </div></div>`;
-  await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation links', html, replyTo: require('../utils/clientContact').CLIENT_REPLY_TO });
+  await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation links', html, replyTo: require('../utils/clientContact').CLIENT_REPLY_TO, tag: { leadId, kind: 'consult-links' } });
   console.log(`[Consult] Re-sent consultation links to ${lead.email} for lead ${leadId}`);
 }
 
@@ -864,7 +864,7 @@ async function _sendConsultationPackage(leadId, { overrides = {} } = {}) {
     </div></div>`;
 
   try {
-    await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation — details, form & agreement', html, replyTo: require('../utils/clientContact').CLIENT_REPLY_TO });
+    await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration consultation — details, form & agreement', html, replyTo: require('../utils/clientContact').CLIENT_REPLY_TO, tag: { leadId, kind: 'consult-package' } });
   } catch (err) {
     // The signing request may already be out. The caller must know, so it never
     // writes a record that forgets the envelope — that is how a client is asked
@@ -1508,6 +1508,7 @@ async function sendReminderWindow(label, minH, maxH, markerTag) {
           subject: `Reminder: your TDOT consultation (${L.bookedSlot} Toronto)`,
           html: `<p>Hi ${escapeHtml((lead.name || 'there').split(' ')[0])}, this is a reminder of your consultation on <b>${escapeHtml(L.bookedSlot)}</b> (Toronto time).</p>${whereLine}${require('../utils/clientContact').replyNoticeHtml('lead', { margin: '16px 0 0' })}`,
           replyTo: require('../utils/clientContact').CLIENT_REPLY_TO,
+          tag: { leadId: lead.id, kind: 'consult-reminder' },
         });
       }
       await mondayApi.query(`mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
@@ -1538,7 +1539,7 @@ async function sendPreConsultReminders() {
       const preUrl = `${RENDER_URL}/consult/${lead.id}?t=${encodeURIComponent(tok)}`;
       if (lead.email) await microsoftMail.sendEmail({ to: lead.email, subject: 'Please complete your pre-consultation form',
         html: `<p>Hi ${escapeHtml((lead.name || 'there').split(' ')[0])}, please complete your pre-consultation form before your call:</p><p><a href="${preUrl}">${preUrl}</a></p>${require('../utils/clientContact').replyNoticeHtml('lead', { margin: '16px 0 0' })}`,
-        replyTo: require('../utils/clientContact').CLIENT_REPLY_TO });
+        replyTo: require('../utils/clientContact').CLIENT_REPLY_TO, tag: { leadId: lead.id, kind: 'preconsult-chase' } });
       await mondayApi.query(`mutation($itemId: ID!, $body: String!){ create_update(item_id: $itemId, body: $body){ id } }`,
         { itemId: String(L.id), body: '📋 pre-consult chase sent' });
       sent++;

@@ -185,6 +185,27 @@ test('the app\'s own reply-to and sending addresses (EMAIL_REPLY_TO, MS_FROM_EMA
   assert.match(EL.skipReason(msg({ from: 'noreply@tdotimm.com', replyTo: ['office.team@gmail.com'] })), /our own|skip list/);
 }));
 
+test('Stage 1: the client emails\' mailbox (CLIENT_MAIL_FROM) is skipped as our own too (a second guard — its domain is ours already)', () => withEnv({ CLIENT_MAIL_FROM: 'Office.Copies@example.org' }, () => {
+  // a value outside tdotimm.com shows the address list itself carries it (the mail service would ignore such a value)
+  assert.match(EL.skipReason(msg({ from: 'office.copies@example.org' })), /our own addresses/);
+}));
+
+test('Stage 1: the app\'s own KEPT copies (client emails in the mailbox\'s Sent Items, stamped) are never read as client email — Sent Items stays excluded', async () => {
+  assert.match(fs.readFileSync(require.resolve('../src/services/emailLeadsService'), 'utf8'), /const names = \['junkemail', 'drafts', 'sentitems', 'deleteditems', 'outbox'\];/);
+  const w = await startedWorld();
+  try {
+    const copy = (o) => ({ ...msg(o), toRecipients: [{ emailAddress: { address: 'client@gmail.com' } }], singleValueExtendedProperties: [{ id: 'String {ea1cfd10-69d2-41c0-a9fc-1fc4288e039e} Name TdotCaseItemId', value: '555' }] });
+    // the kept copy (from the office mailbox) — and even a Sent Items item whose From is a client address
+    w.queue([copy({ id: 'kept', from: 'info@tdotimm.com', parentFolderId: 'F-sentitems', subject: 'Documents still needed — 2026-SPE-016 · Internal Review' }),
+      copy({ id: 'odd', from: 'client@gmail.com', parentFolderId: 'F-sentitems', subject: 'Re: Documents still needed — 2026-SPE-016' })]);
+    const r = await run();
+    assert.equal(r.ok, true);
+    assert.equal(w.creates.length, 0); assert.equal(w.notes.length, 0);
+    assert.equal(r.counts.skipped, 2);
+    assert.ok(w.gets.some((g) => g.url.includes('/mailFolders/sentitems?$select=id')), 'the Sent Items folder id is looked up to be left out');
+  } finally { restore(); }
+});
+
 test('bodyText trims only a reply\'s quote of OUR email; a forward and a client\'s own letter are kept whole; noteHtml shows the email as text, never as markup', () => {
   const b = (body, subject) => EL.bodyText(msg({ body, subject }));
   assert.equal(b('Yes I will send it.\n\nOn Mon, 27 Oct 2026 at 10:00, TDOT <info@tdotimm.com> wrote:\n> old'), 'Yes I will send it.');

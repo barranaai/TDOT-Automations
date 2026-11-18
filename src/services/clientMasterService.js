@@ -239,14 +239,18 @@ async function getCaseRow(itemId) {
  * Client Master item id, so the ref and the stage are read from that case NOW.
  * Best-effort by rule (Faran 2026-11-18): a missing stage or a failed read must
  * never block a payment/receipt email — the base subject goes and the miss is logged.
+ * `found` (optional, an object): receives { caseItemId, caseRef } from the SAME read,
+ * for the email's case stamp (Stage 1) — left empty when there is no case or the read
+ * fails (the email then goes stamped with the lead id only).
  */
-async function leadCaseSubject(lead, base, tag = '[CaseSubject]') {
+async function leadCaseSubject(lead, base, tag = '[CaseSubject]', found = null) {
   const { caseSubject } = require('../utils/clientSubject');
   const cmId = String((lead && lead.clientMasterItemId) || '').trim();
   if (!cmId) return caseSubject(base, '', '');
   try {
     const row = await getCaseRow(cmId);
     if (!row) { console.warn(`${tag} case ${cmId} not found for lead ${lead && lead.id} — the subject has no case reference`); return caseSubject(base, '', ''); }
+    if (found && typeof found === 'object') Object.assign(found, { caseItemId: row.id || cmId, caseRef: row.caseRef || '' });
     return caseSubject(base, row.caseRef, row.caseStage);
   } catch (err) {
     console.warn(`${tag} case ${cmId} could not be read for lead ${lead && lead.id} (${String(err && err.message).slice(0, 160)}) — sent with the plain subject`);

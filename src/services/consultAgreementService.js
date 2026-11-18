@@ -490,6 +490,7 @@ async function recordCountersignComplete(lead, { signedPdf, stored } = {}) {
         to: lead.email, subject: 'Your fully signed TDOT Immigration consultation agreement', html,
         replyTo: require('../utils/clientContact').CLIENT_REPLY_TO,
         attachments: [{ filename: 'consultation-agreement-signed.pdf', buffer: pdf, mimeType: 'application/pdf' }],
+        tag: { leadId, kind: 'consult-agreement-signed' },
       });
       emailed = true;
     } catch (err) { console.error(`[ConsultAgreement] Fully-signed copy email FAILED for lead ${leadId}: ${err.message}`); }
@@ -536,6 +537,7 @@ async function sendConsultAgreement(leadId) {
   await require('./microsoftMailService').sendEmail({
     to: lead.email, subject: 'Your TDOT Immigration initial consultation agreement', html,
     replyTo: require('../utils/clientContact').CLIENT_REPLY_TO,
+    tag: { leadId: lead.id, kind: 'consult-agreement' },
   });
 
   await leadService.updateLead(leadId, { consultAgreementSent: todayISO() });

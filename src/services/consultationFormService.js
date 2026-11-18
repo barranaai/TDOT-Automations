@@ -470,7 +470,8 @@ async function sendConfirmation(body) {
         <p>Thank you for sharing your details with TDOT Immigration. Our team will review your information and reach out to schedule your consultation.</p>
         ${require('../utils/clientContact').replyNoticeHtml('lead', { margin: '24px 0 0' })}
       </div></div>`;
-  await microsoftMail.sendEmail({ to: body.email, subject: 'We received your TDOT Immigration consultation request', html, replyTo: require('../utils/clientContact').CLIENT_REPLY_TO });
+  await microsoftMail.sendEmail({ to: body.email, subject: 'We received your TDOT Immigration consultation request', html, replyTo: require('../utils/clientContact').CLIENT_REPLY_TO,
+    tag: { kind: 'consult-form' } });   // no lead id here — the stamp's first-recipient field finds it
 }
 
 function buildThanksHtml() {

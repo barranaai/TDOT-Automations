@@ -332,11 +332,13 @@ async function sendMilestoneEtransferRequest(leadId, index) {
     if (lead.email) {
       try {
         // a case email addressed through the lead: "<text> — <ref> · <stage>" from the case read now (plain subject if that read fails)
-        const subject = await require('./clientMasterService').leadCaseSubject(lead, `Your TDOT Immigration payment — ${row.label}`, '[Milestone]');
+        const onCase = {};   // the case id + ref from the same read, for the stamp (empty if the read failed)
+        const subject = await require('./clientMasterService').leadCaseSubject(lead, `Your TDOT Immigration payment — ${row.label}`, '[Milestone]', onCase);
         await require('./microsoftMailService').sendEmail({
           to: lead.email, subject,
           html: etransferInstructionsHtml({ firstName: (lead.fullName || 'there').split(' ')[0], label: row.label, dollars, reference }),
           replyTo: CLIENT_REPLY_TO,
+          tag: { leadId, caseRef: onCase.caseRef, caseItemId: onCase.caseItemId, kind: 'payment-request' },
         });
         emailed = true;
       } catch (err) { console.warn(`[Milestone] e-transfer request email failed for ${leadId}#${index}: ${err.message}`); }
@@ -552,12 +554,14 @@ async function _markMilestonePaid(leadId, index, { reference = '', paidAt = '', 
 async function _emailReceipt(lead, p) {
   if (!paymentReceiptsEnabled() || !lead || !lead.email) return false;
   try {
-    const subject = await require('./clientMasterService').leadCaseSubject(lead, `Your TDOT Immigration payment receipt — ${p.label}`, '[Milestone]');
+    const onCase = {};   // the case id + ref from the same read, for the stamp (empty if the read failed)
+    const subject = await require('./clientMasterService').leadCaseSubject(lead, `Your TDOT Immigration payment receipt — ${p.label}`, '[Milestone]', onCase);
     await require('./microsoftMailService').sendEmail({
       to: lead.email,
       subject,
       html: paymentReceiptHtml({ firstName: (lead.fullName || 'there').split(' ')[0], ...p }),
       replyTo: CLIENT_REPLY_TO,
+      tag: { leadId: lead.id, caseRef: onCase.caseRef, caseItemId: onCase.caseItemId, kind: 'receipt' },
     });
     return true;
   } catch (err) { console.warn(`[Milestone] receipt email failed for ${lead.id}: ${err.message}`); return false; }

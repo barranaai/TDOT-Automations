@@ -11,11 +11,41 @@
  *   MS_CLIENT_SECRET  — Azure client secret value
  *   MS_FROM_EMAIL     — The M365 mailbox to send from (e.g. noreply@tdotimmigration.ca)
  *
+ * Optional:
+ *   CLIENT_MAIL_FROM  — the office mailbox CLIENT emails go from, with a copy kept (Stage 1, below).
+ *                       Unset / blank = off (the default): every email goes exactly as before.
+ *
  * Token caching: tokens are cached in memory and refreshed automatically
  * 5 minutes before expiry (Graph tokens last 1 hour).
+ *
+ * ── Client emails FROM the office mailbox, with a kept copy (Stage 1, Faran 2026-11-19) — rules, do not undo ──
+ *  - A send that passes `tag` is a CLIENT email (the client send sites pass it; staff alerts never do).
+ *  - The switch is CLIENT_MAIL_FROM, read at every call. Unset / blank → today's request for EVERY email:
+ *    from MS_FROM_EMAIL, saveToSentItems:false, no stamp. Set → it must be an address on tdotimm.com and
+ *    not MS_FROM_EMAIL (noreply@ is also the OneDrive / Otter account — no copies are ever kept there);
+ *    anything else is ignored with one warning.
+ *  - Switch on + `tag` → POST /users/{CLIENT_MAIL_FROM}/sendMail with { message } and NO saveToSentItems
+ *    key, so Microsoft keeps the copy in that mailbox's Sent Items; the message carries the case stamp
+ *    (utils/mailTag.js — named properties in our own namespace). Reply-To stays exactly as the caller gave it.
+ *  - No `tag` (staff alerts) → unchanged: MS_FROM_EMAIL, saveToSentItems:false, no stamp, no copy.
+ *  - A client email is never lost and never doubled. Microsoft accepts a send only with a 202, so a 4xx
+ *    answer means it was NOT sent and one resend is safe; each fallback below happens at most once:
+ *      400 / 422 with the stamp attached → once more to the same mailbox WITHOUT the stamp (still kept).
+ *        When that one goes, stamping stops until the app restarts ("[Mail] Microsoft refused the case
+ *        stamp — sent without it", logged once).
+ *      403 / 404 from the office mailbox (sending as it refused, or no such mailbox) → once more the usual
+ *        way: MS_FROM_EMAIL, saveToSentItems:false, no stamp, the same Reply-To. For the next 60 minutes
+ *        client emails go straight the usual way; the refusal is logged at most once an hour.
+ *      401 → as before (no resend here; the error goes up — a fresh token is fetched by the expiry rule).
+ *      429, 5xx, a timeout or a network error → NO resend: Microsoft may have taken the email.
+ *  - Returns { sendId, via: 'client' | 'fallback' | 'default', stamped }. sendId is the TdotSendId on
+ *    the kept copy (null when no stamp went). Callers may ignore it.
+ *  - `testClientFrom` is for POST /api/test-email only: that one tagged send tries the office mailbox even
+ *    with the switch off (and ignores the two memories above, so a re-test needs no restart).
  */
 
 const axios = require('axios');
+const { buildTagProps } = require('../utils/mailTag');
 
 // ─── Token cache ──────────────────────────────────────────────────────────────
 
@@ -66,6 +96,37 @@ async function getAccessToken() {
 /** Drop the cached token — callers retry after a Graph 401 (revocation, drift). */
 function invalidateAccessToken() { _cachedToken = null; _tokenExpiry = 0; }
 
+// ─── Client emails from the office mailbox (Stage 1) ─────────────────────────
+
+const SEND_TIMEOUT_MS  = 30000;            // awaited by staff/admin routes — fail fast instead of hanging the request
+const SEND_AS_PAUSE_MS = 60 * 60 * 1000;   // after a send-as refusal: client emails go the usual way this long
+const CLIENT_DOMAIN    = 'tdotimm.com';
+const EMAIL_RE         = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
+
+/** Memory only — a restart starts clean. */
+let _mem = { stampRefused: false, sendAsRefusedAt: 0, sendAsBox: '', sendAsLoggedAt: 0, badSettingWarned: null };
+const io = { now: () => Date.now() };
+
+/**
+ * The office mailbox client emails go from, or '' (the usual way). Read at call time.
+ * @param {string} [override]  /api/test-email's mailbox — never set by anything else
+ */
+function clientMailbox(override) {
+  const raw = String((override != null && String(override).trim()) ? override : (process.env.CLIENT_MAIL_FROM || '')).trim();
+  if (!raw) return '';
+  const box = raw.toLowerCase();
+  const usual = String(process.env.MS_FROM_EMAIL || '').trim().toLowerCase();
+  if (EMAIL_RE.test(box) && box.split('@')[1] === CLIENT_DOMAIN && box !== usual) return box;
+  if (_mem.badSettingWarned !== raw) {
+    _mem.badSettingWarned = raw;
+    console.warn(`[Mail] CLIENT_MAIL_FROM must be an address on ${CLIENT_DOMAIN} other than the usual sending address — ignored; client emails go the usual way, with no copy kept`);
+  }
+  return '';
+}
+
+const sendAsPaused = (box) => _mem.sendAsBox === box && io.now() - _mem.sendAsRefusedAt < SEND_AS_PAUSE_MS;
+const statusOf = (err) => err && err.response && err.response.status;
+
 // ─── Send email ───────────────────────────────────────────────────────────────
 
 /**
@@ -76,8 +137,13 @@ function invalidateAccessToken() { _cachedToken = null; _tokenExpiry = 0; }
  * @param {string}          options.subject
  * @param {string}          options.html      — HTML body
  * @param {string}          [options.replyTo] — optional reply-to address
+ * @param {object}          [options.tag]     — a CLIENT email: { caseItemId?, caseRef?, leadId?, kind } —
+ *                                              the case stamp (utils/mailTag.js); with CLIENT_MAIL_FROM set
+ *                                              it goes from that mailbox and a copy is kept. Staff alerts: none.
+ * @param {string}          [options.testClientFrom] — /api/test-email only (see the header)
+ * @returns {Promise<{ sendId: ?string, via: 'client'|'fallback'|'default', stamped: boolean }>}
  */
-async function sendEmail({ to, subject, html, replyTo, attachments }) {
+async function sendEmail({ to, subject, html, replyTo, attachments, tag, testClientFrom }) {
   const fromEmail = process.env.MS_FROM_EMAIL;
   if (!fromEmail) {
     throw new Error('Microsoft Mail: MS_FROM_EMAIL must be set in .env');
@@ -115,24 +181,87 @@ async function sendEmail({ to, subject, html, replyTo, attachments }) {
       }));
   }
 
+  // Which way: a tagged (client) send with the switch on — or the test send — tries the office mailbox.
+  const tagged = !!tag && typeof tag === 'object';
+  const testing = tagged && testClientFrom != null && String(testClientFrom).trim() !== '';
+  const box = !tagged ? '' : testing ? clientMailbox(testClientFrom) : clientMailbox();
+
   const token = await getAccessToken();
 
-  try {
-    await axios.post(
-      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(fromEmail)}/sendMail`,
-      { message, saveToSentItems: false },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30000,   // awaited by staff/admin routes — fail fast instead of hanging the request
-      }
-    );
-  } catch (err) {
+  const post = (mailbox, body) => axios.post(
+    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailbox)}/sendMail`,
+    body,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: SEND_TIMEOUT_MS,
+    }
+  );
+  const failure = (err) => {
     const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
-    throw new Error(`sendMail failed (${err.response?.status}): ${detail}`);
+    return new Error(`sendMail failed (${err.response?.status}): ${detail}`);
+  };
+
+  /** Today's request: the usual address, no copy, no stamp. */
+  const usualWay = async (via) => {
+    try {
+      await post(fromEmail, { message, saveToSentItems: false });
+    } catch (err) {
+      throw failure(err);
+    }
+    return { sendId: null, via, stamped: false };
+  };
+
+  /** 403/404 from the office mailbox: nothing was sent — once more the usual way, and remember it for an hour. */
+  const sendAsRefused = async () => {
+    _mem.sendAsRefusedAt = io.now(); _mem.sendAsBox = box;
+    const out = await usualWay('fallback');
+    if (io.now() - _mem.sendAsLoggedAt >= SEND_AS_PAUSE_MS) {
+      _mem.sendAsLoggedAt = io.now();
+      console.warn(`[Mail] Microsoft refused sending as ${box} — sent from the usual address`);
+    }
+    return out;
+  };
+
+  if (!box) return usualWay('default');
+  if (!testing && sendAsPaused(box)) return usualWay('fallback');
+
+  let stamp = { props: [], sendId: null };
+  if (testing || !_mem.stampRefused) {
+    try { stamp = buildTagProps(tag, to); } catch (_) { stamp = { props: [], sendId: null }; }   // a stamp never blocks an email
+  }
+  const stamped = stamp.props.length > 0;
+
+  try {
+    await post(box, { message: stamped ? { ...message, singleValueExtendedProperties: stamp.props } : message });
+    return { sendId: stamped ? stamp.sendId : null, via: 'client', stamped };
+  } catch (err) {
+    const st = statusOf(err);
+    if (stamped && (st === 400 || st === 422)) {
+      try {
+        await post(box, { message });   // the same mailbox, still kept — without the stamp
+      } catch (err2) {
+        const st2 = statusOf(err2);
+        if (st2 === 403 || st2 === 404) return sendAsRefused();
+        throw failure(err2);
+      }
+      if (!_mem.stampRefused) {
+        _mem.stampRefused = true;
+        console.warn('[Mail] Microsoft refused the case stamp — sent without it');
+      }
+      return { sendId: null, via: 'client', stamped: false };
+    }
+    if (st === 403 || st === 404) return sendAsRefused();
+    throw failure(err);
   }
 }
 
-module.exports = { sendEmail, getAccessToken, invalidateAccessToken };
+module.exports = {
+  sendEmail, getAccessToken, invalidateAccessToken, clientMailbox,
+  // tests
+  io, SEND_AS_PAUSE_MS,
+  _state: () => ({ ..._mem }),
+  _reset: () => { _mem = { stampRefused: false, sendAsRefusedAt: 0, sendAsBox: '', sendAsLoggedAt: 0, badSettingWarned: null }; },
+};

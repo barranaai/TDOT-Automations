@@ -75,6 +75,7 @@ async function getClientByCaseRef(caseRef) {
          columns: [{ column_id: "text_mm142s49", column_values: [$caseRef] }]
        ) {
          items {
+           id
            name
            column_values(ids: [
              "text_mm0xw6bp",
@@ -93,6 +94,7 @@ async function getClientByCaseRef(caseRef) {
 
   const col = (id) => item.column_values.find((c) => c.id === id)?.text?.trim() || '';
   return {
+    itemId:       item.id ? String(item.id) : '',   // the email's case stamp
     clientName:   (item.name || '').trim() || 'Valued Client',
     clientEmail:  col('text_mm0xw6bp'),
     caseRef:      col('text_mm142s49'),
@@ -241,6 +243,7 @@ async function flushQueue(caseRef) {
     subject,
     html:    buildRevisionEmailHtml({ ...client, questionnaire, documents }),
     replyTo: CLIENT_REPLY_TO,
+    tag:     { caseRef: client.caseRef || caseRef, caseItemId: client.itemId, kind: 'revision' },
   });
 
   // Only remove from queue AFTER successful send — prevents data loss on failure

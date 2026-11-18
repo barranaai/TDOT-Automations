@@ -230,11 +230,13 @@ async function recordRetainerCountersignComplete(lead, { signedPdf, stored } = {
     try {
       // the case normally opened at the client's signature: "<text> — <ref> · <stage>" from the case
       // read now (the fresh lead's Client Master id); no case or a failed read → the plain subject
-      const subject = await require('./clientMasterService').leadCaseSubject(fresh || lead, 'Your fully signed TDOT Immigration retainer agreement', '[RetainerCountersign]');
+      const onCase = {};   // the case id + ref from the same read, for the stamp (empty if the read failed)
+      const subject = await require('./clientMasterService').leadCaseSubject(fresh || lead, 'Your fully signed TDOT Immigration retainer agreement', '[RetainerCountersign]', onCase);
       await require('./microsoftMailService').sendEmail({
         to: lead.email, subject, html,
         replyTo: require('../utils/clientContact').CLIENT_REPLY_TO,
         attachments: [{ filename: 'retainer-agreement-signed.pdf', buffer: pdf, mimeType: 'application/pdf' }],
+        tag: { leadId, caseRef: onCase.caseRef, caseItemId: onCase.caseItemId, kind: 'retainer-signed' },
       });
       emailed = true;
     } catch (err) { console.error(`[RetainerCountersign] fully-signed copy email FAILED for lead ${leadId}: ${err.message}`); }

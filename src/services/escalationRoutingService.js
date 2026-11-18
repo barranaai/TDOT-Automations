@@ -452,6 +452,7 @@ async function applyRule(item, rule) {
         subject: caseSubject('Important update regarding your case', subjectRef, stageNow),
         html:    buildClientEmailHtml(body, caseRef, clientName, false, { accessToken: col(CM.accessToken) }),
         replyTo: CLIENT_REPLY_TO,
+        tag:     { caseRef: subjectRef, caseItemId: itemId, kind: 'escalation' },
       });
       console.log(`[EscRouting] ✉ Client reminder sent to ${clientEmail} for ${caseRef}`);
     } catch (err) {
@@ -470,6 +471,7 @@ async function applyRule(item, rule) {
         subject: caseSubject('Final Notice — Immediate action required', subjectRef, stageNow),
         html:    buildClientEmailHtml(body, caseRef, clientName, true, { accessToken: col(CM.accessToken) }),
         replyTo: CLIENT_REPLY_TO,
+        tag:     { caseRef: subjectRef, caseItemId: itemId, kind: 'final-notice' },
       });
       console.log(`[EscRouting] ✉ Final notice sent to ${clientEmail} for ${caseRef}`);
     } catch (err) {

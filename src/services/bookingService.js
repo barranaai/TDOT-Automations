@@ -1178,6 +1178,7 @@ async function sendBookingInvite(leadId, { force = false } = {}) {
       subject: 'Book your consultation with TDOT Immigration',
       html: bookingEmailHtml({ heading: 'Book your consultation', first, bodyHtml, url, feeLine }),
       replyTo: require('../utils/clientContact').CLIENT_REPLY_TO,
+      tag: { leadId, kind: 'booking-invite' },
     });
   } catch (err) {
     console.error(`[Booking] Invite email FAILED for ${leadId}: ${err.message}`);

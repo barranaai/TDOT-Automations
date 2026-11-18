@@ -1289,7 +1289,8 @@ async function sendStaffReminder({ overview, level, subject, body, extra, lastDa
 
   // 3. The email.
   try {
-    await io.sendEmail({ to: email.recipient, subject: email.subject, html: email.html, replyTo: CLIENT_REPLY_TO });
+    await io.sendEmail({ to: email.recipient, subject: email.subject, html: email.html, replyTo: CLIENT_REPLY_TO,
+      tag: { caseRef: overview.caseRef, caseItemId: overview.itemId, kind: 'doc-reminder' } });
   } catch (err) {
     io.warn(`[DocReminders] ${p.caseRef}: reminder ${lv} did not go out: ${err.message}`);
     await Promise.resolve(io.postNote(overview.itemId, failureNote({ level: lv, reason: 'the email could not be sent', now: io.now(), day: today, claimId: mine })))
@@ -1442,7 +1443,8 @@ async function runCandidate(row, sel, { now, today, dryRun }) {
   } catch (_) { /* cannot re-read: our claim stands, send */ }
   // 3. the email
   try {
-    await io.sendEmail({ to: email.recipient, subject: email.subject, html: email.html, replyTo: CLIENT_REPLY_TO });
+    await io.sendEmail({ to: email.recipient, subject: email.subject, html: email.html, replyTo: CLIENT_REPLY_TO,
+      tag: { caseRef: row.ref, caseItemId: row.id, kind: 'doc-reminder-auto' } });
   } catch (err) {
     io.warn(`[DocReminders] ${row.ref}: the automatic reminder did not go out: ${err.message}`);
     await Promise.resolve(io.postNote(row.id, failureNote({ level: 'auto', reason: 'the email could not be sent', now: io.now(), day: today, claimId: mine })))

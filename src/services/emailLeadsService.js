@@ -143,9 +143,11 @@ function skipDomains() {
   return [...new Set([...DEFAULT_SKIP_DOMAINS, ...(own ? [own] : []), ...envList('EMAIL_LEADS_SKIP_DOMAINS')])];
 }
 
-/** Our own addresses outside our domain: the e-transfer inbox, the app's reply-to and sending addresses, any listed. */
+/** Our own addresses outside our domain: the e-transfer inbox, the app's reply-to and sending addresses (the
+ *  usual one and CLIENT_MAIL_FROM, the client emails' mailbox), any listed. The app's own kept copies sit in that
+ *  mailbox's Sent Items, which is never read (excludedFolderIds) — this is a second guard. */
 function skipAddresses() {
-  const list = [process.env.ETRANSFER_EMAIL || 'admstdot@gmail.com', process.env.EMAIL_REPLY_TO, process.env.MS_FROM_EMAIL, ...envList('EMAIL_LEADS_SKIP_ADDRESSES')];
+  const list = [process.env.ETRANSFER_EMAIL || 'admstdot@gmail.com', process.env.EMAIL_REPLY_TO, process.env.MS_FROM_EMAIL, process.env.CLIENT_MAIL_FROM, ...envList('EMAIL_LEADS_SKIP_ADDRESSES')];
   return new Set(list.map((a) => String(a || '').trim().toLowerCase()).filter(Boolean));
 }
 

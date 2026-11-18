@@ -67,6 +67,7 @@ async function getClientByCaseRef(caseRef) {
   if (!item) return null;
   const col = (id) => item.column_values.find(c => c.id === id)?.text?.trim() || '';
   return {
+    itemId:      item.id ? String(item.id) : '',   // the email's case stamp
     clientName:  (item.name || '').trim() || 'Client',
     clientEmail: col(CM_COLS.clientEmail),
     accessToken: col(CM_COLS.accessToken),
@@ -240,6 +241,7 @@ async function sendMissingFieldsEmail({ caseRef, isSubmit, manual, missingByMemb
     subject,
     html,
     replyTo: CLIENT_REPLY_TO,
+    tag:     { caseRef, caseItemId: client.itemId, kind: 'missing-fields' },
   });
 
   console.log(`[MissingEmail] Sent to ${client.clientEmail} for ${caseRef} — ${totalMissing} field(s) across ${list.length} member(s) (${isSubmit ? 'submit' : 'manual save'})`);

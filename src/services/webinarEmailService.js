@@ -105,7 +105,7 @@ async function send({ leadId, lead, message, by = '', again = false }) {
   const who = String(by || '').replace(/\s+/g, ' ').trim().slice(0, 60);
   const day = io.now().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
   try {
-    await io.sendEmail({ to: lead.email, subject: SUBJECT, html: emailHtml({ firstName, text }), replyTo: require('../utils/clientContact').CLIENT_REPLY_TO });
+    await io.sendEmail({ to: lead.email, subject: SUBJECT, html: emailHtml({ firstName, text }), replyTo: require('../utils/clientContact').CLIENT_REPLY_TO, tag: { leadId, kind: 'webinar' } });
   } catch (err) {
     // The mail service answered "no" = nothing went. No answer at all (a timeout, a dropped line) = not known:
     // it may have gone, so never tell staff to simply press again.

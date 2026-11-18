@@ -629,7 +629,7 @@ async function _doMaybeSendRetainerAgreement(leadId, { notifyIfMissing = false, 
         ${require('../utils/clientContact').replyNoticeHtml('lead', { margin: '20px 0 0' })}
       </div></div>`;
   try {
-    await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration retainer agreement', html, replyTo: require('../utils/clientContact').CLIENT_REPLY_TO });
+    await microsoftMail.sendEmail({ to: lead.email, subject: 'Your TDOT Immigration retainer agreement', html, replyTo: require('../utils/clientContact').CLIENT_REPLY_TO, tag: { leadId, kind: 'retainer' } });
   } catch (err) {
     // Do NOT mark sent — leave the lead un-locked so the next trigger retries.
     console.warn(`[Retainer2] Retainer email FAILED for lead ${leadId}: ${err.message}`);

@@ -955,7 +955,7 @@ async function ensureSponsor({ itemId, caseRef, mode = 'onboard', actor = null, 
       roleLabel: sponsor.roleLabel, docs: sponsor.docs, sectionMode: sponsor.sectionMode, sectionLabel, badge: plan.badge, portalUrl,
     });
     try {
-      await io.sendEmail({ to: sponsor.email, subject, html, replyTo: CLIENT_REPLY_TO });
+      await io.sendEmail({ to: sponsor.email, subject, html, replyTo: CLIENT_REPLY_TO, tag: { caseRef: cm.caseRef, caseItemId: cm.itemId, kind: 'sponsor' } });
     } catch (err) {
       await io.writeMarker({ clientName: cm.clientName, caseRef: cm.caseRef, marker: { ...base, status: 'failed', startedAt, failedAt: new Date(io.now()).toISOString(), error: s(err.message).slice(0, 200) } })
         .catch((e2) => console.error(`[Sponsor] Marker write after a failed send also failed for ${cm.caseRef}: ${e2.message}`));

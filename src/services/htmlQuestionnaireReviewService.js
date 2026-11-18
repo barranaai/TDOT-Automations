@@ -234,6 +234,7 @@ async function sendCorrectionEmail({ caseRef, formKey, caseDetails, flags, formF
     subject: caseSubject(`Action Required — Please Update Your Questionnaire${memberNote}`, caseRef, caseStage),
     html,
     replyTo: CLIENT_REPLY_TO,
+    tag:     { caseRef, caseItemId: itemId, kind: 'q-correction' },
   });
 
   // Post an audit comment on the Monday item
@@ -322,6 +323,7 @@ async function sendConsolidatedCorrectionEmail({ caseRef, memberEntries, caseDet
     subject: caseSubject('Action Required — Please Update Your Questionnaire', caseRef, caseStage),
     html,
     replyTo: CLIENT_REPLY_TO,
+    tag:     { caseRef, caseItemId: itemId, kind: 'q-correction' },
   });
 
   // Post a single audit comment listing all members

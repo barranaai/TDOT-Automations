@@ -375,7 +375,7 @@ async function remindPerson(ids, { dryRun = false, preloaded } = {}) {
 
   // 3. The email.
   try {
-    await io.sendEmail({ ...msg, replyTo: require('../utils/clientContact').CLIENT_REPLY_TO });
+    await io.sendEmail({ ...msg, replyTo: require('../utils/clientContact').CLIENT_REPLY_TO, tag: { leadId, kind: 'booking-reminder' } });
   } catch (err) {
     await Promise.resolve(io.postNote(leadId, `⚠️ <b>${failText(r.n)}</b> — the email could not be sent: ${escHtml(String(err.message || err).slice(0, 200))}. The app tries again within the hour (up to ${MAX_TRIES} tries).`))
       .catch((e) => io.warn(`[BookingReminders] failure note also failed for ${leadId}: ${e.message}`));

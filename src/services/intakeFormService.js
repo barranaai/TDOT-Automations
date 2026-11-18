@@ -267,7 +267,7 @@ async function processIntakeSubmission(f, files = {}) {
   //     with NO booking link. The booking invite is a separate, staff-sent
   //     email (portal Leads tab / Booking Invite column) whose body the team
   //     personalizes per lead, so the invite is never auto-fired at intake.
-  sendIntakeAcknowledgement({ fullName, email: f.email }).catch((err) =>
+  sendIntakeAcknowledgement({ fullName, email: f.email, leadId }).catch((err) =>
     console.error(`[Intake] Acknowledgement email failed for ${leadId}: ${err.message}`));
 
   // 3. Upload letters + the full JSON archive to the intake OneDrive folder.
@@ -327,7 +327,7 @@ async function processIntakeSubmission(f, files = {}) {
  * the team is reviewing it. Deliberately contains NO booking link — the
  * booking invite is a separate, personalized email staff send from the portal.
  */
-async function sendIntakeAcknowledgement({ fullName, email }) {
+async function sendIntakeAcknowledgement({ fullName, email, leadId }) {
   if (!String(email || '').trim()) return;
   const microsoftMail = require('./microsoftMailService');
   const first = esc(String(fullName || 'there').trim().split(/\s+/)[0]);
@@ -344,6 +344,7 @@ async function sendIntakeAcknowledgement({ fullName, email }) {
         ${require('../utils/clientContact').replyNoticeHtml('lead', { margin: '24px 0 0' })}
       </div></div>`,
     replyTo: require('../utils/clientContact').CLIENT_REPLY_TO,
+    tag: { leadId, kind: 'intake-ack' },
   });
   console.log(`[Intake] Acknowledgement emailed to ${email}`);
 }
