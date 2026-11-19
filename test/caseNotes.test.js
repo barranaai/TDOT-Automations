@@ -474,6 +474,10 @@ test('switch on: the panel is an <aside> OUTSIDE every tab panel, beside all of 
   // keyboard + screen-reader order (review 2026-11-15): the header, the tabs and the main content, THEN the panel
   assert.ok(hd < body && body < main && main < tabs && tabs < firstPanel, 'header, then the main column with the tabs');
   assert.ok(lastPanelEnd > html.indexOf('id="panel-updates"') && lastPanelEnd < aside && aside < bodyEnd, 'the panel comes after the whole main column, still inside .case-body');
+  // the Emails tab (switch CASE_EMAILS_TAB) puts its panel INSIDE the main column too, never after it (critique #18)
+  const both = buildCockpitHTML('2026-XX-000', { notesPanel: true, emailsTab: 'on' });
+  const em = both.indexOf('id="panel-emails"'), bothEnd = both.indexOf('</div><!-- /case-main -->');
+  assert.ok(em > both.indexOf('id="panel-updates"') && em < bothEnd && bothEnd < both.indexOf('<aside class="cnp" id="cnp"'), 'panel-emails sits inside .case-main, before the notes panel');
   // the wide grid places both by column AND row; under 1100px the bar is moved up between the header and the tabs
   assert.ok(html.includes('.case-main { grid-column:1; grid-row:1;') && html.includes('.cnp { grid-column:2; grid-row:1;'));
   const narrow = W.CASE_NOTES_CSS.slice(W.CASE_NOTES_CSS.indexOf('@media (max-width: 1099px) {'));

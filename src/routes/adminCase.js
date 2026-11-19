@@ -13,6 +13,7 @@ const express = require('express');
 const { DEADLINE_CHANGE_CSS, DEADLINE_CHANGE_HTML, DEADLINE_CHANGE_JS } = require('./deadlineChangeUi');   // Change beside the Client deadline pill (2026-11-10)
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const { CASE_NOTES_CSS, caseNotesHtml, CASE_NOTES_JS } = require('./caseNotesWidget');   // the Consultation notes panel (switch CASE_NOTES_PANEL)
+const { CASE_EMAILS_CSS, caseEmailsTabButton, caseEmailsHtml, CASE_EMAILS_JS } = require('./caseEmailsWidget');   // the Emails tab (switch CASE_EMAILS_TAB)
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS, STATUS_TONE_JS } = require('./adminShared');
 
@@ -22,12 +23,17 @@ function escAttr(s) {
 
 /**
  * @param {string} caseRef
- * @param {{ notesPanel?: boolean }} [opts]  notesPanel: the Consultation notes panel beside the tabs — by default the
- *   CASE_NOTES_PANEL switch. Off = the page is byte-for-byte what it was before the panel existed.
+ * @param {{ notesPanel?: boolean, emailsTab?: 'off'|'admins'|'on' }} [opts]  notesPanel: the Consultation notes panel
+ *   beside the tabs — by default the CASE_NOTES_PANEL switch. Off = the page is byte-for-byte what it was before the
+ *   panel existed. emailsTab: the read-only Emails tab — by default the CASE_EMAILS_TAB switch; 'off' = the page is
+ *   byte-for-byte what it was before the tab existed. The page never knows who views it: in 'admins' the tab's own
+ *   script asks the route once and removes the tab for anyone else (critique #17).
  */
 function buildCockpitHTML(caseRef, opts = {}) {
   const safeRef = escAttr(caseRef);
   const panel = opts.notesPanel === undefined ? require('../services/caseNotesService').enabled() : !!opts.notesPanel;
+  const emailsMode = opts.emailsTab === undefined ? require('../services/caseEmailsService').mode() : (['on', 'admins'].includes(opts.emailsTab) ? opts.emailsTab : 'off');
+  const emails = emailsMode !== 'off';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -250,7 +256,7 @@ function buildCockpitHTML(caseRef, opts = {}) {
     ${panel ? '@container casemain (max-width: 820px) {' : '@media (max-width: 820px) {'}
       .grid-2, .grid-3 { grid-template-columns:1fr; }
       .doc-strip { grid-template-columns:repeat(3,1fr); }
-    }${panel ? '\n    /* the Consultation notes panel (caseNotesWidget.js): the main column narrows, so the rules above follow the main column, not the window */\n    ' + CASE_NOTES_CSS : ''}
+    }${panel ? '\n    /* the Consultation notes panel (caseNotesWidget.js): the main column narrows, so the rules above follow the main column, not the window */\n    ' + CASE_NOTES_CSS : ''}${emails ? '\n    /* the Emails tab (caseEmailsWidget.js) */\n    ' + CASE_EMAILS_CSS : ''}
   </style>
 </head>
 <body>
@@ -289,7 +295,7 @@ ${buildNavHeader('dashboard')}
       <button class="tab" data-tab="payments">Payments</button>
       <button class="tab" data-tab="meetings">Meetings</button>
       <button class="tab" data-tab="timeline">Timeline</button>
-      <button class="tab" data-tab="updates">Updates</button>
+      <button class="tab" data-tab="updates">Updates</button>${emails ? '\n      ' + caseEmailsTabButton : ''}
     </div>
 
     <!-- Overview -->
@@ -403,7 +409,7 @@ ${buildNavHeader('dashboard')}
         <div class="muted" style="margin-bottom:12px;max-width:var(--read-max)">The same thread Monday shows on this case — system notes and team comments, newest first. Lead-tagged entries are the pre-retainer history. Posting writes to the case's Monday thread.</div>
         ${updatesWidgetHtml('updw')}
       </div>
-    </div>${panel ? '\n    </div><!-- /case-main -->\n' + caseNotesHtml() + '\n    </div><!-- /case-body -->' : ''}
+    </div>${emails ? '\n\n    ' + caseEmailsHtml() : ''}${panel ? '\n    </div><!-- /case-main -->\n' + caseNotesHtml() + '\n    </div><!-- /case-body -->' : ''}
 
   </div><!-- /content -->
 </main>
@@ -416,7 +422,7 @@ ${SHARED_AUTH_JS}
 ${STATUS_TONE_JS}
 ${PAYMENT_UI_JS}
 ${DEADLINE_CHANGE_JS}
-tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/case-updates/' + encodeURIComponent(CASE_REF) });${panel ? '\n' + CASE_NOTES_JS + '\ntdotCaseNotesMount({ caseRef: CASE_REF });' : ''}
+tdotUpdatesMount({ prefix: 'updw', threadUrl: '/api/case-updates/' + encodeURIComponent(CASE_REF) });${panel ? '\n' + CASE_NOTES_JS + '\ntdotCaseNotesMount({ caseRef: CASE_REF });' : ''}${emails ? '\n' + CASE_EMAILS_JS + '\ntdotCaseEmailsMount({ caseRef: CASE_REF, adminsOnly: ' + (emailsMode === 'admins') + ' });' : ''}
 
 function escHtml(s) {
   return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
