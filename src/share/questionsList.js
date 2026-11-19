@@ -14,7 +14,7 @@ const QUESTIONS = Object.freeze([
   { id: "G1", title: "Should everyone sign in with their own Monday account?", sug: "b",
     opts: [["a","Yes, everyone, once each person has a Monday seat or another way to sign in is agreed"], ["b","Keep today's mix, and require Monday sign-in for each new “who did it” action (fee approval, waivers, hand-off)"], ["c","Keep the shared key as it is"]] },
   { id: "H1", title: "Who is on the retainer team, and who may send agreements?", sug: "b",
-    opts: [["a","Only the retainer team sends; consultants set Retain and fill in the hand-off"], ["b","The retainer team normally, but you and Shafoli may still send your own direct retainers"], ["c","Anyone, as today"]] },
+    opts: [["a","Only the retainer team sends; consultants set Retain and fill in the hand-off"], ["b","The retainer team normally, but a consultant (Shafoli or Shermin) may still send their own direct retainers"], ["c","Anyone, as today"]] },
   { id: "H2", title: "Must anything more be filled in before an outcome is saved?", sug: "b",
     opts: [["a","Keep it as now"], ["b","Follow-Up also needs a follow-up date"], ["c","Retain also needs the fee quoted and the payment plan (milestones) choice"]] },
   { id: "H3", title: "What is the general payment (milestone) plan?", sug: "a",
