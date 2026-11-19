@@ -155,7 +155,7 @@ app.get('/admin/guide/data', (req, res) => {
 // ── Automation checklist, shared by a private link (no sign-in) ─────────────
 // For the TDOT management team (Faran 2026-11-19). Never linked from any page;
 // a wrong token is a plain 404. See src/services/shareChecklistService.js.
-app.get('/share/checklist/:token', (req, res) => require('./services/shareChecklistService').serve(req, res));
+app.get('/share/checklist/:token', (req, res, next) => require('./services/shareChecklistService').serve(req, res, next));
 
 // ── Updates thread (the Monday "Updates" section, in the platform) ───────────
 // GET one item's thread (lead/consultation pages), the merged case thread

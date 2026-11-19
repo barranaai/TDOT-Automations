@@ -8,8 +8,8 @@
  *
  * Rules (do not undo):
  *  - The token itself is NOT in the code or the repo: only its SHA-256 is. The
- *    link was given to Faran. A wrong token answers the same plain 404 as a page
- *    that does not exist, so the path reveals nothing.
+ *    link was given to Faran. A wrong token falls through to the server's ordinary
+ *    404, the same as a page that does not exist, so the path reveals nothing.
  *  - Never linked from the dashboard, the nav bar or any other page (Faran: "do
  *    not add its link to the dashboard"). test/shareChecklist.test.js checks it.
  *  - Kept out of search engines (X-Robots-Tag + robots meta) and never leaks the
@@ -50,10 +50,11 @@ function page() {
   return cache;
 }
 
-/** Express handler. */
-function serve(req, res) {
+/** Express handler. A miss falls through to the server's ordinary 404 (next()), so the
+ *  answer is the same as for any page that does not exist. */
+function serve(req, res, next) {
   const html = tokenOk(req.params && req.params.token) ? page() : '';
-  if (!html) return res.status(404).type('text').send('Not found');
+  if (!html) return typeof next === 'function' ? next() : res.status(404).type('text').send('Not found');
   res.set(HEADERS).type('html').send(html);
 }
 

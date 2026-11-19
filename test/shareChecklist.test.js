@@ -19,13 +19,17 @@ function fakeRes() {
   return r;
 }
 
-test('a wrong, missing or malformed token is a plain 404 with no page and no hints', () => {
+test('a wrong, missing or malformed token falls through to the ordinary 404, with no page and no hints', () => {
   for (const token of [undefined, '', 'x', 'checklist', 'A'.repeat(24), '../../etc/passwd', 'a b c d e f g h i j k l', 'Z'.repeat(200)]) {
     const res = fakeRes();
-    svc.serve({ params: { token } }, res);
-    assert.equal(res.statusCode, 404, String(token));
-    assert.equal(res.body, 'Not found');
+    let nexted = 0;
+    svc.serve({ params: { token } }, res, () => { nexted++; });
+    assert.equal(nexted, 1, String(token));
+    assert.equal(res.body, '', 'nothing sent');
     assert.ok(!res.headers['X-Robots-Tag'], 'no special headers on a miss');
+    const res2 = fakeRes();
+    svc.serve({ params: { token } }, res2);                 // without next(): a plain 404
+    assert.equal(res2.statusCode, 404);
   }
 });
 
@@ -80,5 +84,5 @@ test('no page links to the shared checklist (not on the dashboard or anywhere el
   assert.deepEqual(hits, []);
   const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
   assert.equal((server.match(/\/share\/checklist/g) || []).length, 1, 'only the route itself');
-  assert.match(server, /app\.get\('\/share\/checklist\/:token'/);
+  assert.match(server, /app\.get\('\/share\/checklist\/:token', \(req, res, next\)/);
 });
