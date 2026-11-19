@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<title>Questions for Gauri</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column; a sticky progress bar; questions grouped by the feature they unlock, each a card with options, the suggestion marked, and a note box. */
+:root{
+  --bg:#f3f5f7; --panel:#ffffff; --fg:#17212b; --muted:#5a6672; --rule:#d8dee4; --soft:#eef2f5;
+  --accent:#0f4c75; --accent-fg:#ffffff;
+  --sug-bg:#e2f3e7; --sug-fg:#17603a; --sug-rule:#9fd2b0;
+  --warn-bg:#fff2d9; --warn-fg:#7a4a00; --warn-rule:#efc674;
+  --err-bg:#fde6e4; --err-fg:#8f1d14;
+  --display:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#12171d; --panel:#1a2129; --fg:#e6eaee; --muted:#9aa6b2; --rule:#2c3640; --soft:#212a33;
+  --accent:#7fb6e0; --accent-fg:#0b1a26;
+  --sug-bg:#173323; --sug-fg:#a6e0bb; --sug-rule:#2f6a47;
+  --warn-bg:#3a2a0d; --warn-fg:#f2cf88; --warn-rule:#7a5a1f;
+  --err-bg:#3d1a17; --err-fg:#f3b3ac; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#12171d; --panel:#1a2129; --fg:#e6eaee; --muted:#9aa6b2; --rule:#2c3640; --soft:#212a33;
+  --accent:#7fb6e0; --accent-fg:#0b1a26;
+  --sug-bg:#173323; --sug-fg:#a6e0bb; --sug-rule:#2f6a47;
+  --warn-bg:#3a2a0d; --warn-fg:#f2cf88; --warn-rule:#7a5a1f;
+  --err-bg:#3d1a17; --err-fg:#f3b3ac; color-scheme:dark }
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15.5px;line-height:1.55;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px))}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top, 0px);z-index:10;background:var(--bg)}
+.wrap{max-width:760px;margin:0 auto;padding-block:28px 64px;display:flex;flex-direction:column;gap:18px}
+h1{font-family:var(--display);font-weight:700;font-size:1.9rem;line-height:1.2;margin:0;text-wrap:balance}
+h2{font-family:var(--display);font-weight:600;font-size:1.25rem;margin:18px 0 0;text-wrap:balance}
+.lede{margin:0;color:var(--muted);max-width:65ch}
+.lede b{color:var(--fg)}
+.bar{position:sticky;top:env(safe-area-inset-top, 0px);z-index:5;background:var(--bg);padding-block:10px;border-bottom:1px solid var(--rule);display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px}
+.meter{flex:1 1 220px;min-width:0;height:8px;border-radius:99px;background:var(--soft);overflow:hidden}
+.meter i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s ease}
+.count{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
+.conn{font-size:.85rem;color:var(--muted)}
+.notice{border:1px solid var(--warn-rule);background:var(--warn-bg);color:var(--warn-fg);border-radius:8px;padding:10px 14px;font-size:.92rem}
+.notice[data-kind="err"]{border-color:var(--err-fg);background:var(--err-bg);color:var(--err-fg)}
+.group-sub{margin:2px 0 0;color:var(--muted);font-size:.9rem}
+.q{background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:12px}
+.q[data-answered="1"]{border-color:color-mix(in srgb, var(--accent) 45%, var(--rule))}
+.qhead{display:flex;gap:12px;align-items:baseline}
+.qnum{font-variant-numeric:tabular-nums;font-weight:600;color:var(--accent);min-width:2.2em}
+.qtitle{font-weight:600;font-size:1.05rem;margin:0;min-width:0}
+.ctx{margin:0;color:var(--muted);font-size:.93rem;max-width:68ch}
+.opts{display:flex;flex-direction:column;gap:8px;border:0;margin:0;padding:0;min-width:0}
+.opt{display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border:1px solid var(--rule);border-radius:8px;cursor:pointer;background:var(--panel)}
+.opt:hover{background:var(--soft)}
+.opt input{margin:4px 0 0;accent-color:var(--accent);flex:none;width:17px;height:17px}
+.opt span{min-width:0}
+.opt[data-sug="1"]{border-color:var(--sug-rule)}
+.opt:has(input:checked){border-color:var(--accent);background:color-mix(in srgb, var(--accent) 9%, var(--panel))}
+.chip{display:inline-block;margin-left:6px;padding:0 7px;border-radius:99px;background:var(--sug-bg);color:var(--sug-fg);font-size:.72rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;vertical-align:1px}
+.sugline{margin:0;font-size:.9rem;background:var(--sug-bg);color:var(--sug-fg);border-radius:8px;padding:8px 12px}
+.sugline b{font-weight:600}
+label.note{display:flex;flex-direction:column;gap:4px;font-size:.88rem;color:var(--muted)}
+textarea{font:inherit;font-size:.95rem;color:var(--fg);background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:8px 10px;min-height:64px;resize:vertical;width:100%}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+button{font:inherit;font-size:.9rem;font-weight:500;border-radius:8px;padding:7px 12px;cursor:pointer;border:1px solid var(--rule);background:var(--panel);color:var(--fg)}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+button:hover{filter:brightness(.97)}
+button:disabled{opacity:.5;cursor:default}
+:focus-visible{outline:3px solid color-mix(in srgb, var(--accent) 55%, transparent);outline-offset:2px}
+.saved{font-size:.84rem;color:var(--muted)}
+.saved[data-state="err"]{color:var(--err-fg)}
+.foot{border-top:1px solid var(--rule);padding-top:16px;display:flex;flex-direction:column;gap:10px}
+#copyBox{width:100%;min-height:160px}
+@media (prefers-reduced-motion: reduce){ .meter i{transition:none} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header style="display:flex;flex-direction:column;gap:10px">
+    <h1>Questions for Gauri</h1>
+    <p class="lede">These are the <b>19 decisions</b> we need from you before we can build the next parts of the app. For each one, pick an answer. The <b>suggested</b> answer is marked; "Use the suggestion" picks it in one click. Add a note wherever you want to explain or change something. Your answers save as you go, and you can come back to change them.</p>
+  </header>
+
+  <div class="bar" role="status" aria-live="polite">
+    <span class="count" id="count">0 of 19 answered</span>
+    <div class="meter" aria-hidden="true"><i id="meter"></i></div>
+    <span class="conn" id="conn">Connecting…</span>
+  </div>
+
+  <div id="notice" class="notice" hidden></div>
+  <div id="groups"></div>
+
+  <div class="foot">
+    <div class="row">
+      <span class="saved">Prefer email? Copy all your answers as text and paste them into a message to Faran.</span>
+      <button type="button" id="copyBtn">Copy my answers</button>
+    </div>
+    <textarea id="copyBox" hidden readonly aria-label="Your answers as text"></textarea>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var GROUPS = [
+    { id: "who", title: "Who did what", sub: "Without this, the app can't tell who approved, waived or handed off." },
+    { id: "handoff", title: "Consultant hand-off to the retainer team", sub: "Point 6." },
+    { id: "ready", title: "Agreement and form before the consultation", sub: "Point 3." },
+    { id: "booking", title: "Bookings, waivers and cash", sub: "Point 2." },
+    { id: "fees", title: "Fee approvals and the minimum-fee sheet", sub: "Point 8." },
+    { id: "deadlines", title: "Deadlines", sub: "Point 9." },
+    { id: "reminders", title: "Reminders that chase staff until fixed", sub: "Point 10." },
+    { id: "recording", title: "Recording consultations", sub: "Before the notes from recordings go further." }
+  ];
+
+  var QUESTIONS = [
+    { id: "G1", group: "who", title: "Should everyone sign in with their own Monday account?",
+      ctx: "Today the shared team key still opens every page. Monday sign-in is needed only for some actions (Assign, Change deadline, adding case notes, the Emails tab, deletes, undoing a payment), and it fills “Added by” on new leads. On 10 Nov you said we are over the Monday seat limit and the India team shares one login; the app's Monday sign-in accepts only tdotimm.com addresses.",
+      opts: [["a","Yes, everyone, once each person has a Monday seat or another way to sign in is agreed"],["b","Keep today's mix, and require Monday sign-in for each new “who did it” action (fee approval, waivers, hand-off)"],["c","Keep the shared key as it is"]],
+      sug: "b", sugText: "(b) now, then (a) once “access by role” is built and the seat question is settled.",
+      ask: "Who has no Monday seat of their own today (Mahesh, Deeksha, others)?" },
+
+    { id: "H1", group: "handoff", title: "Who is on the retainer team, and who may send agreements?",
+      ctx: "Today anyone signed in can press “Retain & send”, and choosing Retain when a fee is set emails the agreement straight away. In October, 48 of the 56 retained clients were walk-in direct retainers, and Shafoli was the consultant on 39 of them.",
+      opts: [["a","Only the retainer team sends; consultants set Retain and fill in the hand-off"],["b","The retainer team normally, but you and Shafoli may still send your own direct retainers"],["c","Anyone, as today"]],
+      sug: "b", sugText: "(b), and please name the team.",
+      ask: "Who is on the retainer team besides Asmita?" },
+
+    { id: "H2", group: "handoff", title: "Must anything more be filled in before an outcome is saved?",
+      ctx: "Live now: Retain is refused until the deadline is saved, and the agreement waits for a fee (and a sub type where the case type has them). Not Wanted needs a reason. Follow-Up and Newsletter need nothing. The bigger gap is outcomes not being recorded at all (67 past consultations had none on 11 Nov).",
+      opts: [["a","Keep it as now"],["b","Follow-Up also needs a follow-up date"],["c","Retain also needs the fee quoted and the payment plan (milestones) choice"]],
+      sug: "b", sugText: "(b), the follow-up date only, since that box already exists; Retain stays as now." },
+
+    { id: "H3", group: "handoff", title: "What is the general payment (milestone) plan?",
+      ctx: "Live default: one milestone equal to the whole fee. Staff split it by hand, and since 13 Oct a part-payment on milestone 1 starts the case.",
+      opts: [["a","One payment, as now"],["b","One split for every case (for example 50/50)"],["c","A split per application type, from Asmita's sheet"]],
+      sug: "a", sugText: "Keep one payment as the general plan, and add per-type splits only when Asmita's sheet exists." },
+
+    { id: "H4", group: "handoff", title: "Who calls Follow-Up clients back, and when do we stop?",
+      ctx: "Follow-Up clients sit on the Retainers & follow-ups page. A follow-up date can be saved and turns amber when due, but it is optional, sends no reminder and is almost never filled in.",
+      opts: [["a","The consultant must set a date, the retainer team calls on that date, and after 3 unanswered tries the client becomes Newsletter"],["b","The consultant follows up"],["c","Melanie follows up"]],
+      sug: "a", sugText: "(a), with the date required and a Needs-attention line when the date passes." },
+
+    { id: "A1", group: "ready", title: "What happens when a client arrives without a signed agreement or a filled form?",
+      ctx: "The agreement and form go out automatically after a link payment (since 15 Oct) and after a recorded payment (since 16 Oct). But nothing stops the consultation; the Consultations page only shows the status.",
+      opts: [["a","The agreement must be signed before the consultation starts (the client can sign on their phone on the spot); a missing form is only a warning"],["b","Both are required, otherwise the consultation is rebooked with the fee carried over"],["c","Warning only; the consultant decides"]],
+      sug: "a", sugText: "(a). The app would also flag “not ready” on the Consultations page the day before." },
+
+    { id: "B1", group: "booking", title: "How should a staff booking (early slot) work?",
+      ctx: "Since 10 Nov every consultation goes into the app, never only into Square. Staff can book in the app with “Record payment / Waived (and book)” once the fee is recorded or waived. A time already booked in Square can be added with “+ Direct consultation”. A time booked in the app is not written to Square.",
+      opts: [["a","Melanie books in the app with “Record payment / Waived (and book)” and also blocks the time in Square"],["b","Melanie books in Square as now and adds it with “+ Direct consultation” the same day"],["c","The app books the time and writes it into Square, checking Square's calendar for clashes (a bigger build)"],["d","A special booking link with extra internal times"]],
+      sug: "a", sugText: "(a) for now." },
+
+    { id: "B2", group: "booking", title: "When must an early-slot client pay?",
+      ctx: "Today Melanie takes the card on the phone in Square (or the cash / e-transfer arrives) and records it with the booking; only then does the app book the time and send the agreement and form.",
+      opts: [["a","Pay first, as today"],["b","Book now, pay later (say for whom in the note)"],["c","Hold the time until paid and release it after 2 hours (not built yet)"]],
+      sug: "a", sugText: "(a), with “Not paid yet” only for existing clients and follow-ups." },
+
+    { id: "B3", group: "booking", title: "Who may waive the consultation fee?",
+      ctx: "Today anyone using the app can record “Waived” (or “Free”), with no approval and an optional note. Reporting shows only a count. In October, 62 of Shafoli's 85 Square consultations were free.",
+      opts: [["a","Melanie alone, existing or returning clients only, reason required"],["b","Melanie asks, and you or Asmita approve first"],["c","Anyone, reason required"],["d","Melanie, and the consultants for their own clients; reason required; every waiver listed with who and why in Reporting each month"]],
+      sug: "d", sugText: "(d)." },
+
+    { id: "B4", group: "booking", title: "Cash or e-transfer: can a time be booked before the money arrives?",
+      ctx: "In the app, the time is booked and the agreement and form sent only once the money is recorded as received. Two gaps remain: “+ Direct consultation” can save “Not paid yet”, and “Invoice sent by the team” can be recorded before the invoice is paid.",
+      opts: [["a","Only after it is received, everywhere"],["b","Book first; the client pays before or at the consultation"],["c","Book first, but the consultation can't start until it is marked paid"]],
+      sug: "a", sugText: "(a), and “Invoice sent by the team” recorded only once the invoice is paid." },
+
+    { id: "B5", group: "booking", title: "Prajawal's leads, and who may book a time for a client",
+      ctx: "Prajawal already adds his WhatsApp / Instagram leads himself and owns them (about 35 leads). Today “Record payment / Waived (and book)” and “+ Direct consultation” are open to every staff member.",
+      opts: [["a","Prajawal sends the booking invite for his own leads; Melanie owns all others; booking a time is Melanie's job, plus the consultants for their own existing clients"],["b","Prajawal passes his leads to Melanie, who sends the invite and books"],["c","Anyone may send invites and book, as today"]],
+      sug: "a", sugText: "(a)." },
+
+    { id: "F1", group: "fees", title: "Who approves a fee more than $500 below the minimum?",
+      ctx: "The app can tell who approved only when that person signs in with their own Monday account, not with the shared key or a shared login.",
+      opts: [["a","You only"],["b","You or Asmita"],["c","Both of you"],["d","Not allowed"]],
+      sug: "a", sugText: "You only." },
+
+    { id: "F2", group: "fees", title: "What does Asmita's minimum-fee sheet hold?",
+      ctx: "Lost revenue would be the minimum minus the fee charged, and Summary → Reporting already adds up retainer fees per month, so the discount lines can go there.",
+      opts: [["a","One number per application: the lowest we accept"],["b","Two numbers: the usual price and the lowest"]],
+      sug: "a", sugText: "One number, the minimum." },
+
+    { id: "F3", group: "fees", title: "How is the minimum set?",
+      ctx: "“Retain & send” now needs a sub type wherever the case type has them, so the app can always find the right row.",
+      opts: [["a","Per case type, plus sub-type rows (e.g. CEC single vs with spouse and child), with an optional amount per extra person"],["b","Per case type only"],["c","Per scope annex"]],
+      sug: "a", sugText: "(a)." },
+
+    { id: "F4", group: "fees", title: "When can Asmita have the minimum-fee sheet ready?",
+      ctx: "We would send her a template listing every case type and sub type with the lowest and usual fees actually charged since August. A type left blank gets no check and shows in the report as “no minimum on file”.",
+      opts: [["a","Yes, send the template and she will fill it in"],["b","She will make her own sheet"]],
+      sug: "a", sugText: "Yes, send the template.",
+      ask: "By what date can the sheet be ready?" },
+
+    { id: "D1", group: "deadlines", title: "What is the limit per half-month window?",
+      ctx: "The Deadlines tab already shows this half-month and the next three with Real / Imaginary counts, but nothing marks a window as full.",
+      opts: [["a","20 for the whole firm"],["b","25 for the whole firm"],["c","Per case manager"],["d","Per consultant"],["e","No number: Asmita and Deeksha judge from the counts"]],
+      sug: "a", sugText: "20 for the whole firm, counting every open case whose real deadline or promised date falls in the window, shown as “full” on that box." },
+
+    { id: "R1", group: "reminders", title: "Which red items should chase a named person, and who gets each?",
+      ctx: "Today there are lists but nothing chases anyone. The suggested first cut: consultation day passed with no outcome → the consultant (Asmita as back-up); lead still “New” after 1 working day → its Lead Owner; consultation tomorrow missing the agreement, form or payment → Melanie; retainer unsigned or unpaid after 3 working days → Asmita; Follow-Up date reached or blank → whoever H4 names; Summary → Needs attention items → the case's Case Support Officer (Asmita when nobody is assigned).",
+      opts: [["a","The longer 8-item list from 15 October"],["b","The shorter first cut above, built on the lists that already exist"],["c","Keep the lists only, with no chasing"]],
+      sug: "b", sugText: "(b), the first cut above. Fee approvals are added once point 8 exists." },
+
+    { id: "R2", group: "reminders", title: "How should a red item reach the person?",
+      ctx: "Each person first needs a Monday sign-in and an email on record.",
+      opts: [["a","One email per person each working morning, with links, plus red rows in the app"],["b","A Monday bell notification, as Assign uses"],["c","Both"]],
+      sug: "a", sugText: "(a), no Teams." },
+
+    { id: "O1", group: "recording", title: "How is the client told the consultation is recorded and transcribed, and what if they say no?",
+      ctx: "Consultants already record in Otter, but the consultation agreement says nothing about recording or AI.",
+      opts: [["a","A line in the consultation agreement plus a spoken notice at the start"],["b","A spoken notice only"],["c","Record only when the client agrees"]],
+      sug: "a", sugText: "(a): one line in the agreement (it still fits on one page), and the consultant says it at the start. If the client says no, the consultant types notes in the Consultation notes box." }
+  ];
+
+  var TOTAL = QUESTIONS.length;
+  var DRAFT_KEY = "gauri-q-drafts-v1";
+  var UNSAVED_KEY = "gauri-q-unsaved-v1";
+  // The answers live on the server, under this page's own address (same origin).
+  var API = location.pathname.replace(/\/+$/, "") + "/answers";
+  var canSave = typeof window.fetch === "function";
+  var state = {};        // qid -> {choice, note}
+  var remote = {};       // qid -> {choice, note, at} as the server holds it
+  var dirty = {};        // qid -> time of a local change that is not saved yet (kept across reloads)
+  var fresh = {};        // qid -> true when that change was made since this page was opened
+  var saving = {};       // qid -> promise chain
+  var noteTimers = {}, retryTimers = {}, tries = {};
+  var leaving = false;   // true while the page is being left: the last save may outlive it
+  // A note is sent after a pause in typing, or at once when the box is left. The pause is long enough
+  // that ordinary typing stays far below the server's limit on writes.
+  var NOTE_PAUSE_MS = 2000;
+
+  function el(tag, attrs, text) {
+    var e = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      if (k === "class") e.className = attrs[k]; else e.setAttribute(k, attrs[k]);
+    });
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  function loadStored(key) {
+    try {
+      var v = JSON.parse(localStorage.getItem(key) || "{}");
+      return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+    } catch (_) { return {}; }
+  }
+  function loadDrafts() {
+    var raw = loadStored(DRAFT_KEY), out = {};
+    QUESTIONS.forEach(function (q) {
+      var s = raw[q.id];
+      if (s && typeof s === "object") out[q.id] = { choice: typeof s.choice === "string" ? s.choice : "", note: typeof s.note === "string" ? s.note : "" };
+    });
+    return out;
+  }
+  function loadUnsaved() {
+    var raw = loadStored(UNSAVED_KEY), out = {};
+    // Only for a question whose draft is here too: a mark without its draft must never send an empty answer.
+    QUESTIONS.forEach(function (q) { if (state[q.id] && typeof raw[q.id] === "string" && raw[q.id]) out[q.id] = raw[q.id]; });
+    return out;
+  }
+  function saveDrafts() {
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(state)); localStorage.setItem(UNSAVED_KEY, JSON.stringify(dirty)); } catch (_) {}
+  }
+  function markDirty(qid) { dirty[qid] = new Date().toISOString(); fresh[qid] = true; }
+  // A save is done only for the change it carried: a newer change keeps its own mark.
+  function clean(qid, stamp) { if (dirty[qid] === stamp) { delete dirty[qid]; delete fresh[qid]; saveDrafts(); } }
+
+  function optLabel(q, key) {
+    if (key === "other") return "Something else (see note)";
+    for (var i = 0; i < q.opts.length; i++) if (q.opts[i][0] === key) return "(" + key + ") " + q.opts[i][1];
+    return "";
+  }
+
+  function render() {
+    var root = document.getElementById("groups");
+    root.textContent = "";
+    var n = 0;
+    GROUPS.forEach(function (g) {
+      var qs = QUESTIONS.filter(function (q) { return q.group === g.id; });
+      if (!qs.length) return;
+      var sec = el("section", { "aria-labelledby": "g-" + g.id });
+      sec.style.display = "flex"; sec.style.flexDirection = "column"; sec.style.gap = "12px";
+      var h = el("h2", { id: "g-" + g.id }, g.title);
+      sec.appendChild(h);
+      sec.appendChild(el("p", { class: "group-sub" }, g.sub));
+      qs.forEach(function (q) { n++; sec.appendChild(card(q, n)); });
+      root.appendChild(sec);
+    });
+    updateProgress();
+  }
+
+  function card(q, n) {
+    var box = el("article", { class: "q", id: "q-" + q.id });
+    var head = el("div", { class: "qhead" });
+    head.appendChild(el("span", { class: "qnum" }, String(n) + "."));
+    head.appendChild(el("h3", { class: "qtitle" }, q.title));
+    box.appendChild(head);
+    box.appendChild(el("p", { class: "ctx" }, q.ctx));
+
+    var fs = el("fieldset", { class: "opts" });
+    var legend = el("legend", {}, "Your answer");
+    legend.style.position = "absolute"; legend.style.width = "1px"; legend.style.height = "1px"; legend.style.overflow = "hidden"; legend.style.clip = "rect(0 0 0 0)";
+    fs.appendChild(legend);
+    var all = q.opts.concat([["other", "Something else (write it in the note)"]]);
+    all.forEach(function (o) {
+      var id = "r-" + q.id + "-" + o[0];
+      var lab = el("label", { class: "opt", "for": id });
+      if (o[0] === q.sug) lab.setAttribute("data-sug", "1");
+      var inp = el("input", { type: "radio", name: "q-" + q.id, id: id, value: o[0] });
+      inp.addEventListener("change", function () { onChoice(q.id, o[0]); });
+      lab.appendChild(inp);
+      var span = el("span", {}, o[0] === "other" ? o[1] : "(" + o[0] + ") " + o[1]);
+      if (o[0] === q.sug) span.appendChild(el("span", { class: "chip" }, "Suggested"));
+      lab.appendChild(span);
+      fs.appendChild(lab);
+    });
+    box.appendChild(fs);
+
+    var sug = el("p", { class: "sugline" });
+    sug.appendChild(el("b", {}, "Suggested: "));
+    sug.appendChild(document.createTextNode(q.sugText));
+    box.appendChild(sug);
+
+    var nl = el("label", { class: "note", "for": "n-" + q.id }, q.ask ? q.ask : "Note (optional)");
+    var ta = el("textarea", { id: "n-" + q.id, rows: "2", maxlength: "4000" });
+    ta.addEventListener("input", function () { onNote(q.id, ta.value); });
+    ta.addEventListener("blur", function () { flushNote(q.id); });
+    nl.appendChild(ta);
+    box.appendChild(nl);
+
+    var row = el("div", { class: "row" });
+    var use = el("button", { type: "button", id: "use-" + q.id }, "Use the suggestion");
+    use.addEventListener("click", function () {
+      var r = document.getElementById("r-" + q.id + "-" + q.sug);
+      if (r) { r.checked = true; onChoice(q.id, q.sug); }
+    });
+    row.appendChild(use);
+    row.appendChild(el("span", { class: "saved", id: "s-" + q.id, "aria-live": "polite" }, ""));
+    box.appendChild(row);
+    return box;
+  }
+
+  function paint(qid) {
+    var s = state[qid] || {};
+    var q = QUESTIONS.filter(function (x) { return x.id === qid; })[0];
+    if (!q) return;
+    var radios = document.querySelectorAll('input[name="q-' + qid + '"]');
+    for (var i = 0; i < radios.length; i++) radios[i].checked = radios[i].value === s.choice;
+    var ta = document.getElementById("n-" + qid);
+    if (ta && document.activeElement !== ta && ta.value !== (s.note || "")) ta.value = s.note || "";
+    var box = document.getElementById("q-" + qid);
+    if (box) box.setAttribute("data-answered", s.choice ? "1" : "0");
+  }
+
+  function updateProgress() {
+    var done = QUESTIONS.filter(function (q) { return state[q.id] && state[q.id].choice; }).length;
+    document.getElementById("count").textContent = done + " of " + TOTAL + " answered";
+    document.getElementById("meter").style.width = Math.round(done / TOTAL * 100) + "%";
+  }
+
+  function setSaved(qid, text, kind) {
+    var s = document.getElementById("s-" + qid);
+    if (!s) return;
+    s.textContent = text;
+    if (kind) s.setAttribute("data-state", kind); else s.removeAttribute("data-state");
+  }
+
+  function showNotice(text, kind) {
+    var n = document.getElementById("notice");
+    if (!text) { n.hidden = true; return; }
+    n.textContent = text; n.hidden = false;
+    if (kind) n.setAttribute("data-kind", kind); else n.removeAttribute("data-kind");
+  }
+
+  function onChoice(qid, choice) {
+    state[qid] = { choice: choice, note: (state[qid] && state[qid].note) || "" };
+    markDirty(qid);
+    saveDrafts(); paint(qid); updateProgress();
+    persist(qid);
+  }
+
+  function onNote(qid, text) {
+    state[qid] = { choice: (state[qid] && state[qid].choice) || "", note: text };
+    markDirty(qid);
+    saveDrafts();
+    clearTimeout(noteTimers[qid]);
+    setSaved(qid, canSave ? "Typing…" : "Saved on this device");
+    noteTimers[qid] = setTimeout(function () { noteTimers[qid] = 0; persist(qid); }, NOTE_PAUSE_MS);
+  }
+
+  // Send a note that is still waiting for its pause (the box was left, or the page is being hidden).
+  function flushNote(qid) {
+    if (!noteTimers[qid]) return;
+    clearTimeout(noteTimers[qid]); noteTimers[qid] = 0;
+    persist(qid);
+  }
+
+  function whenText(at) {
+    try {
+      var d = new Date(at);
+      return isNaN(d.getTime()) ? "" : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    } catch (_) { return ""; }
+  }
+
+  function retryLater(qid, waitMs) {
+    tries[qid] = (tries[qid] || 0) + 1;
+    setSaved(qid, "Not saved yet — will try again", "err");
+    var ms = waitMs || Math.min(60000, 1500 * Math.pow(2, tries[qid] - 1)) + Math.random() * 1500;
+    clearTimeout(retryTimers[qid]);
+    retryTimers[qid] = setTimeout(function () { if (dirty[qid]) persist(qid); }, ms);
+  }
+
+  function persist(qid) {
+    if (!canSave) { setSaved(qid, "Saved on this device only"); return; }
+    clearTimeout(retryTimers[qid]);
+    setSaved(qid, "Saving…");
+    var prev = saving[qid] || Promise.resolve();
+    saving[qid] = prev.then(function () {
+      var s = state[qid] || { choice: "", note: "" };
+      var body = { choice: s.choice || "", note: String(s.note || "").slice(0, 4000) };
+      var stamp = dirty[qid];
+      var r = remote[qid];
+      if (r && r.choice === body.choice && (r.note || "") === body.note) { clean(qid, stamp); if (!dirty[qid]) setSaved(qid, "Saved"); return; }
+      return fetch(API + "/" + encodeURIComponent(qid), {
+        method: "PUT", cache: "no-store", credentials: "omit", keepalive: leaving,
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      }).then(function (res) {
+        if (res.ok) {
+          return res.json().then(function (j) { return j || {}; }, function () { return {}; }).then(function (j) {
+            remote[qid] = { choice: body.choice, note: body.note, at: j.at || new Date().toISOString() };
+            tries[qid] = 0;
+            clean(qid, stamp);
+            if (!dirty[qid]) setSaved(qid, "Saved");
+          });
+        }
+        if (res.status === 429) {
+          var wait = parseInt(res.headers.get("Retry-After"), 10);
+          return retryLater(qid, wait > 0 ? Math.min(600, Math.max(5, wait)) * 1000 : 0);
+        }
+        if (res.status === 408 || res.status >= 500) return retryLater(qid);
+        setSaved(qid, "Not saved — your answer is kept on this device", "err");
+      }, function () { retryLater(qid); });
+    });
+  }
+
+  function applyRemote(qid, body) {
+    remote[qid] = { choice: typeof body.choice === "string" ? body.choice : "", note: typeof body.note === "string" ? body.note : "", at: typeof body.at === "string" ? body.at : "" };
+    var r = remote[qid];
+    if (dirty[qid]) {
+      // A local change is not saved yet: keep it, unless it is a leftover from an earlier visit and the saved answer is newer.
+      if (fresh[qid] || !(r.at && r.at > dirty[qid])) return;
+      delete dirty[qid];
+    }
+    state[qid] = { choice: r.choice, note: r.note };
+    paint(qid);
+    var when = whenText(r.at);
+    if (r.choice || r.note) setSaved(qid, "Saved" + (when ? " · " + when : ""));
+    else setSaved(qid, "");
+  }
+
+  function copyAnswers() {
+    var lines = ["Answers to the 19 questions (" + new Date().toLocaleDateString() + ")", ""];
+    var n = 0;
+    GROUPS.forEach(function (g) {
+      QUESTIONS.filter(function (q) { return q.group === g.id; }).forEach(function (q) {
+        n++;
+        var s = state[q.id] || {};
+        lines.push(n + ". " + q.title);
+        lines.push("   Answer: " + (s.choice ? optLabel(q, s.choice) : "(not answered)"));
+        if (s.note) lines.push("   Note: " + s.note);
+        lines.push("");
+      });
+    });
+    var text = lines.join("\n");
+    var box = document.getElementById("copyBox");
+    var btn = document.getElementById("copyBtn");
+    function fallback() { box.hidden = false; box.value = text; box.focus(); box.select(); btn.textContent = "Select all and copy"; }
+    try {
+      navigator.clipboard.writeText(text).then(function () { btn.textContent = "Copied"; setTimeout(function () { btn.textContent = "Copy my answers"; }, 2000); }, fallback);
+    } catch (_) { fallback(); }
+  }
+
+  // Start: render from this device's drafts at once, then load the saved answers from the server.
+  state = loadDrafts();
+  dirty = loadUnsaved();
+  render();
+  QUESTIONS.forEach(function (q) { paint(q.id); if (state[q.id] && (state[q.id].choice || state[q.id].note)) setSaved(q.id, "Saved on this device"); });
+  document.getElementById("copyBtn").addEventListener("click", copyAnswers);
+
+  var conn = document.getElementById("conn");
+  if (!canSave) {
+    conn.textContent = "Answers save on this device only";
+    showNotice("Your answers can't be saved for Faran in this browser. You can still answer here and use “Copy my answers” at the bottom.");
+    return;
+  }
+
+  // A note still waiting for its pause is sent when the page is hidden or left.
+  function flushAll() { leaving = true; QUESTIONS.forEach(function (q) { flushNote(q.id); }); }
+  window.addEventListener("pageshow", function () { leaving = false; });
+  window.addEventListener("pagehide", flushAll);
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") flushAll(); else leaving = false;
+  });
+
+  function load(attempt) {
+    if (!attempt) conn.textContent = "Loading saved answers…";
+    fetch(API, { cache: "no-store", credentials: "omit", headers: { "Accept": "application/json" } }).then(function (res) {
+      if (!res.ok) throw new Error("load");
+      return res.json();
+    }).then(function (j) {
+      var answers = (j && typeof j.answers === "object" && j.answers) || {};
+      conn.textContent = "Answers save automatically";
+      showNotice("");
+      QUESTIONS.forEach(function (q) { if (answers[q.id] && typeof answers[q.id] === "object") applyRemote(q.id, answers[q.id]); });
+      // Send what this device has and the server does not: changes not saved yet, and answers typed here earlier.
+      QUESTIONS.forEach(function (q) {
+        var s = state[q.id], r = remote[q.id];
+        if (dirty[q.id]) { persist(q.id); return; }
+        if (s && (s.choice || s.note) && !r) { markDirty(q.id); persist(q.id); }
+      });
+      saveDrafts(); updateProgress();
+    }, function () {
+      conn.textContent = "Saved answers can't be reached";
+      showNotice("The saved answers can't be reached right now. Your answers are kept on this device; reload later, or use “Copy my answers”.", "err");
+      setTimeout(function () { load(attempt + 1); }, Math.min(60000, 10000 * Math.pow(2, attempt)));
+    });
+  }
+  load(0);
+})();
+</script>
+</body>
+</html>

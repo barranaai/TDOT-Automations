@@ -74,7 +74,8 @@ app.use((req, res, next) => {
   const host = String(req.headers.host || '');
   if (!host || host === CANONICAL_HOST) return next();
   const proto = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim() || 'https';
-  console.log(`[Canonical] ${host}${req.originalUrl} → ${CANONICAL_HOST}`);
+  // A private no-sign-in link carries its token in the path: never write it to the log.
+  console.log(`[Canonical] ${host}${req.path.startsWith('/share/') ? '/share/…' : req.originalUrl} → ${CANONICAL_HOST}`);
   return res.redirect(302, `${proto}://${CANONICAL_HOST}${req.originalUrl}`);
 });
 
@@ -156,6 +157,14 @@ app.get('/admin/guide/data', (req, res) => {
 // For the TDOT management team (Faran 2026-11-19). Never linked from any page;
 // a wrong token is a plain 404. See src/services/shareChecklistService.js.
 app.get('/share/checklist/:token', (req, res, next) => require('./services/shareChecklistService').serve(req, res, next));
+
+// ── Gauri's 19 questions, answered at a private link (no sign-in) ───────────
+// (Faran 2026-11-19.) The form, and its two answer calls under the same token. Never linked from any page;
+// a wrong token is a plain 404 on all three. Validation, write limits and the OneDrive file are in
+// src/services/shareQuestionsService.js. The named-admin read of the answers is further down, by the client-mail checks.
+app.get('/share/questions/:token', (req, res, next) => require('./services/shareQuestionsService').serve(req, res, next));
+app.get('/share/questions/:token/answers', (req, res, next) => require('./services/shareQuestionsService').getAnswers(req, res, next));
+app.put('/share/questions/:token/answers/:qid', (req, res, next) => require('./services/shareQuestionsService').putAnswer(req, res, next));
 
 // ── Updates thread (the Monday "Updates" section, in the platform) ───────────
 // GET one item's thread (lead/consultation pages), the merged case thread
@@ -894,6 +903,9 @@ app.get('/admin/client-mail/check', (req, res) => require('./routes/clientMailRo
 // Old no-reply replies (Faran 2026-11-19, "start with #1"): ONE read-only list of the cases and leads who wrote to the
 // old no-reply inbox, and whether info@ answered after. NAMED admins only; JSON, or ?format=csv as a download.
 app.get('/admin/client-mail/old-replies', (req, res) => require('./routes/clientMailRoutes').oldReplies(req, res, { staff: tryStaffAuth, isAdminEmail: caseAccess.isAdminEmail }));
+// Gauri's answers to the 19 questions (Faran 2026-11-19): NAMED admins only, read-only, private no-store.
+// Each question's title with the chosen option in plain words, plus counts; ?format=text → the same as a plain list.
+app.get('/admin/share/questions/answers', (req, res) => require('./services/shareQuestionsService').adminAnswers(req, res, { staff: tryStaffAuth, isAdminEmail: caseAccess.isAdminEmail }));
 
 // ─── Otter notes in OneDrive: READ-ONLY look (Faran 2026-10-28) ────────────────
 // Where Otter saves meeting notes (noreply@tdotimm.com's OneDrive) and what the files
