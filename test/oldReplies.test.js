@@ -1,7 +1,8 @@
 // Old no-reply replies (Faran 2026-11-19, "start with #1") — the read-only follow-up list against a FAKE Graph and a
 // FAKE Monday: the skip rules and the grouping, the full board scans (paging, multi-address cells), case / lead /
-// both, TEST / Cancel left out, answered yes / no / unknown, Monday failure → 503 (never partial), the inbox cap,
-// the route gate, the CSV (formula injection) and no address or name in any log line.
+// both, a Client Master Leads-group row listed as a lead, TEST / Cancel left out, meeting responses dropped, answered
+// yes / no / unknown (a look-alike $search hit never counts), the checks stop at a throttle / refusal, Monday failure →
+// 503 (never partial), the inbox cap, the route gate, the CSV (formula injection) and no address or name in any log.
 // Offline (the no-network guard backs it). Every name, address and id here is invented.
 'use strict';
 
@@ -67,13 +68,14 @@ function harness({ inbox = [[]], inboxFail, sent = {}, wrote = {}, sentFail = {}
       const next = nextLink ? nextLink(i) : (i + 1 < inbox.length ? pageUrl(i + 1) : undefined);
       return { value, ...(next ? { '@odata.nextLink': next } : {}) };
     }
-    if ((m = u.match(/^https:\/\/graph\.microsoft\.com\/v1\.0\/users\/info@tdotimm\.com\/mailFolders\/sentitems\/messages\?\$search="to:([^"]+)"&\$top=10&\$select=sentDateTime$/))) {
+    // a hit given as a date string is an EXACT hit (to / from the searched address); an object is used as it is
+    if ((m = u.match(/^https:\/\/graph\.microsoft\.com\/v1\.0\/users\/info@tdotimm\.com\/mailFolders\/sentitems\/messages\?\$search="to:([^"]+)"&\$top=10&\$select=sentDateTime,toRecipients,ccRecipients,bccRecipients$/))) {
       if (sentFail[m[1]]) throw sentFail[m[1]];
-      return { value: (sent[m[1]] || []).map((t) => ({ sentDateTime: t })) };
+      return { value: (sent[m[1]] || []).map((t) => (typeof t === 'string' ? { sentDateTime: t, toRecipients: [addr(m[1].toUpperCase())] } : t)) };
     }
-    if ((m = u.match(/^https:\/\/graph\.microsoft\.com\/v1\.0\/users\/info@tdotimm\.com\/messages\?\$search="from:([^"]+)"&\$top=10&\$select=receivedDateTime$/))) {
+    if ((m = u.match(/^https:\/\/graph\.microsoft\.com\/v1\.0\/users\/info@tdotimm\.com\/messages\?\$search="from:([^"]+)"&\$top=10&\$select=receivedDateTime,from,sender$/))) {
       if (wroteFail[m[1]]) throw wroteFail[m[1]];
-      return { value: (wrote[m[1]] || []).map((t) => ({ receivedDateTime: t })) };
+      return { value: (wrote[m[1]] || []).map((t) => (typeof t === 'string' ? { receivedDateTime: t, from: addr(m[1]) } : t)) };
     }
     throw new Error('unexpected ' + u);
   };
@@ -174,6 +176,39 @@ test('skip rules: our own domains and addresses, the services on the skip list a
   assert.match(read('src/services/oldRepliesService.js'), /emailLeads\.AUTOMATED_LOCAL\.test\(/);
 });
 
+test('meeting responses: a client\'s Accepted / Declined / Tentative to the consultation invite (eventMessage…) makes no row — counted (meetingRepliesSkipped) and noted; their real email still counts; the auto-reply / read-receipt caveat is in the notes', async () => {
+  const L = 'rsvp.lead@example.org', R = 'real.lead@example.org';
+  const ev = (a, at, type) => OM(a, at, { '@odata.type': type });
+  // PURE: the type is read whatever its case; a plain message (no type) is kept
+  const { groups, counts } = svc.groupSenders([
+    ev(L, '2026-10-05T10:00:00Z', '#microsoft.graph.eventMessageResponse'),
+    ev(L, '2026-10-06T10:00:00Z', '#microsoft.graph.EventMessageResponse'),
+    ev(L, '2026-10-07T10:00:00Z', '#microsoft.graph.eventMessageRequest'),
+    OM(R, '2026-10-04T10:00:00Z'), ev(R, '2026-10-08T10:00:00Z', '#microsoft.graph.message'),
+  ], svc.ownContext(OFFICE, OLD));
+  assert.deepEqual([...groups.keys()], [R]);
+  assert.equal(groups.get(R).count, 2);
+  assert.equal(counts.meetingReplies, 3);
+  assert.equal(counts.read, 5);
+  // end to end: the RSVP sender is on the Lead Board — still no row, and never searched for
+  await run({
+    inbox: [[ev(L, '2026-10-05T10:00:00Z', '#microsoft.graph.eventMessageResponse'), OM(R, '2026-10-04T10:00:00Z'), ev(R, '2026-10-09T10:00:00Z', '#microsoft.graph.eventMessageResponse')]],
+    leads: [[leadItem('931', 'Rsvp Lead', { email: L }), leadItem('932', 'Real Lead', { email: R })]],
+  }, async (h) => {
+    const out = await svc.list();
+    assert.deepEqual(out.rows.map((r) => r.name), ['Real Lead']);
+    assert.equal(out.rows[0].oldReplies, 1, 'the RSVP is not one of their replies');
+    assert.equal(out.rows[0].newest, '2026-10-04T10:00:00.000Z', 'nor their newest');
+    assert.equal(out.summary.meetingRepliesSkipped, 2);
+    assert.equal(out.summary.sendersTotal, 1);
+    assert.equal(out.summary.unmatchedSenders, 0);
+    assert.ok(!h.urls.some((u) => u.includes(L)), 'an RSVP-only sender is never searched for');
+    assert.ok(out.notes.includes('Replies to a consultation\'s calendar invite (Accepted / Declined / Tentative) are left out (2).'));
+    assert.ok(out.notes.includes('An out-of-office auto-reply or a read receipt sent to the old address cannot be told apart without reading subjects, so a listed person may only have sent one of those.'));
+    assert.match(h.logs.find((l) => l.startsWith('[OldReplies] list:')), / meeting=2 /);
+  });
+});
+
 test('cell addresses: several in one cell (spaces, commas, semicolons, angle brackets, mailto:), lower-cased, de-duplicated; words and junk ignored', () => {
   assert.deepEqual(svc.cellAddresses('Asha.Sample@Example.org, second@example.net;third@example.com   <Fourth@Example.com> mailto:fifth@example.com asha.sample@example.org'),
     ['asha.sample@example.org', 'second@example.net', 'third@example.com', 'fourth@example.com', 'fifth@example.com']);
@@ -196,8 +231,8 @@ test('Graph: the old inbox ALL pages (exact first request, next links followed),
       INBOX_URL,
       `${G}${OLD}/mailFolders/inbox/messages?$skiptoken=p1`,
       `${G}${OLD}/mailFolders/inbox/messages?$skiptoken=p2`,
-      `${G}${OFFICE}/mailFolders/sentitems/messages?$search="to:${A}"&$top=10&$select=sentDateTime`,
-      `${G}${OFFICE}/messages?$search="from:${A}"&$top=10&$select=receivedDateTime`,
+      `${G}${OFFICE}/mailFolders/sentitems/messages?$search="to:${A}"&$top=10&$select=sentDateTime,toRecipients,ccRecipients,bccRecipients`,
+      `${G}${OFFICE}/messages?$search="from:${A}"&$top=10&$select=receivedDateTime,from,sender`,
     ];
     assert.deepEqual(h.urls.slice().sort(), expected.slice().sort());
     for (const u of h.urls) assert.doesNotMatch(u.split('$select=')[1] || '', /subject|body|bodyPreview|uniqueBody/i, 'never a subject or a body');
@@ -310,7 +345,7 @@ test('Monday: two FULL scans — items_page(limit:500) then next_items_page with
   assert.doesNotMatch(src, /1840\d{7}|18416845157/);
 });
 
-test('match: case / lead / case+lead; a lead\'s Client Master link adds its case; two cases on one address = shared; TEST / Cancel / Leads groups left out and counted; unmatched counted, never listed', async () => {
+test('match: case / lead / case+lead; a lead\'s Client Master link adds its case; two cases on one address = shared; someone only on a Client Master Leads-group row is LISTED as a lead; TEST / Cancel left out and counted; unmatched counted, never listed', async () => {
   const P = {
     caseOnly: 'case.only@example.org', leadOnly: 'lead.only@example.org', both: 'both.person@example.org', linked: 'linked.lead@example.org',
     shared: 'family.shared@example.org', testOnly: 'test.only@example.org', cancelLead: 'cancel.lead@example.org', nobody: 'nobody.known@example.org', leadsGroup: 'cm.leads.group@example.org',
@@ -339,7 +374,12 @@ test('match: case / lead / case+lead; a lead\'s Client Master link adds its case
   }, async (h) => {
     const out = await svc.list();
     const byName = Object.fromEntries(out.rows.map((r) => [r.name, r]));
-    assert.deepEqual(Object.keys(byName).sort(), ['Bo Both', 'Casey Only', 'Cass (lead)', 'Fam One', 'Lea Lead (new)', 'Linda Linked'].sort());
+    assert.deepEqual(Object.keys(byName).sort(), ['Bo Both', 'Casey Only', 'Cass (lead)', 'Fam One', 'Lea Lead (new)', 'Lee Group', 'Linda Linked'].sort());
+    // only on a Client Master Leads-group row: a lead from that row (no Lead Board id, no case number on it)
+    const lg = byName['Lee Group'];
+    assert.equal(lg.kind, 'lead'); assert.equal(lg.clientMasterLeadsGroup, true); assert.deepEqual(lg.leadIds, []); assert.deepEqual(lg.caseRefs, []); assert.deepEqual(lg.caseStages, []);
+    assert.equal(lg.leadOutcome, ''); assert.equal(lg.leadStatus, '');
+    for (const n of ['Bo Both', 'Casey Only', 'Cass (lead)', 'Fam One', 'Lea Lead (new)', 'Linda Linked']) assert.equal(byName[n].clientMasterLeadsGroup, false, n);
     assert.equal(byName['Casey Only'].kind, 'case');
     assert.deepEqual(byName['Casey Only'].caseRefs, ['2026-SPE-101']);
     assert.deepEqual(byName['Casey Only'].caseStages, ['Submitted']);
@@ -359,17 +399,69 @@ test('match: case / lead / case+lead; a lead\'s Client Master link adds its case
     assert.equal(byName['Casey Only'].sharedAddress, false);
     assert.ok(out.notes.some((n) => /"Shared address"/.test(n)));
     // counted, never listed
-    assert.equal(out.summary.testOrCancelled, 2, 'TEST only + the Client Master Leads group only');
+    assert.equal(out.summary.testOrCancelled, 1, 'TEST only — the Client Master Leads group is listed, not counted here');
     assert.equal(out.summary.unmatchedSenders, 1);
     assert.equal(out.summary.sendersTotal, 9);
     assert.equal(out.summary.matchedCases, 4);
-    assert.equal(out.summary.matchedLeads, 4);
-    assert.ok(out.notes.some((n) => /2 people are only on Client Master rows in the TEST, Leads or Cancel groups — left out/.test(n)));
+    assert.equal(out.summary.matchedLeads, 5);
+    assert.equal(out.summary.clientMasterLeadsGroupOnly, 1);
+    assert.ok(out.notes.some((n) => /^1 person is only on Client Master rows in the TEST or Cancel groups — left out\.$/.test(n)));
+    assert.ok(out.notes.some((n) => /"Lead \(Client Master Leads group\)": this person is only on a row staff keep in the Client Master "Leads" group/.test(n)));
     assert.ok(out.notes.some((n) => /match no case and no lead are counted \(1\), never listed/.test(n)));
     const json = JSON.stringify(out);
     for (const a of Object.values(P)) assert.ok(!json.toLowerCase().includes(a), 'no address in the answer: ' + a);
-    assert.ok(!/Tess Test|Lee Group|Gone Case/.test(json));
-    for (const r of out.rows) assert.deepEqual(Object.keys(r).sort(), ['answeredFromInfoAfter', 'caseRefs', 'caseStages', 'kind', 'leadIds', 'leadOutcome', 'leadStatus', 'name', 'newest', 'oldReplies', 'oldest', 'sharedAddress', 'withAttachments', 'wroteToInfoAfter', 'wroteToInfoAfterAtLeast'].sort());
+    assert.ok(!/Tess Test|Gone Case/.test(json));
+    for (const r of out.rows) assert.deepEqual(Object.keys(r).sort(), ['answeredFromInfoAfter', 'caseRefs', 'caseStages', 'clientMasterLeadsGroup', 'kind', 'leadIds', 'leadOutcome', 'leadStatus', 'name', 'newest', 'oldReplies', 'oldest', 'sharedAddress', 'withAttachments', 'wroteToInfoAfter', 'wroteToInfoAfterAtLeast'].sort());
+  });
+});
+
+test('caseGroups.isLeadsGroup: the Leads group by id, else by its exact title — never TEST, Cancel or a live group; still not a case group', () => {
+  const { isLeadsGroup, isCaseGroup, LEADS_GROUP_ID } = require('../src/utils/caseGroups');
+  assert.equal(LEADS_GROUP_ID, 'group_mm2tz8e1');
+  assert.equal(isLeadsGroup({ id: 'group_mm2tz8e1', title: 'Renamed' }), true);
+  assert.equal(isLeadsGroup({ id: 'group_remade', title: ' leads ' }), true);
+  for (const g of [{ id: 'group_mm3842s', title: 'TEST' }, { id: 'group_mm3b9tap', title: 'Cancel' }, { id: 'topics', title: 'Active' }, { id: 'x', title: 'Leads 2025' }, null, {}]) assert.equal(isLeadsGroup(g), false, JSON.stringify(g));
+  assert.equal(isCaseGroup({ id: 'group_mm2tz8e1', title: 'Leads' }), false, 'the Needs-attention / reminder rule is unchanged');
+  assert.equal(svc.cmRow(cmItem('1', 'X', { group: { id: 'group_mm2tz8e1', title: 'Leads' } })).leadsGroup, true);
+  assert.equal(svc.cmRow(cmItem('1', 'X', { group: { id: 'group_mm3842s', title: 'TEST' } })).leadsGroup, false);
+});
+
+test('match: a Client Master Leads-group row WITH a case number (staff copied the enquiry; the app gave it a number + portal link) → a lead row with that number and stage, checked for answers, CSV kind "Lead (Client Master Leads group)"; the same address on the Lead Board or a live case → the ordinary row', async () => {
+  const P = { only: 'leads.only@example.org', alsoLead: 'also.board@example.org', alsoCase: 'also.case@example.org', twoRows: 'two.rows@example.org' };
+  const LG = { id: 'group_mm2tz8e1', title: 'Leads' };
+  await run({
+    inbox: [Object.values(P).map((a, i) => OM(a, `2026-10-1${i}T10:00:00Z`))],
+    cm: [[
+      cmItem('5301', 'Sam Twelve', { ref: '2026-SV-012', email: P.only, stage: 'Document Collection Started', group: LG }),
+      cmItem('5302', 'Board Copy', { ref: '', email: P.alsoLead, group: LG }),
+      cmItem('5303', 'Case Copy', { ref: '', email: P.alsoCase, group: LG }),
+      cmItem('5304', 'Live Case', { ref: '2026-SPE-301', email: P.alsoCase }),
+      cmItem('5305', 'Twin One', { ref: '', email: P.twoRows, group: LG }),
+      cmItem('5306', 'Twin Two', { ref: '2026-SV-013', email: P.twoRows, stage: 'Paid', group: LG }),
+    ]],
+    leads: [[leadItem('941', 'Board Lead', { email: P.alsoLead, outcome: 'Retain' })]],
+    sent: { [P.only]: ['2026-11-01T10:00:00Z'] },
+  }, async (h) => {
+    const out = await svc.list();
+    const by = Object.fromEntries(out.rows.map((r) => [r.name, r]));
+    assert.deepEqual(Object.keys(by).sort(), ['Board Lead', 'Live Case', 'Sam Twelve', 'Twin One'].sort());
+    const sam = by['Sam Twelve'];
+    assert.deepEqual([sam.kind, sam.clientMasterLeadsGroup, sam.caseRefs, sam.caseStages, sam.leadIds, sam.sharedAddress], ['lead', true, ['2026-SV-012'], ['Document Collection Started'], [], false]);
+    assert.equal(sam.answeredFromInfoAfter, 'yes', 'checked like any matched person');
+    assert.ok(h.urls.some((u) => u.includes(`"to:${P.only}"`)));
+    // two Leads-group rows for one address: the first name, only the row that has a number
+    assert.deepEqual([by['Twin One'].caseRefs, by['Twin One'].caseStages, by['Twin One'].clientMasterLeadsGroup], [['2026-SV-013'], ['Paid'], true]);
+    // the Lead Board / a live case wins: the ordinary row, no flag
+    assert.deepEqual([by['Board Lead'].kind, by['Board Lead'].leadIds, by['Board Lead'].clientMasterLeadsGroup], ['lead', ['941'], false]);
+    assert.deepEqual([by['Live Case'].kind, by['Live Case'].caseRefs, by['Live Case'].clientMasterLeadsGroup], ['case', ['2026-SPE-301'], false]);
+    assert.equal(out.summary.clientMasterLeadsGroupOnly, 2);
+    assert.equal(out.summary.testOrCancelled, 0);
+    assert.equal(out.summary.matchedLeads, 3);
+    assert.ok(out.notes.some((n) => /these 2 people are only on a row staff keep in the Client Master "Leads" group/.test(n)));
+    const csv = svc.toCsv(out.rows);
+    assert.match(csv, /"Sam Twelve","Lead \(Client Master Leads group\)","2026-SV-012","Document Collection Started","",""/);
+    assert.match(csv, /"Board Lead","Lead","",/);
+    assert.match(h.logs.find((l) => l.startsWith('[OldReplies] list:')), / cm-leads=2 /);
   });
 });
 
@@ -502,6 +594,116 @@ test('answered: the checks stop STARTING after 4 minutes — the rest read "unkn
     assert.equal(out.summary.answerChecksNotStarted, 1);
     assert.ok(out.notes.some((n) => /stopped after 4 minutes: 1 row shows "unknown"/.test(n)));
   });
+});
+
+test('answered: a $search hit counts only when it IS the address — a look-alike (jo.ann@ for ann@) never makes "yes" or a count; Cc / Bcc and any letter case count; a full page of look-alikes with no exact hit after reads "unknown" / null (counted, noted), never "no"', async () => {
+  const A = 'ann@example.org', B = 'bea@example.org', C = 'cy@example.org', D = 'di@example.org', E = 'ed@example.org';
+  const newest = '2026-10-15T10:00:00Z', after = '2026-10-20T10:00:00Z', before = '2026-09-01T10:00:00Z';
+  const to = (t, list, field = 'toRecipients') => ({ sentDateTime: t, [field]: list.map((x) => addr(x)) });
+  const from = (t, a, field = 'from') => ({ receivedDateTime: t, [field]: addr(a) });
+  const ten = (fn) => Array.from({ length: 10 }, (_, i) => fn(i));
+  await run({
+    inbox: [[A, B, C, D, E].map((a) => OM(a, newest))],
+    cm: [[A, B, C, D, E].map((a, i) => cmItem(String(5400 + i), `N${a[0]}`, { ref: `2026-SPE-4${i}0`, email: a }))],
+    sent: {
+      [A]: [to(after, ['jo.ann@example.org']), to(after, ['ann@example.org.au']), to(before, [A])],               // only look-alikes after: no
+      [B]: [to(after, ['someone@example.com'], 'toRecipients'), { ...to(after, ['BEA@Example.org'], 'bccRecipients') }],   // Bcc, any case: yes
+      [C]: ten(() => to(after, ['x.cy@example.org'])),                                                        // full page, all look-alikes: unknown
+      [D]: [...ten((i) => (i < 9 ? to(after, [`d${i}.di@example.org`]) : to(after, ['cc@example.com'])))].map((m, i) => (i === 9 ? { ...m, ccRecipients: [addr(D)] } : m)),   // full, an exact Cc after: yes
+      [E]: ten(() => to(before, [E])),                                                                        // full page, all exact, none after: no
+    },
+    wrote: {
+      [A]: [from(after, 'jo.ann@example.org'), from(after, A), from(after, 'ann@example.org.au')],             // 1
+      [B]: ten((i) => (i < 4 ? from(after, 'Bea@Example.ORG') : from(after, `x${i}.bea@example.org`))),       // full, 4 exact, look-alikes too: "4+"
+      [C]: ten(() => from(after, 'x.cy@example.org')),                                                       // full, no exact: null (unknown)
+      [D]: [from(after, D, 'sender')],                                                                        // no From: the sender
+      [E]: ten((i) => from(i < 3 ? after : before, E)),                                                      // full, all exact, 3 after: exactly 3
+    },
+  }, async (h) => {
+    const out = await svc.list();
+    const by = Object.fromEntries(out.rows.map((r) => [r.name, r]));
+    assert.equal(by.Na.answeredFromInfoAfter, 'no', 'a newer email to jo.ann@ is not an answer to ann@');
+    assert.equal(by.Nb.answeredFromInfoAfter, 'yes');
+    assert.equal(by.Nc.answeredFromInfoAfter, 'unknown');
+    assert.equal(by.Nd.answeredFromInfoAfter, 'yes');
+    assert.equal(by.Ne.answeredFromInfoAfter, 'no');
+    assert.deepEqual([by.Na.wroteToInfoAfter, by.Na.wroteToInfoAfterAtLeast], [1, false]);
+    assert.deepEqual([by.Nb.wroteToInfoAfter, by.Nb.wroteToInfoAfterAtLeast], [4, true]);
+    assert.deepEqual([by.Nc.wroteToInfoAfter, by.Nc.wroteToInfoAfterAtLeast], [null, false]);
+    assert.deepEqual([by.Nd.wroteToInfoAfter, by.Nd.wroteToInfoAfterAtLeast], [1, false]);
+    assert.deepEqual([by.Ne.wroteToInfoAfter, by.Ne.wroteToInfoAfterAtLeast], [3, false]);
+    assert.equal(out.summary.answersUnsure, 1);
+    assert.equal(out.summary.answerChecksStopped, false);
+    assert.ok(out.notes.some((n) => /too many look-alike addresses to be sure/.test(n)));
+    assert.match(svc.toCsv(out.rows), /"Nb","Case",.*,"yes","4\+",""/);
+    const line = h.logs.find((l) => l.startsWith('[OldReplies] list:'));
+    assert.match(line, / unsure=1 /);
+    assert.doesNotMatch(line, /failed:/, 'an unsure answer is not a failure');
+    for (const u of h.urls.filter((x) => x.includes('$search='))) assert.doesNotMatch(u.split('$select=')[1], /subject|body/i);
+    for (const r of out.rows) assert.ok(!Object.keys(r).some((k) => k.startsWith('_')), 'no working field leaves');
+  });
+  // PURE
+  const r = svc.readHits([{ d: 2 }, { d: 2, x: 1 }, null], (m) => m.x === 1, (m) => m.d, (d) => d > 1);
+  assert.deepEqual(r, { exactAfter: 1, full: false, dropped: 1, allAfter: true });
+});
+
+test('answered: the checks STOP at the first throttle or refusal of the office mailbox (429 with or without a long Retry-After, a 429 again after the short wait, 401 after a fresh token, 403, a 503 / 504 with a Retry-After) — no further $search, the rest counted, noted; a plain 503 does not stop them', async () => {
+  const people = ['first.p@example.org', 'second.p@example.org', 'third.p@example.org'];
+  const inbox = [people.map((a, i) => OM(a, `2026-10-1${3 - i}T10:00:00Z`))];   // first.p is the newest: checked first
+  const cm = [people.map((a, i) => cmItem(String(5500 + i), `P${i}`, { ref: `2026-SPE-5${i}0`, email: a }))];
+  const cases = [
+    ['429 Retry-After 60', gErr(429, 'TooManyRequests', { 'retry-after': '60' }), []],
+    ['429 no Retry-After', gErr(429, 'TooManyRequests'), []],
+    ['429 again after the short wait', gErr(429, 'TooManyRequests', { 'retry-after': '2' }), [2000]],
+    ['403', gErr(403, 'ErrorAccessDenied'), []],
+    ['401 after a fresh token', gErr(401, 'InvalidAuthenticationToken'), []],
+    ['503 Retry-After 30', gErr(503, 'ServiceUnavailable', { 'retry-after': '30' }), []],
+    ['504 Retry-After 10', gErr(504, 'GatewayTimeout', { 'retry-after': '10' }), []],
+  ];
+  for (const [label, err, sleeps] of cases) {
+    await run({ inbox, cm, sentFail: { [people[0]]: err } }, async (h) => {
+      const out = await svc.list();
+      const searched = h.urls.filter((u) => u.includes('$search='));
+      assert.ok(searched.every((u) => u.includes(people[0])), `${label}: nobody else is searched for`);
+      assert.ok(searched.length <= 3, `${label}: ${searched.length} searches`);
+      assert.ok(h.drops <= 1, `${label}: the app-wide token dropped ${h.drops} times`);
+      assert.deepEqual(h.sleeps, sleeps, label);
+      assert.equal(out.summary.answerChecksNotStarted, 2, label);
+      assert.equal(out.summary.answerChecksStopped, true, label);
+      assert.deepEqual(out.summary.answers, { yes: 0, no: 0, unknown: 3 }, label);
+      assert.ok(out.rows.every((r) => r.wroteToInfoAfter === null || r.name === 'P0'), label);
+      assert.ok(out.notes.includes('Microsoft was busy (or refused the office mailbox), so the answer checks stopped: 2 rows show "unknown" — refresh in a few minutes.'), label);
+      assert.ok(!out.notes.some((n) => /stopped after 4 minutes/.test(n)), label);
+      assert.match(h.logs.find((l) => l.startsWith('[OldReplies] list:')), / not-started=2 checks-stopped /, label);
+    });
+  }
+  // a throttle on the LAST row: stopped, but nothing was left — no "0 rows" note
+  await run({ inbox, cm, sentFail: { [people[2]]: gErr(429, 'TooManyRequests', { 'retry-after': '60' }) } }, async () => {
+    const out = await svc.list();
+    assert.equal(out.summary.answerChecksStopped, true);
+    assert.equal(out.summary.answerChecksNotStarted, 0);
+    assert.ok(!out.notes.some((n) => /answer checks stopped/.test(n)));
+    assert.deepEqual(out.summary.answers, { yes: 0, no: 2, unknown: 1 });
+  });
+  // the count read failing stops them too
+  await run({ inbox, cm, wroteFail: { [people[0]]: gErr(429, 'TooManyRequests', { 'retry-after': '60' }) } }, async (h) => {
+    const out = await svc.list();
+    assert.equal(out.summary.answerChecksStopped, true);
+    assert.equal(h.urls.filter((u) => u.includes('$search=')).length, 2);
+  });
+  // a 503 / 500 with no Retry-After is that row's "unknown" only — the others are still checked
+  await run({ inbox, cm, sentFail: { [people[0]]: gErr(503, 'ServiceUnavailable') }, wroteFail: { [people[1]]: gErr(500, 'ErrorInternalServerError') } }, async (h) => {
+    const out = await svc.list();
+    assert.equal(out.summary.answerChecksStopped, false);
+    assert.equal(out.summary.answerChecksNotStarted, 0);
+    assert.equal(h.urls.filter((u) => u.includes('$search=')).length, 6);
+    assert.deepEqual(out.summary.answers, { yes: 0, no: 2, unknown: 1 });
+  });
+  // PURE
+  assert.equal(svc.stopsChecks({ status: 503, ra: null }), false);
+  assert.equal(svc.stopsChecks({ status: 503, ra: 0 }), true);
+  assert.equal(svc.stopsChecks({ status: 0, ra: null }), false);
+  assert.equal(svc.stopsChecks({ status: 500, ra: 30 }), false);
 });
 
 /* ══ the cache, the mailboxes ═════════════════════════════════════════════════ */

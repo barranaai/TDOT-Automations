@@ -8,9 +8,10 @@
  * as a fallback should a group be re-made.
  */
 const TEST_GROUP_ID = 'group_mm3842s';
+const LEADS_GROUP_ID = 'group_mm2tz8e1';
 const NOT_CASE_GROUPS = Object.freeze([
   { id: TEST_GROUP_ID,      title: /^test$/i },                          // TEST
-  { id: 'group_mm2tz8e1',   title: /^leads$/i },                         // Leads (enquiries kept here by staff)
+  { id: LEADS_GROUP_ID,     title: /^leads$/i },                         // Leads (enquiries kept here by staff)
   { id: 'group_mm3b9tap',   title: /cancel|did not retain/i },           // Cancel / Did not retained
 ]);
 
@@ -28,4 +29,10 @@ function isTestGroup(group) {
   return str(g.id) === TEST_GROUP_ID || NOT_CASE_GROUPS[0].title.test(str(g.title));
 }
 
-module.exports = { TEST_GROUP_ID, NOT_CASE_GROUPS, isCaseGroup, isTestGroup };
+/** True for the Leads group only (enquiries staff keep on the Cases board — real people, not test rows). */
+function isLeadsGroup(group) {
+  const g = group || {};
+  return str(g.id) === LEADS_GROUP_ID || NOT_CASE_GROUPS[1].title.test(str(g.title));
+}
+
+module.exports = { TEST_GROUP_ID, LEADS_GROUP_ID, NOT_CASE_GROUPS, isCaseGroup, isTestGroup, isLeadsGroup };

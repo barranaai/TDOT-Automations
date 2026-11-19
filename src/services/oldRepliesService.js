@@ -13,27 +13,36 @@
  *     first: from / sender / receivedDateTime / hasAttachments / internetMessageId / isDraft only — never a subject,
  *     never a body. Next links are followed on graph.microsoft.com only; 50 pages (5,000 emails) at most, and a cut
  *     list says so (summary.capped) — never silent. A failed page → NO list (503): never a partial one.
- *  2. Dropped: drafts; the same email twice (internet message id); an address that is not plain (caseEmailsRules
- *     .addressOk — also what keeps a KQL search safe); our own addresses and the services on emailLeadsService's
- *     skip lists; automatic senders (emailLeadsService.AUTOMATED_LOCAL: no-reply, notifications, postmaster…).
+ *  2. Dropped: drafts; meeting responses (an '@odata.type' of eventMessage… — a client's Accepted / Declined /
+ *     Tentative to the consultation invite, which noreply@ organised; counted, emailLeadsService.classify's rule); the
+ *     same email twice (internet message id); an address that is not plain (caseEmailsRules.addressOk — also what
+ *     keeps a KQL search safe); our own addresses and the services on emailLeadsService's skip lists; automatic
+ *     senders (emailLeadsService.AUTOMATED_LOCAL: no-reply, notifications, postmaster…). Out-of-office replies and
+ *     read receipts cannot be told apart without reading subjects — the notes say so.
  *  3. Grouped by the lower-cased sender: how many, newest, oldest, how many with attachments.
  *  4. Who is it — two FULL board scans (items_page 500 + cursor until done — never a per-sender search, whose 25 / 50
  *     row caps would hide people): the Client Master board (config MONDAY_CLIENT_MASTER_BOARD_ID) and the Lead Board
- *     (config MONDAY_LEAD_BOARD_ID). ANY Monday failure → no list (503). Client Master rows in the groups that are not
- *     cases (utils/caseGroups: TEST, Leads, Cancel) are left out and only counted (summary.testOrCancelled). A lead's
- *     Client Master Item ID adds its live case to the row.
+ *     (config MONDAY_LEAD_BOARD_ID). ANY Monday failure → no list (503). Client Master rows in the TEST and Cancel
+ *     groups are left out and only counted (summary.testOrCancelled). A Client Master row in the Leads group is a real
+ *     person staff keep there (a case number and a portal link can be on it): someone found ONLY there is listed as a
+ *     lead (clientMasterLeadsGroup: true). A lead's Client Master Item ID adds its live case to the row.
  *  5. Answered after? For each MATCHED sender only, the office mailbox (caseEmailsService.officeMailbox): its Sent
  *     Items $search "to:<address>" (10, newest first) → answeredFromInfoAfter 'yes' | 'no' | 'unknown' (the search
  *     failed — never a guess), and every folder's $search "from:<address>" (10) → wroteToInfoAfter (a count; null =
- *     unknown; 10 = "10 or more"). $search is never mixed with $filter / $orderby. Answers sent from a staff member's
- *     own mailbox cannot be seen — the notes say so.
+ *     unknown; 10 = "10 or more"). $search is never mixed with $filter / $orderby. KQL matches look-alike addresses
+ *     (jo.ann@… for ann@…), so a hit counts only when one of its recipients (or its sender) IS the address; a full
+ *     page with look-alikes dropped and no exact hit after reads 'unknown' (the exact one may be past the first 10).
+ *     Answers sent from a staff member's own mailbox cannot be seen — the notes say so.
  *  6. Rows: unanswered first ('no', then 'unknown', then 'yes'), then the newest old reply first. People who match no
  *     case or lead are COUNTED, never listed (they may be anyone). No row carries an email address.
  *
  * Load: at most 2 Graph calls at once per mailbox from here; a 429 / 503 / 504 waits for Retry-After once when it
- * is 5 s or less; a 401 is retried once with a fresh token (utils/graphRead). The answer checks stop starting after
- * 4 minutes (the rest read 'unknown', counted). The finished list is kept in memory 10 minutes (JSON then CSV is one
- * read); refresh reads again, at most once a minute. A failed read is never kept.
+ * is 5 s or less; a 401 is retried once with a fresh token (utils/graphRead). The answer checks STOP at the first
+ * throttle or refusal of the office mailbox (a 429; a 401 / 403; a 503 / 504 that carried a Retry-After) — calls
+ * made while throttled still count against info@'s limit, and client emails are sent from info@ — and they stop
+ * starting after 4 minutes; either way the rest read 'unknown', counted and noted. The finished list is kept in
+ * memory 10 minutes (JSON then CSV is one read); refresh reads again, at most once a minute. A failed read is never
+ * kept.
  *
  * Logs: counts and Graph status / short codes only — never an address, a name, a subject or Graph's error text.
  */
@@ -44,7 +53,7 @@ const emailLeads = require('./emailLeadsService');
 const caseEmails = require('./caseEmailsService');
 const { addressOk } = require('./caseEmailsRules');
 const { errorOf, withToken, retryAfterSeconds } = require('../utils/graphRead');
-const { isCaseGroup } = require('../utils/caseGroups');
+const { isCaseGroup, isLeadsGroup } = require('../utils/caseGroups');
 const { statusText } = require('../utils/mondayStatus');
 const { torontoWallClock, torontoDay } = require('../utils/torontoTime');
 const { canonicalOutcome } = require('../../config/outcomes');
@@ -65,6 +74,12 @@ const CACHE_MS = 10 * 60 * 1000;
 const REFRESH_MIN_MS = 60 * 1000;
 const FALLBACK_OLD = 'noreply@tdotimm.com';
 const INBOX_SELECT = 'from,sender,receivedDateTime,hasAttachments,internetMessageId,isDraft';
+/** The office-mailbox searches: the date plus who it was to / from (to check the hit IS the address) — never a subject or a body. */
+const SENT_SELECT = 'sentDateTime,toRecipients,ccRecipients,bccRecipients';
+const WROTE_SELECT = 'receivedDateTime,from,sender';
+/** Graph statuses that mean "stop asking the office mailbox": throttled, or refused (a fresh token was already tried). */
+const STOP_STATUSES = new Set([429, 401, 403]);
+const STOP_IF_RETRY_AFTER = new Set([503, 504]);
 /** Client Master columns (clientMasterService CASE_REF_COL / CM_EMAIL_COL / CM_STAGE_COL). */
 const CM = Object.freeze({ caseRef: 'text_mm142s49', email: 'text_mm0xw6bp', stage: 'color_mm0x8faa' });
 /** Lead Board columns read: the email, the name, the Outcome, the Client Master link, and what the Current status reads. */
@@ -191,11 +206,13 @@ function groupSenders(messages, ctx) {
   const groups = new Map();
   const seen = new Set();
   const skipped = { own: new Set(), automated: new Set() };
-  const counts = { read: 0, drafts: 0, duplicates: 0, invalid: 0, automatedSkipped: 0, ownSkipped: 0, skippedSenders: 0 };
+  const counts = { read: 0, drafts: 0, meetingReplies: 0, duplicates: 0, invalid: 0, automatedSkipped: 0, ownSkipped: 0, skippedSenders: 0 };
   for (const m of messages || []) {
     if (!m || typeof m !== 'object') continue;
     counts.read++;
     if (m.isDraft === true) { counts.drafts++; continue; }
+    // A reply to the consultation's calendar invite (noreply@ organised it): Graph's derived type, even under $select.
+    if (/eventMessage/i.test(s(m['@odata.type']))) { counts.meetingReplies++; continue; }
     const imid = s(m.internetMessageId);
     if (imid) { if (seen.has(imid)) { counts.duplicates++; continue; } seen.add(imid); }
     const a = emailLeads.senderOf(m).email;
@@ -256,7 +273,7 @@ async function scanBoard(boardId, columnIds, extraFields) {
 
 const colOf = (it, id) => ((it && it.column_values) || []).find((c) => c && c.id === id) || null;
 
-/** A Client Master item → { id, name, group, caseRef, stage, emails, live }. PURE. */
+/** A Client Master item → { id, name, group, caseRef, stage, emails, live, leadsGroup }. PURE. */
 function cmRow(it) {
   const g = (it && it.group) || {};
   const group = { id: s(g.id), title: s(g.title) };
@@ -265,6 +282,7 @@ function cmRow(it) {
     name: oneLine(it && it.name),
     group,
     live: isCaseGroup(group),
+    leadsGroup: isLeadsGroup(group),
     caseRef: s((colOf(it, CM.caseRef) || {}).text),
     stage: statusText(colOf(it, CM.stage)),
     emails: cellAddresses((colOf(it, CM.email) || {}).text),
@@ -315,12 +333,15 @@ const newestLeadFirst = (a, b) => s(b.createdAt).localeCompare(s(a.createdAt)) |
 /**
  * Sender groups + the two boards → the rows (no answer check yet) and the counts. PURE.
  * A row: the live cases whose Client Email holds the address, the leads whose Email is the address (newest first),
- * and the live case each of those leads links to. Nothing live and nothing on the Lead Board → counted only.
+ * and the live case each of those leads links to. Nothing live and nothing on the Lead Board, but a Client Master row
+ * in the Leads group → a lead row from that row (clientMasterLeadsGroup: true — no Lead Board id). Only TEST / Cancel
+ * rows → counted (testOrCancelled). Nothing at all → counted (unmatched).
  */
 function matchGroups(groups, { cm, leads }, { now, leadStatus } = {}) {
-  const caseByAddr = new Map(), leadByAddr = new Map(), notCaseAddr = new Set(), caseById = new Map();
+  const caseByAddr = new Map(), leadByAddr = new Map(), cmLeadByAddr = new Map(), notCaseAddr = new Set(), caseById = new Map();
   for (const r of cm) {
     if (r.live) { caseById.set(r.id, r); for (const a of r.emails) push(caseByAddr, a, r); }
+    else if (r.leadsGroup) for (const a of r.emails) push(cmLeadByAddr, a, r);
     else for (const a of r.emails) notCaseAddr.add(a);
   }
   for (const l of leads) for (const a of l.emails) push(leadByAddr, a, l);
@@ -331,17 +352,22 @@ function matchGroups(groups, { cm, leads }, { now, leadStatus } = {}) {
     const ls = (leadByAddr.get(g.address) || []).slice().sort(newestLeadFirst);
     const cases = [...direct];
     for (const l of ls) { const c = l.cmItemId && caseById.get(l.cmItemId); if (c && !cases.includes(c)) cases.push(c); }
-    if (!cases.length && !ls.length) { if (notCaseAddr.has(g.address)) testOrCancelled++; else unmatched++; continue; }
+    // Only on a Client Master Leads-group row (staff copied the enquiry there by hand; it can carry a case number
+    // and a portal link, so this person got noreply@ emails too): a lead, from that row.
+    const cmLeads = !cases.length && !ls.length ? (cmLeadByAddr.get(g.address) || []) : [];
+    if (!cases.length && !ls.length && !cmLeads.length) { if (notCaseAddr.has(g.address)) testOrCancelled++; else unmatched++; continue; }
+    const withRef = cmLeads.filter((r) => r.caseRef);
     let status = '';
     if (ls.length && typeof leadStatus === 'function') { try { status = s(leadStatus(ls[0].lead, now)); } catch (_) { status = ''; } }
     rows.push({
       kind: cases.length && ls.length ? 'case+lead' : cases.length ? 'case' : 'lead',
-      name: (cases.find((c) => c.name) || {}).name || (ls.find((l) => l.name) || {}).name || '',
-      caseRefs: cases.map((c) => c.caseRef || 'no case number'),
-      caseStages: cases.map((c) => c.stage),
+      name: (cases.find((c) => c.name) || {}).name || (ls.find((l) => l.name) || {}).name || (cmLeads.find((r) => r.name) || {}).name || '',
+      caseRefs: cmLeads.length ? withRef.map((r) => r.caseRef) : cases.map((c) => c.caseRef || 'no case number'),
+      caseStages: cmLeads.length ? withRef.map((r) => r.stage) : cases.map((c) => c.stage),
       leadIds: ls.map((l) => l.id),
       leadOutcome: ls.length ? ls[0].outcome : '',
       leadStatus: status,
+      clientMasterLeadsGroup: cmLeads.length > 0,
       oldReplies: g.count,
       newest: Number.isFinite(g.newestMs) ? new Date(g.newestMs).toISOString() : '',
       oldest: Number.isFinite(g.oldestMs) ? new Date(g.oldestMs).toISOString() : '',
@@ -358,49 +384,93 @@ function matchGroups(groups, { cm, leads }, { now, leadStatus } = {}) {
 
 /* ── 5. answered after? (the office mailbox, per matched sender) ───────── */
 
-/** The two $search reads for one row. Mutates the row; answers which parts failed (status / code only). */
+/** The lower-cased addresses of a message's To / Cc / Bcc. PURE. */
+const recipientsOf = (m) => [...((m && m.toRecipients) || []), ...((m && m.ccRecipients) || []), ...((m && m.bccRecipients) || [])]
+  .map((r) => low(r && r.emailAddress && r.emailAddress.address));
+
+/**
+ * One $search page → what it says about the address. KQL splits addresses at '.' and '@' and matches prefixes, so
+ * "to:ann@…" can also find jo.ann@… — a hit counts only when `isExact` says it IS the address. PURE.
+ * @returns {{ exactAfter: number, full: boolean, dropped: number, allAfter: boolean }}
+ */
+function readHits(value, isExact, dateOf, after) {
+  const hits = value.filter((m) => m && typeof m === 'object');
+  const exact = hits.filter(isExact);
+  return {
+    exactAfter: exact.filter((m) => after(dateOf(m))).length,
+    full: value.length >= SEARCH_TOP,
+    dropped: hits.length - exact.length,
+    allAfter: hits.length > 0 && hits.every((m) => after(dateOf(m))),
+  };
+}
+
+/**
+ * The two $search reads for one row. Mutates the row; answers which parts failed: { text (status + short code only),
+ * status, ra (Retry-After seconds or null) }. A full page with look-alikes dropped and no exact hit after is
+ * 'unknown' / null — the exact one may be past the first 10 (row._unsure, counted; not a failure).
+ */
 async function checkRow(office, row) {
   const failed = [];
+  const fail = (err) => failed.push({ text: codeOf(err), status: errorOf(err).status, ra: retryAfterSeconds(err, io.now()) });
   const a = row._address;
   if (!addressOk(a) || !Number.isFinite(row._newestMs)) return failed;   // nothing safe to ask, or no date to compare: unknown
   const after = (v) => { const t = Date.parse(s(v)); return Number.isFinite(t) && t > row._newestMs; };
+  const odd = () => Object.assign(new Error('odd'), { response: { status: 0, data: { error: { code: 'unexpected-answer' } } } });
   const base = `${GRAPH}/users/${enc(office)}`;
   const search = (kind) => enc(`"${kind}:${a}"`);
-  const sent = graphGet(office, `${base}/mailFolders/sentitems/messages?$search=${search('to')}&$top=${SEARCH_TOP}&$select=sentDateTime`)
+  const sent = graphGet(office, `${base}/mailFolders/sentitems/messages?$search=${search('to')}&$top=${SEARCH_TOP}&$select=${SENT_SELECT}`)
     .then((p) => {
-      if (!p || !Array.isArray(p.value)) throw Object.assign(new Error('odd'), { response: { status: 0, data: { error: { code: 'unexpected-answer' } } } });
-      row.answeredFromInfoAfter = p.value.some((m) => after(m && m.sentDateTime)) ? 'yes' : 'no';
+      if (!p || !Array.isArray(p.value)) throw odd();
+      const r = readHits(p.value, (m) => recipientsOf(m).includes(a), (m) => m.sentDateTime, after);
+      if (r.exactAfter) row.answeredFromInfoAfter = 'yes';
+      else if (r.full && r.dropped) { row.answeredFromInfoAfter = 'unknown'; row._unsure = true; }
+      else row.answeredFromInfoAfter = 'no';
     })
-    .catch((err) => { row.answeredFromInfoAfter = 'unknown'; failed.push(codeOf(err)); });
-  const wrote = graphGet(office, `${base}/messages?$search=${search('from')}&$top=${SEARCH_TOP}&$select=receivedDateTime`)
+    .catch((err) => { row.answeredFromInfoAfter = 'unknown'; fail(err); });
+  const wrote = graphGet(office, `${base}/messages?$search=${search('from')}&$top=${SEARCH_TOP}&$select=${WROTE_SELECT}`)
     .then((p) => {
-      if (!p || !Array.isArray(p.value)) throw Object.assign(new Error('odd'), { response: { status: 0, data: { error: { code: 'unexpected-answer' } } } });
-      const n = p.value.filter((m) => after(m && m.receivedDateTime)).length;
-      row.wroteToInfoAfter = n;
-      row.wroteToInfoAfterAtLeast = n >= SEARCH_TOP;
+      if (!p || !Array.isArray(p.value)) throw odd();
+      const r = readHits(p.value, (m) => emailLeads.senderOf(m).email === a, (m) => m.receivedDateTime, after);
+      if (r.full && r.dropped && !r.exactAfter) { row.wroteToInfoAfter = null; row.wroteToInfoAfterAtLeast = false; row._unsure = true; return; }
+      row.wroteToInfoAfter = r.exactAfter;
+      // a floor ("n+") when more may be past the first 10: look-alikes took room on a full page, or every hit was after
+      row.wroteToInfoAfterAtLeast = r.full && (r.dropped > 0 || r.allAfter);
     })
-    .catch((err) => { row.wroteToInfoAfter = null; row.wroteToInfoAfterAtLeast = false; failed.push(codeOf(err)); });
+    .catch((err) => { row.wroteToInfoAfter = null; row.wroteToInfoAfterAtLeast = false; fail(err); });
   await Promise.all([sent, wrote]);
   return failed;
 }
 
-/** Every row, newest old reply first, one row at a time (its two reads together: ≤ 2 in flight); stops starting after the budget. */
+/**
+ * A failure that means "stop asking": throttled (any 429, or a 503 / 504 with a Retry-After — one that reaches here
+ * was not waited for, or failed again after the one short wait) or refused (a 401 after a fresh token, a 403). A 503
+ * / 504 with no Retry-After is that row's 'unknown' only. PURE.
+ */
+const stopsChecks = (f) => STOP_STATUSES.has(f.status) || (STOP_IF_RETRY_AFTER.has(f.status) && f.ra != null);
+
+/**
+ * Every row, newest old reply first, one row at a time (its two reads together: ≤ 2 in flight). Stops starting at
+ * the first throttle / refusal (stopped: true — every later call would extend info@'s throttle) or after the budget.
+ */
 async function checkAnswers(office, rows, startMs) {
   const failures = new Map();
-  let notChecked = 0;
+  let notChecked = 0, stopped = false;
   const order = rows.slice().sort((x, y) => (y._newestMs || 0) - (x._newestMs || 0));
   for (const row of order) {
-    if (io.now() - startMs > CHECK_BUDGET_MS) { notChecked++; continue; }
-    for (const f of await checkRow(office, row)) failures.set(f, (failures.get(f) || 0) + 1);
+    if (stopped || io.now() - startMs > CHECK_BUDGET_MS) { notChecked++; continue; }
+    const failed = await checkRow(office, row);
+    for (const f of failed) failures.set(f.text, (failures.get(f.text) || 0) + 1);
+    if (failed.some(stopsChecks)) stopped = true;
   }
-  return { failures, notChecked };
+  return { failures, notChecked, stopped };
 }
 
 /* ── the list ──────────────────────────────────────────────────────────── */
 
 const sortRows = (rows) => rows.sort((x, y) =>
   (ANSWER_RANK[x.answeredFromInfoAfter] - ANSWER_RANK[y.answeredFromInfoAfter]) || ((y._newestMs || 0) - (x._newestMs || 0)));
-const publicRow = ({ _address, _newestMs, ...pub }) => pub;
+/** A row as it leaves: every working field (_address, _newestMs, _unsure…) taken off. PURE. */
+const publicRow = (r) => Object.fromEntries(Object.entries(r).filter(([k]) => !k.startsWith('_')));
 
 async function build() {
   const t0 = io.now();
@@ -419,8 +489,10 @@ async function build() {
   const { groups, counts } = groupSenders(inbox.items, ownContext(office, old));
   let matched = { rows: [], unmatched: 0, testOrCancelled: 0 };
   if (groups.size) matched = matchGroups(groups, await readBoards(), { now: io.now(), leadStatus: io.leadStatus });
-  const { failures, notChecked } = await checkAnswers(office, matched.rows, io.now());
+  const { failures, notChecked, stopped } = await checkAnswers(office, matched.rows, io.now());
   const rows = sortRows(matched.rows);
+  const unsure = rows.filter((r) => r._unsure).length;
+  const cmLeadsGroup = rows.filter((r) => r.clientMasterLeadsGroup).length;
 
   const answers = { yes: 0, no: 0, unknown: 0 };
   for (const r of rows) answers[r.answeredFromInfoAfter]++;
@@ -431,32 +503,40 @@ async function build() {
     unmatchedSenders: matched.unmatched,
     automatedSkipped: counts.skippedSenders,
     testOrCancelled: matched.testOrCancelled,
+    clientMasterLeadsGroupOnly: cmLeadsGroup,
     capped: inbox.capped,
     mailbox: 'old no-reply inbox',
     readAt: new Date(io.now()).toISOString(),
     emailsRead: counts.read,
     draftsSkipped: counts.drafts,
+    meetingRepliesSkipped: counts.meetingReplies,
     duplicatesSkipped: counts.duplicates,
     invalidSkipped: counts.invalid,
     answers,
     answerChecksNotStarted: notChecked,
+    answerChecksStopped: stopped,
+    answersUnsure: unsure,
   };
   const notes = [
     'Read-only: nothing was changed in Outlook or Monday. Only the senders and dates of the old inbox were read — never a subject or the text of an email.',
     `People who wrote to the old address but match no case and no lead are counted (${matched.unmatched}), never listed — they may be anyone.`,
     '"Answered from info@ after" looks at the office mailbox\'s Sent Items only. An answer a staff member sent from their own mailbox cannot be seen here, so "no" means "no answer from info@ after their last email to the old address", not "nobody answered".',
-    '"unknown" means the check could not be made (Microsoft did not answer, or was busy) — it is never a guess. Outlook\'s search can lag a few minutes behind new mail.',
+    '"unknown" means the check could not be made (Microsoft did not answer, or was busy, or its search gave too many look-alike addresses to be sure) — it is never a guess. Outlook\'s search can lag a few minutes behind new mail.',
     '"Wrote to info@ after" counts up to 10 emails from them in the office mailbox after their last email to the old address (10 means 10 or more).',
     `Our own addresses, the services on the email skip lists and automatic senders (no-reply, notifications…) are left out (${counts.skippedSenders}).`,
+    `Replies to a consultation's calendar invite (Accepted / Declined / Tentative) are left out (${counts.meetingReplies}).`,
+    'An out-of-office auto-reply or a read receipt sent to the old address cannot be told apart without reading subjects, so a listed person may only have sent one of those.',
   ];
   if (inbox.capped) notes.push(`The old inbox has more than ${INBOX_PAGE * INBOX_MAX_PAGES} emails: only the newest ${INBOX_PAGE * INBOX_MAX_PAGES} were read — older replies are not in this list.`);
-  if (matched.testOrCancelled) notes.push(`${matched.testOrCancelled} ${matched.testOrCancelled === 1 ? 'person is' : 'people are'} only on Client Master rows in the TEST, Leads or Cancel groups — left out.`);
+  if (matched.testOrCancelled) notes.push(`${matched.testOrCancelled} ${matched.testOrCancelled === 1 ? 'person is' : 'people are'} only on Client Master rows in the TEST or Cancel groups — left out.`);
+  if (cmLeadsGroup) notes.push(`"Lead (Client Master Leads group)": ${cmLeadsGroup === 1 ? 'this person is' : `these ${cmLeadsGroup} people are`} only on a row staff keep in the Client Master "Leads" group — no Lead Board row and no live case. Any case number shown is that row's.`);
   if (rows.some((r) => r.sharedAddress)) notes.push('"Shared address": the address is on more than one case — open the email in Outlook (or the case\'s Emails tab) to see which case it was about.');
-  if (notChecked) notes.push(`The answer checks stopped after ${CHECK_BUDGET_MS / 60000} minutes: ${notChecked} ${notChecked === 1 ? 'row shows' : 'rows show'} "unknown" — refresh the list to check them.`);
+  if (stopped && notChecked) notes.push(`Microsoft was busy (or refused the office mailbox), so the answer checks stopped: ${notChecked} ${notChecked === 1 ? 'row shows' : 'rows show'} "unknown" — refresh in a few minutes.`);
+  else if (notChecked) notes.push(`The answer checks stopped after ${CHECK_BUDGET_MS / 60000} minutes: ${notChecked} ${notChecked === 1 ? 'row shows' : 'rows show'} "unknown" — refresh the list to check them.`);
 
   const failText = [...failures.entries()].map(([k, n]) => `${k} x${n}`).join(', ');
   const secs = ((io.now() - t0) / 1000).toFixed(1);
-  io.log(`[OldReplies] list: emails=${counts.read} pages=${inbox.pages}${inbox.capped ? ' (capped)' : ''} senders=${groups.size} cases=${summary.matchedCases} leads=${summary.matchedLeads} unmatched=${matched.unmatched} skipped=${counts.skippedSenders} test/cancel=${matched.testOrCancelled} answered yes=${answers.yes} no=${answers.no} unknown=${answers.unknown}${notChecked ? ` not-started=${notChecked}` : ''}${failText ? ` failed: ${failText}` : ''} ${secs}s`);
+  io.log(`[OldReplies] list: emails=${counts.read} pages=${inbox.pages}${inbox.capped ? ' (capped)' : ''} senders=${groups.size} cases=${summary.matchedCases} leads=${summary.matchedLeads} unmatched=${matched.unmatched} skipped=${counts.skippedSenders} meeting=${counts.meetingReplies} test/cancel=${matched.testOrCancelled} cm-leads=${cmLeadsGroup} answered yes=${answers.yes} no=${answers.no} unknown=${answers.unknown}${unsure ? ` unsure=${unsure}` : ''}${notChecked ? ` not-started=${notChecked}` : ''}${stopped ? ' checks-stopped' : ''}${failText ? ` failed: ${failText}` : ''} ${secs}s`);
   return { ok: true, summary, rows: rows.map(publicRow), notes };
 }
 
@@ -501,7 +581,7 @@ function toCsv(rows) {
   const lines = [CSV_HEAD.map(csvCell).join(',')];
   for (const r of rows || []) {
     lines.push([
-      r.name, KIND_LABEL[r.kind] || r.kind, (r.caseRefs || []).join('; '), (r.caseStages || []).join('; '), (r.leadIds || []).join('; '),
+      r.name, (r.clientMasterLeadsGroup && r.kind === 'lead') ? 'Lead (Client Master Leads group)' : (KIND_LABEL[r.kind] || r.kind), (r.caseRefs || []).join('; '), (r.caseStages || []).join('; '), (r.leadIds || []).join('; '),
       r.leadOutcome, r.oldReplies, when(r.newest), when(r.oldest), r.withAttachments, r.answeredFromInfoAfter,
       r.wroteToInfoAfter == null ? 'unknown' : (r.wroteToInfoAfterAtLeast ? `${r.wroteToInfoAfter}+` : r.wroteToInfoAfter),
       r.sharedAddress ? 'yes' : '',
@@ -516,7 +596,7 @@ const csvFileName = (out) => `old-noreply-replies-${torontoDay((out && out.summa
 module.exports = {
   list, toCsv, csvFileName, officeMailbox, oldMailbox,
   // pure pieces + seams (tests)
-  io, groupSenders, matchGroups, cellAddresses, cmRow, leadRow, skipKind, ownContext, csvCell, isGraphLink, inboxUrl,
-  CSV_HEAD, LEAD_KEYS, CM, INBOX_SELECT, INBOX_MAX_PAGES, SEARCH_TOP, MONDAY_PAGE, CHECK_BUDGET_MS, CACHE_MS, REFRESH_MIN_MS, FALLBACK_OLD,
+  io, groupSenders, matchGroups, cellAddresses, cmRow, leadRow, skipKind, ownContext, csvCell, isGraphLink, inboxUrl, readHits, stopsChecks,
+  CSV_HEAD, LEAD_KEYS, CM, INBOX_SELECT, SENT_SELECT, WROTE_SELECT, INBOX_MAX_PAGES, SEARCH_TOP, MONDAY_PAGE, CHECK_BUDGET_MS, CACHE_MS, REFRESH_MIN_MS, FALLBACK_OLD,
   _reset: () => { _last = null; _inflight = null; _flight.clear(); },
 };
