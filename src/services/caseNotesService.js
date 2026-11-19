@@ -50,12 +50,14 @@ function recordColumnId() {
 /**
  * The light read behind the access check: the case row's people columns and (when the consultation copy is
  * set up) its Record link. Never the questionnaire, the checklist or the notes. Throws when it cannot be read.
- * @returns {Promise<{ assignees: {personIds:string[], teamIds:string[]}, recordUrl: string }>}
+ * `extraColumns` (the Emails tab: the client email and the case ref) come back as `texts`, from the SAME read.
+ * @returns {Promise<{ assignees: {personIds:string[], teamIds:string[]}, recordUrl: string, texts?: Object<string,string> }>}
  */
-async function readCaseRow(itemId) {
+async function readCaseRow(itemId, { extraColumns = [] } = {}) {
   if (!/^\d+$/.test(s(itemId))) throw new Error('Invalid item id.');
   const rec = recordColumnId();
-  const ids = [...caseAccess.PEOPLE_COLUMNS, ...(rec ? [rec] : [])];
+  const extra = (Array.isArray(extraColumns) ? extraColumns : []).map(s).filter((c) => /^[a-z0-9_]{1,64}$/.test(c));
+  const ids = [...caseAccess.PEOPLE_COLUMNS, ...(rec ? [rec] : []), ...extra.filter((c) => !caseAccess.PEOPLE_COLUMNS.includes(c) && c !== rec)];
   const d = await io.query(
     `query($i:[ID!]){ items(ids:$i, limit:1){ id state board{ id } column_values(ids:${JSON.stringify(ids)}){ id text value } } }`,
     { i: [s(itemId)] }
@@ -63,12 +65,15 @@ async function readCaseRow(itemId) {
   const it = d && d.items && d.items[0];
   if (!it) throw new Error('The case row could not be read.');
   const valueByColId = {};
-  for (const c of it.column_values || []) valueByColId[c.id] = c.value;
+  const textByColId = {};
+  for (const c of it.column_values || []) { valueByColId[c.id] = c.value; textByColId[c.id] = c.text; }
   let recordUrl = '';
   // the anchor counts only on a live Client Master row (the same rule as consultCopyService.readCaseRow)
   const live = it.state === 'active' && it.board && s(it.board.id) === s(clientMasterBoardId);
   if (rec && live) { try { recordUrl = s((JSON.parse(valueByColId[rec] || 'null') || {}).url); } catch (_) { recordUrl = ''; } }
-  return { assignees: caseAccess.assigneesFromColumnValues(valueByColId), recordUrl };
+  const out = { assignees: caseAccess.assigneesFromColumnValues(valueByColId), recordUrl };
+  if (extra.length) out.texts = Object.fromEntries(extra.map((c) => [c, s(textByColId[c])]));   // only when asked (the Emails tab)
+  return out;
 }
 
 /* ── which consultations belong to the case ─────────────────────────────── */
@@ -108,7 +113,8 @@ function directBelongs(lead, itemId, caseRef) {
 }
 const whenKey = (l) => s(l.bookedSlot) || s(l.consultationHeld) || s(l.createdAt);
 
-function shapeLead(lead, via) {
+/** `withEmail` (the Emails tab only) adds the lead's email — the notes panel never asks, so it never carries one. */
+function shapeLead(lead, via, withEmail = false) {
   return {
     leadId: s(lead.id),
     clientName: s(lead.fullName || lead.name),
@@ -117,6 +123,7 @@ function shapeLead(lead, via) {
     consultationHeld: s(lead.consultationHeld),
     consultant: s(lead.assignedConsultant),
     via,
+    ...(withEmail ? { email: s(lead.email) } : {}),
     _when: whenKey(lead),
   };
 }
@@ -138,15 +145,17 @@ function claimantsOf(leads) {
  *   3. the lead the consultation copy's Record link names — only while it points at this case, or at no
  *      case and names no other one (the copy keeps its link after a lead moves).
  * Duplicates are removed. `recordUrl` (optional) is the Record link already read with the access check;
- * when it is not given it is read here (one extra read).
+ * when it is not given it is read here (one extra read). `withEmail` (the Emails tab only): each lead also
+ * carries its `email` — the notes panel never asks for it (and its card whitelists fields anyway).
  * @returns {Promise<{ leads: object[], multipleClaimants: boolean, claimantCount: number, partial: boolean }>}
  */
-async function caseLeadSet(itemId, caseRef, { recordUrl } = {}) {
+async function caseLeadSet(itemId, caseRef, { recordUrl, withEmail = false } = {}) {
+  const shape = (lead, via) => shapeLead(lead, via, !!withEmail);
   const id = s(itemId);
   if (!/^\d+$/.test(id)) throw new Error('Invalid item id.');
   const out = new Map();
   let partial = false;
-  for (const l of (await io.findLinked(id)) || []) if (l && l.id && !out.has(s(l.id))) out.set(s(l.id), shapeLead(l, 'link'));
+  for (const l of (await io.findLinked(id)) || []) if (l && l.id && !out.has(s(l.id))) out.set(s(l.id), shape(l, 'link'));
 
   // 2. direct consultations for this case
   try {
@@ -154,7 +163,7 @@ async function caseLeadSet(itemId, caseRef, { recordUrl } = {}) {
     const cands = (snap || []).filter((l) => l && l.id && !out.has(s(l.id)) && sameRef(directConsultCaseRef(l), caseRef)).slice(0, MAX_SNAPSHOT_CANDIDATES);
     for (const c of cands) {
       const live = await io.getLead(c.id);
-      if (directBelongs(live, id, caseRef) && !out.has(s(live.id))) out.set(s(live.id), shapeLead(live, 'direct'));
+      if (directBelongs(live, id, caseRef) && !out.has(s(live.id))) out.set(s(live.id), shape(live, 'direct'));
     }
   } catch (err) { partial = true; console.warn(`[CaseNotes] case item ${id}: the direct consultations could not be checked (${err && err.message ? 'read failed' : 'error'})`); }
 
@@ -165,7 +174,7 @@ async function caseLeadSet(itemId, caseRef, { recordUrl } = {}) {
     const anchorId = require('./consultCopyService').leadIdOfRecordUrl(url);
     if (anchorId && !out.has(anchorId)) {
       const lead = await io.getLead(anchorId);
-      if (lead && s(lead.id) === anchorId && anchorBelongs(lead, id, caseRef)) out.set(anchorId, shapeLead(lead, 'anchor'));
+      if (lead && s(lead.id) === anchorId && anchorBelongs(lead, id, caseRef)) out.set(anchorId, shape(lead, 'anchor'));
     }
   } catch (err) { partial = true; console.warn(`[CaseNotes] case item ${id}: the consultation copy's record link could not be checked`); }
 

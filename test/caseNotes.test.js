@@ -93,6 +93,32 @@ test('caseLeadSet: every linked lead, newest consultation first; same person spe
   } finally { s.restore(); }
 });
 
+test('caseLeadSet: the lead email only when asked (the Emails tab, withEmail) — the notes panel\'s set and its cards never carry one', async () => {
+  const s = stubSet({ linked: [L(1, { email: 'asha.sample@example.test' })] });
+  try {
+    const plain = await svc.caseLeadSet('900', '2026-EE-900', { recordUrl: '' });
+    assert.ok(!('email' in plain.leads[0]), 'the notes panel\'s set: no email (the pinned keys above)');
+    const withEmail = await svc.caseLeadSet('900', '2026-EE-900', { recordUrl: '', withEmail: true });
+    assert.deepEqual(Object.keys(withEmail.leads[0]).sort(), ['bookedSlot', 'clientName', 'consultant', 'consultationHeld', 'email', 'kind', 'leadId', 'via']);
+    assert.equal(withEmail.leads[0].email, 'asha.sample@example.test');
+    assert.ok(!('email' in routes.cardOf(withEmail.leads[0])), 'a card whitelists its fields: an email never reaches the panel');
+  } finally { s.restore(); }
+});
+
+test('readCaseRow: extra columns (the Emails tab) come back as texts from the SAME read; without them the answer is as before', async () => {
+  const qs = [];
+  const r = stub(svc.io, 'query', async (q) => { qs.push(q); return { items: [{ id: '900', state: 'active', board: { id: require('../config/monday').clientMasterBoardId }, column_values: [{ id: 'text_mm0xw6bp', text: ' a@example.test ', value: '"a@example.test"' }, { id: 'text_mm142s49', text: '2026-EE-900', value: null }] }] }; });
+  try {
+    const plain = await svc.readCaseRow('900');
+    assert.deepEqual(Object.keys(plain).sort(), ['assignees', 'recordUrl']);
+    assert.ok(!qs[0].includes('text_mm0xw6bp'));
+    const extra = await svc.readCaseRow('900', { extraColumns: ['text_mm0xw6bp', 'text_mm142s49', 'bad col"'] });
+    assert.deepEqual(extra.texts, { text_mm0xw6bp: 'a@example.test', text_mm142s49: '2026-EE-900' });
+    assert.equal(qs.length, 2, 'one read each');
+    assert.ok(qs[1].includes('"text_mm0xw6bp","text_mm142s49"') && !qs[1].includes('bad col'));
+  } finally { r(); }
+});
+
 test('caseLeadSet: two leads naming DIFFERENT people → multipleClaimants (the 2026-OINP-059 case)', async () => {
   const s = stubSet({ linked: [L(1), L(2, { fullName: 'Ravi Example' })] });
   try {

@@ -814,6 +814,13 @@ app.get('/admin/case-data/:caseRef', async (req, res) => {
 app.get('/admin/case-notes/:caseRef', (req, res) => require('./routes/caseNotesRoutes').get(req, res, { resolveViewer, staffActor }));
 app.post('/admin/case-notes/:caseRef', express.json(), (req, res) => require('./routes/caseNotesRoutes').post(req, res, { resolveViewer, staffActor }));
 
+// The case page's Emails tab (switch CASE_EMAILS_TAB = off | admins | on; off = 404). READ-ONLY, live from
+// Microsoft: the office mailbox + the old no-reply inbox (client senders only). A Monday sign-in is required —
+// the shared key alone gets 401 (routes/caseEmailsRoutes.js). Not under /api.
+app.get('/admin/case-emails/:caseRef/message', (req, res) => require('./routes/caseEmailsRoutes').message(req, res, { staff: tryStaffAuth }));
+app.get('/admin/case-emails/:caseRef/attachment', (req, res) => require('./routes/caseEmailsRoutes').attachment(req, res, { staff: tryStaffAuth }));
+app.get('/admin/case-emails/:caseRef', (req, res) => require('./routes/caseEmailsRoutes').list(req, res, { staff: tryStaffAuth }));
+
 // Shared gate for cockpit WRITE actions: resolve the viewer + confirm they're
 // assigned to (or admin for) this case, returning the case overview so callers
 // can derive the linked lead server-side (never trust a client-supplied leadId).

@@ -977,6 +977,8 @@ async function checkAccess() {
 
 module.exports = {
   runOnce, getStatus, checkAccess,
+  // the case page's Emails tab reads the same mailbox and uses the same "our own" lists
+  mailbox, skipDomains, skipAddresses,
   // pure helpers + seams (tests)
   classify, skipReason, subjectSkipWord, normalSubject, skipWords, senderOf, headerMap, leadNameFor, bodyText, situationText, noteHtml, messageRef, pickTargets, subjectCaseRefs, listUrl, rescueUrl, byMessageIdUrl, accessHint,
   DEFAULT_SKIP_DOMAINS, FINISHED_STAGES, FOREIGN_SENDER_LINE, STATE_PATH, MAX_TRIES, MAX_PER_RUN, LEASE_MS, GIVE_UP_AFTER_MS, INSTANCE, io,
