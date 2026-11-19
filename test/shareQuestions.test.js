@@ -5,6 +5,8 @@
 // only the token's hash is in the code; the page is a complete document whose one inline script runs by its hash;
 // the page's questions equal the server's ONE list; validation, write limits, eTag conflict retry, storage
 // failure → 503 with nothing lost, the admin gate, no note text or token in any log, and no page links to it.
+// The page's own script runs in a stand-in browser against the real handlers: nothing is sent before the saved
+// answers are read, a tab shown again reads again, and an unsaved change is never lost to the device's own save.
 // Offline (the no-network guard backs it). The token and every answer here are invented.
 
 const test = require('node:test');
@@ -675,8 +677,133 @@ test('no note text and no token in any console output: the question id and lengt
     '[ShareQuestions] admin read failed (damaged file)',
     `[ShareQuestions] G1 saved (choice 1, note ${NOTE.length})`,
   ]);
-  // the one place the server logs a request path leaves a private link out
-  assert.ok(read('src/server.js').includes("console.log(`[Canonical] ${host}${req.path.startsWith('/share/') ? '/share/…' : req.originalUrl} → ${CANONICAL_HOST}`);"));
+});
+
+// ─── The two places the server itself would write a request path to the log ────
+
+/** A request through a real Express router, no socket: resolves with what was answered, or 'fell through' (the ordinary 404). */
+function throughRouter(router, method, url, headers = {}) {
+  return new Promise((resolve) => {
+    const res = { statusCode: 200, headersSent: false, body: undefined, to: undefined };
+    res.status = (c) => { res.statusCode = c; return res; };
+    res.json = (b) => { res.body = b; res.headersSent = true; resolve(res); return res; };
+    res.send = res.json;
+    res.redirect = (c, to) => { res.statusCode = c; res.to = to; res.headersSent = true; resolve(res); };
+    res.setHeader = () => {};
+    // Express's own request prototype, so req.path and the rest are the real getters
+    const req = Object.assign(Object.create(require('express').request), { method, url, originalUrl: url, headers });
+    router.handle(req, res, (err) => resolve({ fellThrough: true, err }));
+  });
+}
+
+/** Runs `fn` with every console method collected instead of printed. */
+async function quiet(fn) {
+  const lines = [];
+  const con = { log: console.log, warn: console.warn, error: console.error, info: console.info, debug: console.debug };
+  console.log = console.warn = console.error = console.info = console.debug = (...a) => { lines.push(a.map(String).join(' ')); };
+  try { await fn(); } finally { Object.assign(console, con); }
+  return lines;
+}
+
+test('a link with a broken percent-escape is the ordinary 404 and is never logged (the questions and the checklist alike)', async () => {
+  const express = require('express');
+  const server = read('src/server.js');
+  // the server's OWN two error handlers, as written, behind the same kind of routes
+  const m = /\/\/ ─── Global error handler[^\n]*\napp\.use\(((?:.|\n)*?\n\})\);\n/.exec(server);
+  assert.ok(m, 'the global error handler is where it was');
+  assert.match(m[1], /^\(err, _req, res, next\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(err instanceof URIError && err\.status === 400\) return next\(\);\n\s*console\.error\(/, 'the guard comes before anything is logged');
+  const globalHandler = new Function(`return (${m[1]});`)();
+  const m2 = /\/\/ Body-parser failures[^\n]*\n[^\n]*\napp\.use\(((?:.|\n)*?\n\})\);\n/.exec(server);
+  assert.ok(m2, 'the body-parser error handler follows it');
+  const bodyHandler = new Function(`return (${m2[1]});`)();
+  assert.ok(server.indexOf(m[0]) < server.indexOf(m2[0]));
+  assert.ok(server.indexOf("app.put('/share/questions/:token/answers/:qid'") < server.indexOf(m[0]), 'the routes are registered before it');
+
+  const served = [];
+  let afterwards = 0;
+  const router = express.Router();
+  router.get('/share/questions/:token', (req, res) => { served.push(req.params.token); res.status(200).json({ page: true }); });
+  router.get('/share/questions/:token/answers', (req, res) => { served.push(req.params.token); res.status(200).json({ answers: {} }); });
+  router.put('/share/questions/:token/answers/:qid', (req, res) => { served.push(req.params.token); res.status(200).json({ ok: true }); });
+  router.get('/share/checklist/:token', (req, res) => { served.push(req.params.token); res.status(200).json({ page: true }); });
+  router.get('/boom', () => { throw new Error('a real fault'); });
+  router.use(globalHandler);
+  router.use((err, req, res, next) => { afterwards++; return bodyHandler(err, req, res, next); });
+
+  const BROKEN = [
+    ['GET', `${BASE}%E2%80`], ['GET', `${BASE}%`], ['GET', `${BASE}%zz`], ['GET', `/Share/Questions/${TOKEN}%E2%80`],
+    ['GET', `${BASE}%E2%80/answers`], ['PUT', `${BASE}%/answers/G1`], ['PUT', `${BASE}/answers/G1%E2%80`],
+    ['GET', `/share/checklist/${TOKEN}%E2%80`], ['GET', `/share/checklist/${TOKEN}%`],
+  ];
+  const lines = await quiet(async () => {
+    for (const [method, url] of BROKEN) {
+      const r = await throughRouter(router, method, url);
+      assert.equal(r.fellThrough, true, `${method} ${url.replace(TOKEN, '<token>')} falls through`);
+      assert.equal(r.err, undefined, 'with no error left: the ordinary 404, not a 500 and not a 400');
+    }
+    // the same as an address no route reads a piece of
+    assert.deepEqual(await throughRouter(router, 'GET', '/other/x%E0'), { fellThrough: true, err: undefined });
+  });
+  assert.deepEqual(lines, [], 'nothing is logged');
+  assert.deepEqual(served, [], 'and no handler ran');
+  assert.equal(afterwards, 0, 'the error handler after it is skipped too');
+
+  // a good link is still served, with an escaped piece decoded as before
+  const fine = await quiet(async () => {
+    assert.equal((await throughRouter(router, 'GET', BASE)).statusCode, 200);
+    assert.equal((await throughRouter(router, 'GET', `/share/checklist/${TOKEN}%2D1`)).statusCode, 200);
+  });
+  assert.deepEqual(fine, []);
+  assert.deepEqual(served, [TOKEN, `${TOKEN}-1`]);
+  // and a genuine fault is still logged and answered 500
+  let boom;
+  const loud = await quiet(async () => { boom = await throughRouter(router, 'GET', '/boom'); });
+  assert.equal(boom.statusCode, 500);
+  assert.deepEqual(boom.body, { error: 'Internal server error' });
+  assert.equal(loud.length, 1);
+  assert.match(loud[0], /^\[Server\] Unhandled error: Error: a real fault/);
+  // Express's own message is what would have carried the token: the reason for the guard
+  const raw = express.Router();
+  raw.get('/share/questions/:token', () => {});
+  const seen = await throughRouter(raw, 'GET', `${BASE}%E2%80`);
+  assert.ok(seen.err instanceof URIError && seen.err.status === 400 && seen.err.message.includes(TOKEN));
+});
+
+test('the redirect from the old host name never logs a private link, whatever the letter case of /share/', async () => {
+  const server = read('src/server.js');
+  assert.ok(server.includes("console.log(`[Canonical] ${host}${/^\\/share\\//i.test(req.path) ? '/share/…' : req.originalUrl} → ${CANONICAL_HOST}`);"));
+  assert.ok(!/app\.(set|enable)\('case sensitive routing'/.test(server), 'routing ignores letter case, so the test must too');
+  // the server's OWN middleware, as written, on a canonical host
+  const m = /\nconst NO_REDIRECT = [^\n]*\napp\.use\(((?:.|\n)*?\n\})\);\n/.exec(server);
+  assert.ok(m, 'the canonical-host redirect is where it was');
+  const mw = new Function('CANONICAL_HOST', 'NO_REDIRECT', `return (${m[1]});`)('app.example.test', /^\/(webhook|api|phase2\/health)\b/);
+  const express = require('express');
+  const router = express.Router();
+  router.use(mw);
+  router.get('/share/questions/:token', (req, res) => res.status(200).json({ token: req.params.token }));
+  const old = { host: 'old-name.example.test' };
+  let r;
+  const PRIVATE = [BASE, `/Share/questions/${TOKEN}`, `/SHARE/QUESTIONS/${TOKEN}`, `/sHaRe/checklist/${TOKEN}`, `${BASE}/answers`, `/Share/questions/${TOKEN}?x=1`];
+  const lines = await quiet(async () => {
+    for (const url of PRIVATE) {
+      r = await throughRouter(router, 'GET', url, old);
+      assert.equal(r.statusCode, 302);
+      assert.equal(r.to, `https://app.example.test${url}`, 'the visitor is still sent on to the same address');
+    }
+  });
+  assert.deepEqual(lines, PRIVATE.map(() => '[Canonical] old-name.example.test/share/… → app.example.test'));
+  assert.ok(!lines.join('\n').includes(TOKEN));
+  // the upper-case address is one the server really serves
+  assert.equal((await throughRouter(router, 'GET', `/Share/Questions/${TOKEN}`, { host: 'app.example.test' })).body.token, TOKEN);
+  // every other page is logged in full, as before — only /share/ itself is left out
+  const others = await quiet(async () => {
+    for (const url of ['/shared/x', '/admin/share/questions/answers', '/client/2026-EE-001?a=1']) await throughRouter(router, 'GET', url, old);
+  });
+  assert.deepEqual(others, [
+    '[Canonical] old-name.example.test/shared/x → app.example.test',
+    '[Canonical] old-name.example.test/admin/share/questions/answers → app.example.test',
+    '[Canonical] old-name.example.test/client/2026-EE-001?a=1 → app.example.test',
+  ]);
 });
 
 // ─── Never linked ─────────────────────────────────────────────────────────────
@@ -716,7 +843,7 @@ test('no page links to the questions (not on the dashboard or anywhere else); th
  * Runs the page's inline script in a tiny stand-in for the browser (just the calls it makes), with fetch wired
  * straight to a service instance on the fake file. Timers are collected and run by hand.
  */
-function browser(h, { drafts, unsaved, online = true } = {}) {
+function browser(h, { drafts, unsaved, sync, online = true, clock = null, gated = false } = {}) {
   const els = new Map();
   const made = [];
   const node = (tag) => {
@@ -736,14 +863,27 @@ function browser(h, { drafts, unsaved, online = true } = {}) {
   const store = {};
   if (drafts) store['gauri-q-drafts-v1'] = JSON.stringify(drafts);
   if (unsaved) store['gauri-q-unsaved-v1'] = JSON.stringify(unsaved);
+  if (sync) store['gauri-q-sync-v1'] = JSON.stringify(sync);
   const timers = [];
   const calls = [];
   const win = { listeners: {}, addEventListener: (ev, fn) => { win.listeners[ev] = fn; } };
   const doc = { listeners: {}, visibilityState: 'visible' };
-  const b = { els, store, timers, calls, win, doc, online, copied: '' };
+  const b = { els, store, timers, calls, win, doc, online, copied: '', closed: false, gate: null };
+  // `gated`: requests wait at the server's door until b.open() (a slow connection). `closed`: the tab is gone —
+  // a request already on its way still reaches the server, but no reply reaches the page and nothing new is sent.
+  // b.hold('PUT') keeps only the saves waiting. const deliver = b.holdReplies('GET' | 'PUT'): the server answers such
+  // a request at once but its reply is slow to arrive, until deliver().
+  const hold = (only) => { let open; b.gateFor = only || ''; b.gate = new Promise((r) => { open = r; }); b.open = async () => { b.gate = null; open(); await b.settle(); }; };
+  b.hold = hold;
+  const replyGates = {};
+  b.holdReplies = (method) => { let go; replyGates[method] = new Promise((r) => { go = r; }); return async () => { delete replyGates[method]; go(); await b.settle(); }; };
+  if (gated) hold();
+  const nobody = () => new Promise(() => {});
   const fetchFake = async (url, opts = {}) => {
+    if (b.closed) return nobody();
     calls.push({ url, method: opts.method || 'GET', body: opts.body, cache: opts.cache, credentials: opts.credentials, ...(opts.keepalive ? { keepalive: true } : {}) });
     if (!b.online) throw new TypeError('Failed to fetch');
+    if (b.gate && (!b.gateFor || b.gateFor === (opts.method || 'GET'))) await b.gate;
     const res = fakeRes();
     let nexted = false;
     const m = /^\/share\/questions\/([^/]+)\/answers(?:\/([^/]+))?$/.exec(url);
@@ -755,8 +895,15 @@ function browser(h, { drafts, unsaved, online = true } = {}) {
       assert.equal(m[2], undefined);
       await h.svc.getAnswers(getReq({ token: m[1] }), res, () => { nexted = true; });
     }
+    if (replyGates[opts.method || 'GET']) await replyGates[opts.method || 'GET'];
+    if (b.closed) return nobody();
     const status = nexted ? 404 : res.statusCode;
     return { ok: status >= 200 && status < 300, status, headers: { get: (k) => (res.headers[k] === undefined ? null : res.headers[k]) }, json: async () => JSON.parse(JSON.stringify(res.body)) };
+  };
+  // The device's own clock, when a test needs it to differ from the server's (`clock` → ms).
+  const DeviceDate = !clock ? Date : class extends Date {
+    constructor(...a) { if (a.length) super(...a); else super(clock()); }
+    static now() { return clock(); }
   };
   const sandbox = {
     window: win,
@@ -775,7 +922,7 @@ function browser(h, { drafts, unsaved, online = true } = {}) {
     clearTimeout: (id) => { if (id && timers[id - 1]) timers[id - 1].fn = null; },
     // a fixed "random" part: a retry waits 1500 × 2^n + 1350 ms, so a test can tell it from the 2-second note pause
     Math: Object.assign(Object.create(Math), { random: () => 0.9 }),
-    Promise, JSON, Date, String, Object, Array, Error, parseInt, isNaN, encodeURIComponent,
+    Promise, JSON, Date: DeviceDate, String, Object, Array, Error, parseInt, isNaN, encodeURIComponent,
   };
   if (online !== 'no-fetch') { win.fetch = fetchFake; sandbox.fetch = fetchFake; }
   const script = /<script>([\s\S]*?)<\/script>/.exec(svc.page())[1];
@@ -792,6 +939,9 @@ function browser(h, { drafts, unsaved, online = true } = {}) {
   b.status = (qid) => els.get(`s-${qid}`).textContent;
   b.text = (id) => els.get(id).textContent;
   b.puts = () => calls.filter((c) => c.method === 'PUT');
+  b.gets = () => calls.filter((c) => c.method === 'GET');
+  /** What the device keeps (its localStorage), as a later visit would find it. */
+  b.kept = () => ({ drafts: JSON.parse(store['gauri-q-drafts-v1'] || '{}'), unsaved: JSON.parse(store['gauri-q-unsaved-v1'] || '{}'), sync: JSON.parse(store['gauri-q-sync-v1'] || '{}') });
   return b;
 }
 
@@ -973,6 +1123,13 @@ test('the page script: a write limit (429) waits for Retry-After, and a refusal 
   const waiting = b.timers.filter((t) => t.fn);
   assert.equal(waiting.length, 1);
   assert.equal(waiting[0].ms, 120 * 1000, 'waits as long as the server asked');
+  // coming back to the tab reads the answers again but does not jump the wait
+  b.win.listeners.focus();
+  await b.settle();
+  assert.equal(b.gets().length, 2);
+  assert.equal(b.puts().length, 2, 'no extra try');
+  assert.equal(b.status('G1'), 'Not saved yet — will try again');
+  assert.equal(b.els.get('r-G1-b').checked, true, 'her unsaved choice stays on the page');
   h.clock.t += 120 * 1000;
   await b.runTimers();
   assert.equal(b.status('G1'), 'Saved');
@@ -988,4 +1145,424 @@ test('the page script: a write limit (429) waits for Retry-After, and a refusal 
   assert.equal(b2.timers.filter((t) => t.fn).length, 0, 'no retry is waiting');
   assert.equal(h2.file, null);
   assert.deepEqual(JSON.parse(b2.store['gauri-q-drafts-v1']).F2, { choice: 'z', note: '' });
+  // coming back to the tab does not send the refused answer again as it is; a changed one is sent
+  b2.win.listeners.focus();
+  await b2.settle();
+  assert.equal(b2.gets().length, 2);
+  assert.equal(b2.puts().length, 1);
+  assert.equal(b2.status('F2'), 'Not saved — your answer is kept on this device');
+  await b2.pick('F2', 'a');
+  assert.equal(b2.puts().length, 2);
+  assert.equal(h2.file.data.answers.F2.choice, 'a');
+  assert.equal(b2.status('F2'), 'Saved');
+});
+
+// ─── One answer is two halves (choice + note) and a save replaces both ─────────
+
+const SAVED_G1 = { version: 1, answers: { G1: { choice: 'c', note: 'saved note', at: '2026-11-18T10:00:00.000Z' } }, history: [] };
+
+test('the page script: a change made before the saved answers have loaded keeps the other half of the saved answer', async () => {
+  // a device with no draft (a second device, a private window); the connection is slow
+  const h = harness({ file: SAVED_G1 });
+  const b = browser(h, { gated: true });
+  await b.settle();
+  assert.equal(b.text('conn'), 'Loading saved answers…');
+  await b.pick('G1', 'a');
+  assert.equal(b.puts().length, 0, 'nothing is sent before the saved answers are known');
+  assert.equal(b.status('G1'), 'Saved on this device', 'and the page does not say it is saved for Faran');
+  assert.deepEqual(b.kept().drafts.G1, { choice: 'a', note: '' });
+  assert.ok(b.kept().unsaved.G1, 'kept as an unsaved change on the device');
+  assert.deepEqual(b.kept().sync.touched.G1, { choice: 1 }, 'which half she changed is kept with it');
+  await b.open();
+  assert.deepEqual(b.puts().map((c) => c.body), ['{"choice":"a","note":"saved note"}'], 'one save, carrying the saved note');
+  assert.deepEqual(h.file.data.answers.G1, { choice: 'a', note: 'saved note', at: '2026-11-19T15:00:00.000Z' });
+  assert.equal(b.els.get('r-G1-a').checked, true);
+  assert.equal(b.els.get('n-G1').value, 'saved note', 'the saved note is on the page');
+  assert.equal(b.status('G1'), 'Saved');
+  assert.deepEqual(b.kept().unsaved, {});
+  assert.deepEqual(b.kept().sync.touched, {});
+  assert.equal(b.text('count'), '1 of 19 answered');
+
+  // the other way round: a note typed before the load keeps the saved choice
+  const h2 = harness({ file: SAVED_G1 });
+  const b2 = browser(h2, { gated: true });
+  b2.type('G1', 'typed early');
+  b2.els.get('n-G1').fire('blur');
+  await b2.settle();
+  assert.equal(b2.puts().length, 0);
+  assert.equal(b2.status('G1'), 'Saved on this device');
+  await b2.open();
+  assert.deepEqual(b2.puts().map((c) => c.body), ['{"choice":"c","note":"typed early"}']);
+  assert.equal(b2.els.get('r-G1-c').checked, true);
+  assert.equal(b2.text('count'), '1 of 19 answered');
+  await b2.runTimers();
+  assert.equal(b2.puts().length, 1, 'the typing pause has nothing left to send');
+
+  // both halves changed before the load: her whole answer stands
+  const h3 = harness({ file: SAVED_G1 });
+  const b3 = browser(h3, { gated: true });
+  await b3.pick('G1', 'b');
+  b3.type('G1', 'all mine');
+  await b3.open();
+  assert.deepEqual({ choice: h3.file.data.answers.G1.choice, note: h3.file.data.answers.G1.note }, { choice: 'b', note: 'all mine' });
+
+  // the tab is closed before the load ever returns: the next visit still fills in the half she did not change
+  const h4 = harness({ file: SAVED_G1 });
+  const b4 = browser(h4, { gated: true });
+  await b4.pick('G1', 'a');
+  b4.closed = true;
+  const later = browser(h4, b4.kept());
+  await later.settle();
+  assert.deepEqual(later.puts().map((c) => c.body), ['{"choice":"a","note":"saved note"}']);
+  assert.equal(h4.file.data.answers.G1.note, 'saved note');
+});
+
+test('the page script: a note typed while the saved answers cannot be reached keeps the saved choice once they load', async () => {
+  const h = harness({ file: SAVED_G1 });
+  h.failRead = new Error('down');
+  const b = browser(h);
+  await b.settle();
+  assert.equal(b.text('conn'), "Saved answers can't be reached");
+  b.type('G1', 'my new thought');
+  await b.runTimers(2000);                       // the typing pause; the next try at loading is 10 s away
+  assert.equal(b.puts().length, 0, 'held: nothing is sent while the saved answer is unknown');
+  assert.equal(b.status('G1'), 'Saved on this device');
+  assert.equal(b.text('count'), '0 of 19 answered');
+  // storage is back
+  h.failRead = null;
+  h.clock.t += svc.FAIL_MS;
+  await b.runTimers();
+  assert.equal(b.text('conn'), 'Answers save automatically');
+  assert.deepEqual(b.puts().map((c) => c.body), ['{"choice":"c","note":"my new thought"}']);
+  assert.deepEqual({ choice: h.file.data.answers.G1.choice, note: h.file.data.answers.G1.note }, { choice: 'c', note: 'my new thought' });
+  assert.equal(b.els.get('r-G1-c').checked, true);
+  assert.equal(b.text('count'), '1 of 19 answered');
+  assert.equal(b.status('G1'), 'Saved');
+});
+
+// ─── A page left open ─────────────────────────────────────────────────────────
+
+test('the page script: a tab that is shown or used again reads the saved answers again, and never overwrites what another tab saved', async () => {
+  const h = harness();
+  const tabB = browser(h);
+  await tabB.settle();
+  assert.equal(tabB.gets().length, 1);
+  // another tab (or device) answers G1 and D1 meanwhile
+  const tabA = browser(h);
+  await tabA.settle();
+  await tabA.pick('G1', 'a');
+  tabA.type('G1', 'first note');
+  tabA.els.get('n-G1').fire('blur');
+  await tabA.pick('D1', 'b');
+  await tabA.settle();
+  assert.deepEqual({ choice: h.file.data.answers.G1.choice, note: h.file.data.answers.G1.note }, { choice: 'a', note: 'first note' });
+  assert.equal(tabB.els.get('r-G1-a').checked, false, 'tab B has not looked yet');
+
+  // tab B is shown again → it reads again, and shows what was saved
+  tabB.doc.visibilityState = 'visible';
+  tabB.doc.listeners.visibilitychange();
+  assert.equal(tabB.text('conn'), 'Answers save automatically', 'no "Loading…" flash on a re-read');
+  await tabB.settle();
+  assert.equal(tabB.gets().length, 2);
+  assert.deepEqual(tabB.gets()[1], { url: `${BASE}/answers`, method: 'GET', body: undefined, cache: 'no-store', credentials: 'omit' });
+  assert.equal(tabB.els.get('r-G1-a').checked, true);
+  assert.equal(tabB.els.get('n-G1').value, 'first note');
+  assert.match(tabB.status('G1'), /^Saved · /);
+  assert.equal(tabB.text('count'), '2 of 19 answered');
+  assert.equal(tabB.puts().length, 0, 'a re-read sends nothing by itself');
+  // a note typed in tab B now keeps tab A's choice
+  tabB.type('G1', 'one more thought');
+  await tabB.runTimers(2000);
+  assert.deepEqual(tabB.puts().map((c) => c.body), ['{"choice":"a","note":"one more thought"}']);
+  assert.deepEqual({ choice: h.file.data.answers.G1.choice, note: h.file.data.answers.G1.note }, { choice: 'a', note: 'one more thought' });
+  // "Use the suggestion" on a question another tab changed is really sent (D1: suggested (a), saved (b))
+  assert.equal(tabB.els.get('r-D1-b').checked, true);
+  tabB.els.get('use-D1').fire('click');
+  await tabB.settle();
+  assert.equal(tabB.puts().length, 2);
+  assert.equal(h.file.data.answers.D1.choice, 'a');
+  assert.equal(tabB.status('D1'), 'Saved');
+
+  // the window getting the focus back, and a page restored from the back/forward cache, read again as well
+  tabA.win.listeners.focus();
+  await tabA.settle();
+  assert.equal(tabA.gets().length, 2);
+  assert.equal(tabA.els.get('n-G1').value, 'one more thought');
+  assert.equal(tabA.els.get('r-D1-a').checked, true);
+  tabA.win.listeners.pageshow({ persisted: true });
+  await tabA.settle();
+  assert.equal(tabA.gets().length, 3);
+  tabA.win.listeners.pageshow({ persisted: false });   // the ordinary first showing of a page is not a second read
+  await tabA.settle();
+  assert.equal(tabA.gets().length, 3);
+  // shown + focused in the same moment is ONE read, and hiding the page reads nothing
+  tabA.doc.listeners.visibilitychange();
+  tabA.win.listeners.focus();
+  tabA.win.listeners.pageshow({ persisted: true });
+  await tabA.settle();
+  assert.equal(tabA.gets().length, 4);
+  tabA.doc.visibilityState = 'hidden';
+  tabA.doc.listeners.visibilitychange();
+  await tabA.settle();
+  assert.equal(tabA.gets().length, 4);
+  assert.equal(tabA.puts().length, 3, 'and none of this sent anything');
+});
+
+test('the page script: a change made in the moment after coming back waits for the re-read, then goes with the other half as saved', async () => {
+  const h = harness({ file: SAVED_G1 });
+  const b = browser(h);
+  await b.settle();
+  // meanwhile, from another device: a new choice and a longer note on G1, and a first answer on H1
+  h.file.data.answers.G1 = { choice: 'b', note: 'saved note, extended on the laptop', at: '2026-11-19T14:59:00.000Z' };
+  h.file.data.answers.H1 = { choice: 'a', note: '', at: '2026-11-19T14:59:00.000Z' };
+  h.file.etag = 'laptop-1';
+  h.clock.t += svc.CACHE_MS;                    // (the server's own 15-second memory of the file has run out)
+  // she clicks back into the window and picks at once, on a slow connection
+  b.hold();
+  b.win.listeners.focus();
+  await b.pick('G1', 'a');
+  b.type('H1', 'Asmita');
+  b.els.get('n-H1').fire('blur');
+  await b.settle();
+  assert.equal(b.puts().length, 0, 'held while the re-read is on its way');
+  assert.equal(b.status('G1'), 'Saved on this device');
+  await b.open();
+  assert.deepEqual(b.puts().map((c) => [c.url.slice(-2), c.body]), [
+    ['G1', '{"choice":"a","note":"saved note, extended on the laptop"}'],
+    ['H1', '{"choice":"a","note":"Asmita"}'],
+  ]);
+  assert.equal(h.file.data.answers.G1.note, 'saved note, extended on the laptop', "the laptop's note is not lost");
+  assert.equal(h.file.data.answers.H1.choice, 'a', "nor the laptop's choice");
+  assert.equal(b.els.get('n-G1').value, 'saved note, extended on the laptop');
+  assert.equal(b.status('G1'), 'Saved');
+
+  // a save already on its way when the re-read starts is not undone by a reply that left the server before it landed
+  const h2 = harness({ file: SAVED_G1 });
+  const b2 = browser(h2);
+  await b2.settle();
+  b2.hold();
+  await b2.pick('G1', 'a');                     // the save is on its way (waiting at the door)
+  assert.equal(b2.puts().length, 1);
+  b2.win.listeners.focus();                     // the re-read waits behind it
+  await b2.open();
+  assert.deepEqual(b2.puts().map((c) => c.body), ['{"choice":"a","note":"saved note"}'], 'one save, not two');
+  assert.equal(b2.els.get('r-G1-a').checked, true);
+  assert.equal(b2.status('G1'), 'Saved');
+  assert.equal(h2.file.data.answers.G1.choice, 'a');
+  // …nor by one that reaches the page only after the save's own reply (an overtaken reply is not news)
+  const h2b = harness({ file: SAVED_G1 });
+  const b2b = browser(h2b);
+  await b2b.settle();
+  b2b.hold('PUT');
+  await b2b.pick('G1', 'a');                    // the save is on its way
+  const deliver = b2b.holdReplies('GET');
+  b2b.win.listeners.focus();                    // the server answers the re-read at once, from before the save…
+  await b2b.settle();
+  assert.equal(b2b.gets().length, 2);
+  await b2b.open();                             // …the save lands and its reply arrives first…
+  assert.equal(h2b.file.data.answers.G1.choice, 'a');
+  assert.equal(b2b.status('G1'), 'Saved');
+  await deliver();                              // …and then the older reply to the re-read
+  assert.equal(b2b.els.get('r-G1-a').checked, true, 'the page still shows what is saved');
+  assert.equal(b2b.puts().length, 1);
+  assert.equal(b2b.status('G1'), 'Saved');
+  await b2b.pick('G1', 'b');                    // and the page is in working order afterwards
+  assert.deepEqual({ choice: h2b.file.data.answers.G1.choice, note: h2b.file.data.answers.G1.note }, { choice: 'b', note: 'saved note' });
+
+  // a second change waiting its turn behind a save whose reply is slow is held too once a re-read has begun
+  const h2c = harness({ file: SAVED_G1 });
+  let device = h2c.clock.t;
+  const b2c = browser(h2c, { clock: () => device });
+  await b2c.settle();
+  const putReply = b2c.holdReplies('PUT');
+  await b2c.pick('G1', 'a');                    // saved on the server at once; the reply is slow
+  device += 800;
+  await b2c.pick('G1', 'b');                    // waits its turn behind that reply
+  assert.equal(b2c.puts().length, 1);
+  h2c.clock.t += svc.CACHE_MS;                  // meanwhile the laptop rewrites the note
+  h2c.file.data.answers.G1 = { choice: 'a', note: 'laptop note', at: new Date(h2c.clock.t).toISOString() };
+  h2c.file.etag = 'laptop-2';
+  const getReply = b2c.holdReplies('GET');
+  b2c.win.listeners.focus();                    // she comes back: the re-read is on its way…
+  await b2c.settle();
+  await putReply();                             // …when the first save's reply arrives
+  assert.equal(b2c.puts().length, 1, 'the waiting change is not sent with the old note');
+  assert.equal(b2c.status('G1'), 'Saved on this device');
+  await getReply();
+  assert.deepEqual(b2c.puts().map((c) => c.body), ['{"choice":"a","note":"saved note"}', '{"choice":"b","note":"laptop note"}']);
+  assert.deepEqual({ choice: h2c.file.data.answers.G1.choice, note: h2c.file.data.answers.G1.note }, { choice: 'b', note: 'laptop note' });
+  assert.equal(b2c.status('G1'), 'Saved');
+
+  // an answer the server no longer has (the file was started afresh) is sent up again, as on a fresh opening of the page
+  const h2d = harness({ file: SAVED_G1 });
+  const b2d = browser(h2d);
+  await b2d.settle();
+  h2d.file = null;
+  h2d.clock.t += svc.CACHE_MS;
+  b2d.win.listeners.focus();
+  await b2d.settle();
+  assert.deepEqual(b2d.puts().map((c) => c.body), ['{"choice":"c","note":"saved note"}']);
+  assert.deepEqual({ choice: h2d.file.data.answers.G1.choice, note: h2d.file.data.answers.G1.note }, { choice: 'c', note: 'saved note' });
+  assert.equal(b2d.status('G1'), 'Saved');
+
+  // the re-read fails: the page says so, a change is held on the device, and it is sent when the answers are back
+  const h3 = harness({ file: SAVED_G1 });
+  const b3 = browser(h3);
+  await b3.settle();
+  h3.clock.t += svc.CACHE_MS;
+  h3.failRead = new Error('down');
+  b3.win.listeners.focus();
+  await b3.settle();
+  assert.equal(b3.text('conn'), "Saved answers can't be reached");
+  assert.equal(b3.els.get('notice').hidden, false);
+  await b3.pick('G1', 'b');
+  assert.equal(b3.puts().length, 0);
+  assert.equal(b3.status('G1'), 'Saved on this device');
+  b3.win.listeners.focus();
+  await b3.settle();
+  assert.equal(b3.gets().length, 2, 'no second read beside the one already retrying');
+  h3.failRead = null;
+  h3.clock.t += svc.FAIL_MS;
+  await b3.runTimers();
+  assert.equal(b3.text('conn'), 'Answers save automatically');
+  assert.equal(b3.els.get('notice').hidden, true);
+  assert.deepEqual(b3.puts().map((c) => c.body), ['{"choice":"b","note":"saved note"}']);
+  assert.equal(b3.status('G1'), 'Saved');
+});
+
+test('the page script: a window left open and never hidden reads again before a save once its last read is a minute old', async () => {
+  const T = Date.parse('2026-11-19T15:00:00.000Z');
+  let device = T;
+  const h = harness({ file: SAVED_G1 });
+  const b = browser(h, { clock: () => device });
+  await b.settle();
+  // within the minute: a save is just a save
+  device += 59 * 1000;
+  await b.pick('H1', 'a');
+  assert.equal(b.gets().length, 1);
+  assert.equal(b.puts().length, 1);
+  // she answers on her phone; the laptop window stays open in front, so nothing tells it to look again
+  h.clock.t += 10 * 60 * 1000;
+  h.file.data.answers.G1 = { choice: 'c', note: 'added on the phone', at: new Date(h.clock.t - 1000).toISOString() };
+  h.file.data.answers.D1 = { choice: 'b', note: '', at: new Date(h.clock.t - 1000).toISOString() };
+  h.file.etag = 'phone-1';
+  device += 10 * 60 * 1000;
+  b.hold();
+  await b.pick('G1', 'a');
+  assert.equal(b.gets().length, 2, 'the page reads again first');
+  assert.equal(b.puts().length, 1, 'and the save waits for it');
+  assert.equal(b.status('G1'), 'Saved on this device');
+  assert.equal(b.text('conn'), 'Answers save automatically');
+  await b.open();
+  assert.deepEqual(b.puts().map((c) => c.body).slice(1), ['{"choice":"a","note":"added on the phone"}']);
+  assert.equal(h.file.data.answers.G1.note, 'added on the phone', "the phone's note is kept");
+  assert.equal(b.status('G1'), 'Saved');
+  // "Use the suggestion" on D1 (suggested (a), saved (b) from the phone) is really sent, not taken as saved already
+  assert.equal(b.els.get('r-D1-b').checked, true);
+  b.els.get('use-D1').fire('click');
+  await b.settle();
+  assert.equal(h.file.data.answers.D1.choice, 'a');
+  assert.equal(b.gets().length, 2, 'the read is fresh again: no third one');
+  // a note still waiting when the page is LEFT goes at once, old read or not: the page will not live to read first
+  device += 10 * 60 * 1000;
+  b.type('H2', 'date only');
+  b.win.listeners.pagehide();
+  await b.settle();
+  assert.equal(b.gets().length, 2);
+  assert.equal(b.puts()[b.puts().length - 1].keepalive, true);
+  assert.equal(h.file.data.answers.H2.note, 'date only');
+});
+
+// ─── A change left unsaved on the device, and the two clocks ──────────────────
+
+test("the page script: an unsaved change left on the device is not thrown away because the server stamped this device's OWN earlier save later", async () => {
+  // Case 1 — the clocks agree. She picks (a), then (b) straight after; the tab closes while the (a) save is still
+  // on its way, so the (b) save never starts. The server writes (a) three seconds AFTER she picked (b).
+  const T = Date.parse('2026-11-19T15:00:00.000Z');
+  let device = T;
+  const h = harness();
+  h.clock.t = T;
+  const b = browser(h, { clock: () => device });
+  await b.settle();
+  b.hold();
+  await b.pick('G1', 'a');
+  device = T + 1000;
+  await b.pick('G1', 'b');
+  assert.equal(b.puts().length, 1, 'the second save waits its turn behind the first');
+  const kept = b.kept();
+  assert.deepEqual(kept.drafts.G1, { choice: 'b', note: '' });
+  assert.equal(kept.unsaved.G1, '2026-11-19T15:00:01.000Z');
+  assert.deepEqual(kept.sync.sent.G1, { choice: 'a', note: '' }, 'the device remembers what it last started to send');
+  b.closed = true;                              // the tab is closed…
+  h.clock.t = T + 4000;
+  await b.open();                               // …and the (a) save still lands
+  assert.deepEqual(h.file.data.answers.G1, { choice: 'a', note: '', at: '2026-11-19T15:00:04.000Z' });
+  assert.ok(h.file.data.answers.G1.at > kept.unsaved.G1, "the server's stamp of the OLDER answer is the later one");
+  assert.equal(b.puts().length, 1);
+  // the next visit
+  device = T + 60 * 60 * 1000; h.clock.t = device;
+  const next = browser(h, { ...kept, clock: () => device });
+  assert.equal(next.els.get('r-G1-b').checked, true);
+  await next.settle();
+  assert.deepEqual(next.puts().map((c) => c.body), ['{"choice":"b","note":""}'], 'her last answer is sent');
+  assert.equal(h.file.data.answers.G1.choice, 'b');
+  assert.equal(next.els.get('r-G1-b').checked, true);
+  assert.equal(next.status('G1'), 'Saved');
+  assert.deepEqual(next.kept().unsaved, {});
+  assert.deepEqual(next.kept().sync.sent, {});
+  assert.equal(next.kept().sync.seen.G1, h.file.data.answers.G1.at, "the device keeps the server's own stamp of what it saw");
+
+  // Case 2 — the device's clock is five minutes behind the server's. (a) is saved; (b) cannot be saved; she leaves.
+  const SKEW = 5 * 60 * 1000;
+  device = T;
+  const h2 = harness();
+  h2.clock.t = T + SKEW;
+  const b2 = browser(h2, { clock: () => device });
+  await b2.settle();
+  await b2.pick('R2', 'a');
+  assert.equal(h2.file.data.answers.R2.at, '2026-11-19T15:05:00.000Z');
+  device = T + 10 * 1000;
+  h2.failWrite = new Error('down');
+  await b2.pick('R2', 'b');
+  b2.type('R2', 'and a morning email');
+  await b2.runTimers(2000);
+  assert.equal(b2.status('R2'), 'Not saved yet — will try again');
+  const kept2 = b2.kept();
+  b2.closed = true;
+  assert.ok(kept2.unsaved.R2 < h2.file.data.answers.R2.at, "by the two clocks, the saved answer looks newer than her change");
+  assert.equal(kept2.sync.seen.R2, '2026-11-19T15:05:00.000Z');
+  h2.failWrite = null;
+  device = T + 30 * 1000; h2.clock.t = device + SKEW;
+  const next2 = browser(h2, { ...kept2, clock: () => device });
+  await next2.settle();
+  assert.deepEqual(next2.puts().map((c) => c.body), ['{"choice":"b","note":"and a morning email"}']);
+  assert.deepEqual({ choice: h2.file.data.answers.R2.choice, note: h2.file.data.answers.R2.note }, { choice: 'b', note: 'and a morning email' });
+  assert.equal(next2.status('R2'), 'Saved');
+
+  // The rule that stays: when someone ELSE has saved a newer answer since, the leftover gives way to it.
+  const h3 = harness({ file: { version: 1, answers: { R2: { choice: 'c', note: 'from the laptop', at: '2026-11-19T15:20:00.000Z' } }, history: [] } });
+  const b3 = browser(h3, { ...kept2, clock: () => device });
+  await b3.settle();
+  assert.equal(b3.puts().length, 0);
+  assert.equal(b3.els.get('r-R2-c').checked, true);
+  assert.equal(b3.els.get('n-R2').value, 'from the laptop');
+  assert.equal(h3.file.data.answers.R2.choice, 'c');
+  assert.deepEqual(b3.kept().unsaved, {});
+  assert.deepEqual(b3.kept().drafts.R2, { choice: 'c', note: 'from the laptop' });
+  // …and someone else's OLDER answer does not replace her newer unsaved change
+  const h4 = harness({ file: { version: 1, answers: { R2: { choice: 'c', note: 'from the laptop', at: '2026-11-19T14:00:00.000Z' } }, history: [] } });
+  const b4 = browser(h4, { ...kept2, clock: () => device });
+  await b4.settle();
+  assert.deepEqual(b4.puts().map((c) => c.body), ['{"choice":"b","note":"and a morning email"}']);
+  assert.equal(h4.file.data.answers.R2.choice, 'b');
+
+  // what the device keeps beside the drafts is read defensively: junk there changes nothing
+  const h5 = harness({ file: SAVED_G1 });
+  const b5 = browser(h5, { drafts: { G1: { choice: 'a', note: '' } }, unsaved: { G1: '2026-11-19T12:00:00.000Z' }, sync: { seen: 'x', sent: { G1: 7 }, touched: null } });
+  await b5.settle();
+  assert.deepEqual(b5.puts().map((c) => c.body), ['{"choice":"a","note":""}'], 'an old-format leftover goes whole, by the time rule as before');
+  const b6 = browser(harness({ file: SAVED_G1 }), { sync: ['not', 'an', 'object'] });
+  await b6.settle();
+  assert.equal(b6.els.get('r-G1-c').checked, true);
+  assert.equal(b6.puts().length, 0);
 });

@@ -21,7 +21,16 @@
  *  - The link is unauthenticated, so every write is validated against the ONE question list
  *    (src/share/questionsList.js), bounded (note ≤ 4,000 characters, body ≤ 16 KB) and rate-limited
  *    (per address and overall, in memory). A refusal never repeats what was sent.
- *  - The log never carries the note text or the token: the question id and lengths only.
+ *  - The log never carries the note text or the token: the question id and lengths only. Two lines in
+ *    src/server.js keep to this as well: the old-host redirect logs '/share/…' for any letter case of
+ *    the path, and the global error handler lets a broken percent-escape (…%E2%80, a lone %) fall
+ *    through to the ordinary 404 unlogged — Express's own error text repeats the token.
+ *  - One answer is two halves (choice + note) and a PUT replaces both. So the form sends NOTHING until
+ *    it has read the saved answers, reads them again whenever its tab is shown or focused, holds sends
+ *    while that read is on its way, and fills the half she did not change from what is saved. An unsaved
+ *    change left on the device gives way only to someone else's newer answer — never to this device's
+ *    own earlier save (told by the server's own stamp it last saw, or by what it last started to send;
+ *    the device's clock and the server's are not compared for that).
  *  - Storage is ONE JSON file in the app's OneDrive, written with its eTag (read → merge this one
  *    question → write If-Match; a conflict re-reads and retries). Every read and write goes through
  *    one in-process queue, one at a time. A file that is damaged or has an unknown shape is NEVER

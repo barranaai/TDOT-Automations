@@ -74,8 +74,9 @@ app.use((req, res, next) => {
   const host = String(req.headers.host || '');
   if (!host || host === CANONICAL_HOST) return next();
   const proto = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim() || 'https';
-  // A private no-sign-in link carries its token in the path: never write it to the log.
-  console.log(`[Canonical] ${host}${req.path.startsWith('/share/') ? '/share/…' : req.originalUrl} → ${CANONICAL_HOST}`);
+  // A private no-sign-in link carries its token in the path: never write it to the log. Routing here ignores
+  // letter case (/Share/… is served too), so this test must as well.
+  console.log(`[Canonical] ${host}${/^\/share\//i.test(req.path) ? '/share/…' : req.originalUrl} → ${CANONICAL_HOST}`);
   return res.redirect(302, `${proto}://${CANONICAL_HOST}${req.originalUrl}`);
 });
 
@@ -2380,7 +2381,11 @@ app.post('/api/consultation/:leadId/retainer-agreement-signed', async (req, res)
 });
 
 // ─── Global error handler — catch unhandled route errors gracefully ──────────
-app.use((err, _req, res, _next) => {
+app.use((err, _req, res, next) => {
+  // A broken percent-escape in the address (…%E2%80, a lone %): Express could not decode a route's path piece
+  // and its message repeats that piece — on a private no-sign-in link, the token. So it is neither logged nor
+  // answered 500: it falls through to the ordinary 404, as the same address gets where no route reads a piece.
+  if (err instanceof URIError && err.status === 400) return next();
   console.error('[Server] Unhandled error:', err.stack || err.message || err);
   if (!res.headersSent) {
     res.status(500).json({ error: 'Internal server error' });

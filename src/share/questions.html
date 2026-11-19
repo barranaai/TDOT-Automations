@@ -221,6 +221,7 @@ button:disabled{opacity:.5;cursor:default}
   var TOTAL = QUESTIONS.length;
   var DRAFT_KEY = "gauri-q-drafts-v1";
   var UNSAVED_KEY = "gauri-q-unsaved-v1";
+  var SYNC_KEY = "gauri-q-sync-v1";
   // The answers live on the server, under this page's own address (same origin).
   var API = location.pathname.replace(/\/+$/, "") + "/answers";
   var canSave = typeof window.fetch === "function";
@@ -228,8 +229,19 @@ button:disabled{opacity:.5;cursor:default}
   var remote = {};       // qid -> {choice, note, at} as the server holds it
   var dirty = {};        // qid -> time of a local change that is not saved yet (kept across reloads)
   var fresh = {};        // qid -> true when that change was made since this page was opened
+  var touched = {};      // qid -> which half of the answer that unsaved change is: {choice:1}, {note:1} or both (kept across reloads)
+  var seen = {};         // qid -> the server's own time stamp of the answer this device last had from it (kept across reloads)
+  var sent = {};         // qid -> {choice, note} of the last save this device started for an unsaved change (kept across reloads)
+  var refused = {};      // qid -> the unsaved change the server refused (400): not sent again until she changes it
   var saving = {};       // qid -> promise chain
   var noteTimers = {}, retryTimers = {}, tries = {};
+  // A save replaces the WHOLE answer (choice and note), so nothing is sent until the saved answers have been read:
+  // `ready` is true only after a read has been applied, and false again while a re-read is under way.
+  var ready = false;
+  var loaded = false;    // a read has worked at least once
+  var readAt = 0;        // when the last read was applied (this device's clock, only ever compared with itself)
+  // A window left open and never hidden gets no "shown again" event: before a save, a read older than this is done again.
+  var STALE_MS = 60000;
   var leaving = false;   // true while the page is being left: the last save may outlive it
   // A note is sent after a pause in typing, or at once when the box is left. The pause is long enough
   // that ordinary typing stays far below the server's limit on writes.
@@ -264,12 +276,40 @@ button:disabled{opacity:.5;cursor:default}
     QUESTIONS.forEach(function (q) { if (state[q.id] && typeof raw[q.id] === "string" && raw[q.id]) out[q.id] = raw[q.id]; });
     return out;
   }
-  function saveDrafts() {
-    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(state)); localStorage.setItem(UNSAVED_KEY, JSON.stringify(dirty)); } catch (_) {}
+  // What this device knows about each answer's last trip to the server. `sent` and `touched` belong to an unsaved change.
+  function loadSync() {
+    var raw = loadStored(SYNC_KEY), s = raw.seen || {}, p = raw.sent || {}, t = raw.touched || {};
+    QUESTIONS.forEach(function (q) {
+      var id = q.id;
+      if (typeof s[id] === "string" && s[id]) seen[id] = s[id];
+      if (!dirty[id]) return;
+      if (p[id] && typeof p[id] === "object" && typeof p[id].choice === "string" && typeof p[id].note === "string") sent[id] = { choice: p[id].choice, note: p[id].note };
+      if (t[id] && typeof t[id] === "object" && (t[id].choice || t[id].note)) touched[id] = { choice: t[id].choice ? 1 : 0, note: t[id].note ? 1 : 0 };
+    });
   }
-  function markDirty(qid) { dirty[qid] = new Date().toISOString(); fresh[qid] = true; }
+  function saveDrafts() {
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(state));
+      localStorage.setItem(UNSAVED_KEY, JSON.stringify(dirty));
+      localStorage.setItem(SYNC_KEY, JSON.stringify({ seen: seen, sent: sent, touched: touched }));
+    } catch (_) {}
+  }
+  // `part` is the half she changed ("choice" or "note"); without it the whole answer is this device's.
+  function markDirty(qid, part) {
+    dirty[qid] = new Date().toISOString(); fresh[qid] = true;
+    var t = touched[qid] || (touched[qid] = {});
+    if (part) t[part] = 1; else { t.choice = 1; t.note = 1; }
+  }
   // A save is done only for the change it carried: a newer change keeps its own mark.
-  function clean(qid, stamp) { if (dirty[qid] === stamp) { delete dirty[qid]; delete fresh[qid]; saveDrafts(); } }
+  function clean(qid, stamp) {
+    if (dirty[qid] !== stamp) return;
+    delete dirty[qid]; delete fresh[qid]; delete touched[qid]; delete sent[qid]; delete refused[qid];
+    saveDrafts();
+  }
+  // A note as the server stores it (line ends, tabs, control characters, trimmed), to tell this device's own save.
+  function tidy(text) {
+    return String(text || "").replace(/\r\n?/g, "\n").replace(/\t/g, " ").replace(/[\u0000-\u0009\u000B-\u001F\u007F-\u009F]/g, "").trim();
+  }
 
   function optLabel(q, key) {
     if (key === "other") return "Something else (see note)";
@@ -380,14 +420,14 @@ button:disabled{opacity:.5;cursor:default}
 
   function onChoice(qid, choice) {
     state[qid] = { choice: choice, note: (state[qid] && state[qid].note) || "" };
-    markDirty(qid);
+    markDirty(qid, "choice");
     saveDrafts(); paint(qid); updateProgress();
     persist(qid);
   }
 
   function onNote(qid, text) {
     state[qid] = { choice: (state[qid] && state[qid].choice) || "", note: text };
-    markDirty(qid);
+    markDirty(qid, "note");
     saveDrafts();
     clearTimeout(noteTimers[qid]);
     setSaved(qid, canSave ? "Typing…" : "Saved on this device");
@@ -413,29 +453,40 @@ button:disabled{opacity:.5;cursor:default}
     setSaved(qid, "Not saved yet — will try again", "err");
     var ms = waitMs || Math.min(60000, 1500 * Math.pow(2, tries[qid] - 1)) + Math.random() * 1500;
     clearTimeout(retryTimers[qid]);
-    retryTimers[qid] = setTimeout(function () { if (dirty[qid]) persist(qid); }, ms);
+    retryTimers[qid] = setTimeout(function () { retryTimers[qid] = 0; if (dirty[qid]) persist(qid); }, ms);
   }
 
   function persist(qid) {
     if (!canSave) { setSaved(qid, "Saved on this device only"); return; }
-    clearTimeout(retryTimers[qid]);
+    // Not read yet (or being read again): held on this device. The read sends every unsaved change when it is done,
+    // after filling in the half of the answer she did not change from what is saved.
+    // (Not while the page is being left: that last save must go at once, and the read would not outlive the page.)
+    if (ready && !leaving && Date.now() - readAt > STALE_MS) refresh();
+    if (!ready) { setSaved(qid, "Saved on this device"); return; }
+    clearTimeout(retryTimers[qid]); retryTimers[qid] = 0;
     setSaved(qid, "Saving…");
     var prev = saving[qid] || Promise.resolve();
     saving[qid] = prev.then(function () {
+      if (!ready) { if (dirty[qid]) setSaved(qid, "Saved on this device"); return; }   // a re-read began while this waited its turn
       var s = state[qid] || { choice: "", note: "" };
       var body = { choice: s.choice || "", note: String(s.note || "").slice(0, 4000) };
       var stamp = dirty[qid];
       var r = remote[qid];
       if (r && r.choice === body.choice && (r.note || "") === body.note) { clean(qid, stamp); if (!dirty[qid]) setSaved(qid, "Saved"); return; }
+      if (stamp) { sent[qid] = { choice: body.choice, note: body.note }; saveDrafts(); }
       return fetch(API + "/" + encodeURIComponent(qid), {
         method: "PUT", cache: "no-store", credentials: "omit", keepalive: leaving,
         headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
       }).then(function (res) {
         if (res.ok) {
           return res.json().then(function (j) { return j || {}; }, function () { return {}; }).then(function (j) {
-            remote[qid] = { choice: body.choice, note: body.note, at: j.at || new Date().toISOString() };
+            // `at` is the server's own stamp (never this device's clock): it is how a later read is told from an earlier one.
+            var at = typeof j.at === "string" ? j.at : "";
+            remote[qid] = { choice: body.choice, note: body.note, at: at };
+            if (at) seen[qid] = at;
             tries[qid] = 0;
             clean(qid, stamp);
+            saveDrafts();
             if (!dirty[qid]) setSaved(qid, "Saved");
           });
         }
@@ -444,18 +495,36 @@ button:disabled{opacity:.5;cursor:default}
           return retryLater(qid, wait > 0 ? Math.min(600, Math.max(5, wait)) * 1000 : 0);
         }
         if (res.status === 408 || res.status >= 500) return retryLater(qid);
+        if (stamp) refused[qid] = stamp;
         setSaved(qid, "Not saved — your answer is kept on this device", "err");
       }, function () { retryLater(qid); });
     });
   }
 
   function applyRemote(qid, body) {
-    remote[qid] = { choice: typeof body.choice === "string" ? body.choice : "", note: typeof body.note === "string" ? body.note : "", at: typeof body.at === "string" ? body.at : "" };
-    var r = remote[qid];
+    var r = { choice: typeof body.choice === "string" ? body.choice : "", note: typeof body.note === "string" ? body.note : "", at: typeof body.at === "string" ? body.at : "" };
+    // A reply that was overtaken: this page has already had a later answer from the server (both are the server's stamps).
+    var had = remote[qid];
+    if (had && had.at && r.at && r.at < had.at) return;
+    remote[qid] = r;
+    // The saved answer is this device's own work when it is the one this device last had from the server (nobody has
+    // saved since), or when it is what this device last started to send (that save landed; its reply never came back).
+    var p = sent[qid];
+    var own = (!!r.at && r.at === seen[qid]) || (!!p && r.choice === p.choice && r.note === tidy(p.note));
+    if (r.at) seen[qid] = r.at;
     if (dirty[qid]) {
-      // A local change is not saved yet: keep it, unless it is a leftover from an earlier visit and the saved answer is newer.
-      if (fresh[qid] || !(r.at && r.at > dirty[qid])) return;
-      delete dirty[qid];
+      // A local change is not saved yet: keep it — unless it is a leftover from an earlier visit AND the saved answer is
+      // someone else's newer one. The clocks of this device and the server are only compared for that last case: the
+      // server stamps a save when it is written, which can be after a later change was made here.
+      if (fresh[qid] || own || !(r.at && r.at > dirty[qid])) {
+        // Kept. A save replaces the whole answer, so the half she did not change is taken from what is saved.
+        var t = touched[qid] || { choice: 1, note: 1 }, s = state[qid] || (state[qid] = { choice: "", note: "" });
+        if (!t.choice) s.choice = r.choice;
+        if (!t.note) s.note = r.note;
+        paint(qid);
+        return;
+      }
+      delete dirty[qid]; delete touched[qid]; delete sent[qid]; delete refused[qid];
     }
     state[qid] = { choice: r.choice, note: r.note };
     paint(qid);
@@ -489,6 +558,7 @@ button:disabled{opacity:.5;cursor:default}
   // Start: render from this device's drafts at once, then load the saved answers from the server.
   state = loadDrafts();
   dirty = loadUnsaved();
+  loadSync();
   render();
   QUESTIONS.forEach(function (q) { paint(q.id); if (state[q.id] && (state[q.id].choice || state[q.id].note)) setSaved(q.id, "Saved on this device"); });
   document.getElementById("copyBtn").addEventListener("click", copyAnswers);
@@ -502,26 +572,36 @@ button:disabled{opacity:.5;cursor:default}
 
   // A note still waiting for its pause is sent when the page is hidden or left.
   function flushAll() { leaving = true; QUESTIONS.forEach(function (q) { flushNote(q.id); }); }
-  window.addEventListener("pageshow", function () { leaving = false; });
+  // The answers may have been changed from another tab or device while this page sat open: read them again whenever
+  // the page is shown or used again (and before a save, when the last read is old). Sends wait for that read (see
+  // `ready`), so a change made in the moment after coming back cannot overwrite the other half of a newer answer.
+  function refresh() { if (ready) { ready = false; load(0); } }
+  window.addEventListener("pageshow", function (e) { leaving = false; if (e && e.persisted) refresh(); });
   window.addEventListener("pagehide", flushAll);
+  window.addEventListener("focus", refresh);
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "hidden") flushAll(); else leaving = false;
+    if (document.visibilityState === "hidden") flushAll(); else { leaving = false; refresh(); }
   });
 
   function load(attempt) {
-    if (!attempt) conn.textContent = "Loading saved answers…";
+    if (!loaded && !attempt) conn.textContent = "Loading saved answers…";
     fetch(API, { cache: "no-store", credentials: "omit", headers: { "Accept": "application/json" } }).then(function (res) {
       if (!res.ok) throw new Error("load");
       return res.json();
     }).then(function (j) {
       var answers = (j && typeof j.answers === "object" && j.answers) || {};
+      loaded = true; ready = true; readAt = Date.now();
       conn.textContent = "Answers save automatically";
       showNotice("");
-      QUESTIONS.forEach(function (q) { if (answers[q.id] && typeof answers[q.id] === "object") applyRemote(q.id, answers[q.id]); });
+      QUESTIONS.forEach(function (q) {
+        if (answers[q.id] && typeof answers[q.id] === "object") applyRemote(q.id, answers[q.id]);
+        else delete remote[q.id];      // not saved there (any more): what an earlier read said no longer counts
+      });
       // Send what this device has and the server does not: changes not saved yet, and answers typed here earlier.
+      // A change already waiting for its own retry is left to it, and one the server refused is not sent again as it is.
       QUESTIONS.forEach(function (q) {
         var s = state[q.id], r = remote[q.id];
-        if (dirty[q.id]) { persist(q.id); return; }
+        if (dirty[q.id]) { if (!retryTimers[q.id] && refused[q.id] !== dirty[q.id]) persist(q.id); return; }
         if (s && (s.choice || s.note) && !r) { markDirty(q.id); persist(q.id); }
       });
       saveDrafts(); updateProgress();
