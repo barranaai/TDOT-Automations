@@ -190,6 +190,28 @@ test('tab off: CM_VIEWS, CM_TABCOLS, CM_COLNAMES and the tab values are literal 
   assert.deepEqual(JSON.parse(VIEWS_TODAY), cmv.pageViews(), 'the literal copy is still what the Monday views module gives');
 });
 
+test('the older Client Master page tests pin the page WITHOUT the tab whatever the environment says: run with TODO_TAB=on exported they pass as they are — each clears the switch for itself, after the require that reads .env', () => {
+  const { spawnSync } = require('node:child_process');
+  const path = require('node:path');
+  const CLEAR = 'delete process.env.TODO_TAB;';
+  /* file → the require after which the switch must be cleared. For the second file that is the one that loads .env (config/monday.js,
+     through dashboardService): cleared any earlier, a TODO_TAB line in a local .env would bring the switch straight back. */
+  const files = { 'clientMasterColumnChooser.test.js': "require('../src/routes/adminDashboard');", 'clientMasterColumns.test.js': "require('../src/services/dashboardService');" };
+  const env = { ...process.env, TODO_TAB: 'on' };
+  delete env.NODE_TEST_CONTEXT;   // a plain run of the file: it reports for itself
+  for (const [file, after] of Object.entries(files)) {
+    const src = fs.readFileSync(path.join(__dirname, file), 'utf8');
+    assert.equal(src.split(CLEAR).length - 1, 1, file + ': the switch is cleared, once');
+    assert.ok(src.indexOf(after) >= 0 && src.indexOf(after) < src.indexOf(CLEAR) && src.indexOf(CLEAR) < src.search(/^test\(/m), file + ': after its requires, before its first test');
+    assert.ok(!/TODO_TAB\s*=|TODO_TAB['"]?\s*[:\]]/.test(src), file + ': it never sets the switch — the pins with an explicit switch are in this file and test/todoList.test.js');
+    const run = spawnSync(process.execPath, ['--test-reporter=tap', path.join(__dirname, file)], { cwd: path.resolve(__dirname, '..'), env, encoding: 'utf8', timeout: 120000 });
+    const failed = String(run.stdout || '').split('\n').filter((l) => /^not ok /.test(l)).join('\n');
+    assert.equal(failed, '', file + ' with TODO_TAB=on in the environment');
+    assert.equal(run.status, 0, file + ' with TODO_TAB=on in the environment: ' + String(run.stderr || '').slice(-400));
+    assert.ok(Number((String(run.stdout).match(/^# pass (\d+)$/m) || [])[1]) >= 20 && /^# fail 0$/m.test(run.stdout), file + ': its tests ran, and all passed');
+  }
+});
+
 /* ═══ a page WITH the tab ═══ */
 
 let PAGE_ON = null;
@@ -853,6 +875,64 @@ test('"More about this list": a native details with the five lines; it stays ope
   assert.equal(p.doc.activeElement.inHead, p.el('cm-todo-title').inHead, 'the new one');
 });
 
+test('a redraw the person did not cause leaves the keyboard focus on the SAME picker button, pressed or not — the quiet re-read, an Assign answer landing late; only when that button is no longer drawn does the pressed one take it', async () => {
+  const p = await openPage({ search: '?view=todo' });
+  p.answer(CASES(), { todo: I });
+  assert.deepEqual(p.pressed(), ['me']);
+  /* The keyboard focus is put on a picker button WITHOUT pressing it (Tab along the picker). */
+  const tabTo = (page, who) => { const b = page.doc.querySelectorAll('#cm-todo-pick button').find((x) => x.attrs['data-who'] === who); assert.ok(b, 'a picker button for ' + who); page.doc.activeElement = b; return b; };
+  const onNew = (page) => page.doc.activeElement.inHead === page.el('cm-todo-title').inHead;
+  // on "Reviewer One" (not pressed); before Enter the quiet re-read brings new rows
+  const was = tabTo(p, 'p:211');
+  p.answer(CASES(), { todo: I });
+  assert.equal(p.focused[p.focused.length - 1], 'button p:211', 'the same button — not the pressed "My list"');
+  assert.equal(p.doc.activeElement.attrs['data-who'], 'p:211');
+  assert.ok(p.doc.activeElement !== was && onNew(p), '… the one of the NEW drawing');
+  assert.deepEqual([p.pressed(), p.title(), p.kept.get(KEY)], [['me'], 'To-do · Officer One', undefined], 'the list on screen is not changed by where the focus is');
+  // Enter now opens the list they were on, not their own again
+  p.ctx.cmTodoPick(p.doc.activeElement);
+  assert.deepEqual([p.kept.get(KEY), p.pressed(), p.title()], ['p:211', ['p:211'], 'To-do · Reviewer One']);
+  assert.equal(p.focused[p.focused.length - 1], 'button p:211');
+  // the pressed button keeps the focus through a redraw, as before
+  p.answer(CASES(), { todo: I });
+  assert.equal(p.focused[p.focused.length - 1], 'button p:211');
+  assert.ok(onNew(p));
+  // an Assign answer that lands late (its pop-up was closed after the long wait) redraws the box too: the focus stays where it is —
+  // when the case was not on the list on screen …
+  p.pick('me');
+  tabTo(p, 'nobody');
+  p.ctx.cmAsgApply('4', { names: ['Officer Three'], personIds: ['113'], teamIds: [] });
+  p.later(0);
+  assert.equal(p.status(), '', 'case 4 was not on my list: no line');
+  assert.equal(p.focused[p.focused.length - 1], 'button nobody');
+  assert.ok(p.doc.activeElement.attrs['data-who'] === 'nobody' && onNew(p));
+  assert.deepEqual(p.pressed(), ['me']);
+  // … and when it was: the status line says where it went, and the person is not moved to the pressed button
+  tabTo(p, 'p:112');
+  p.ctx.cmAsgApply('2', { names: ['Officer Two'], personIds: ['112'], teamIds: [] });
+  p.later(0);
+  assert.equal(p.status(), "2026-EE-002 is now on Officer Two's list.");
+  assert.equal(p.focused[p.focused.length - 1], 'button p:112');
+  assert.ok(p.doc.activeElement.attrs['data-who'] === 'p:112' && onNew(p));
+  // the button the person was on is no longer drawn (Reviewer One has no open case in the new answer): the pressed one takes the focus
+  tabTo(p, 'p:211');
+  p.answer(CASES().map((c) => (c.id === '1' ? mk(1, { officers: [ONE], deadlineType: 'Deadline', actualDeadline: '2026-11-10' }) : c.id === '8' ? mk(8, { stageIdx: 2, caseStage: 'Stuck' }) : c)), { todo: I });
+  assert.ok(!p.picker().some((b) => b[0] === 'p:211'), 'Reviewer One is not offered any more');
+  assert.equal(p.focused[p.focused.length - 1], 'button me');
+  assert.ok(p.doc.activeElement.attrs['data-who'] === 'me' && onNew(p));
+  assert.deepEqual(p.pressed(), ['me']);
+  // a phone: the buttons are hidden, the select keeps the focus through a redraw as before
+  const ph = await openPage({ search: '?view=todo', phone: true });
+  ph.answer(CASES(), { todo: I });
+  ph.doc.activeElement = ph.el('cm-todo-sel');
+  ph.answer(CASES(), { todo: I });
+  assert.equal(ph.focused[ph.focused.length - 1], 'cm-todo-sel');
+  // the page function itself: the second argument is only ever the redraw's own (choosing a list and an Assign go to the pressed one)
+  const src = todoPage.TODO_PAGE_JS;
+  assert.equal((src.match(/cmTodoFocus\(/g) || []).length, 4, 'its definition and three calls');
+  assert.ok(src.includes("else if (keep) cmTodoFocus(keep, keep === 'button' ? at : null);") && src.includes("cmTodoFocus(isSel ? 'select' : 'button');") && src.includes('cmTodoFocus();'));
+});
+
 test('the empty states, word for word — and never "No cases in the … view right now."', async () => {
   // nothing chosen: no Monday sign-in, so no "My list" to open on
   const key = await openPage({ search: '?view=todo' });
@@ -1130,6 +1210,44 @@ test('the look and the print: the picker has a class of its own on the pill look
   // a page without the tab has none of this look
   const off = await withEnv({ TODO_TAB: undefined }, () => renderRoute('/'));
   assert.ok(!off.includes('cm-todo') && !off.includes('.cm-with'));
+});
+
+test('the status line is shown where the person is looking: while it has words it is fixed to the foot of the window — and the page\'s fade-in leaves no transform on #content, without which "fixed" is measured from the page', async () => {
+  const html = await pageOn(), css = todoPage.TODO_CSS;
+  /* Node cannot do layout, so the PAIR is pinned (measured in a browser: with both rules the line is inside the window after an Assign
+     on row 31 of 60 and nothing scrolls; with the second rule alone it sits at the foot of the page, out of view).
+     THE SECOND RULE IS USELESS WITHOUT THE FIRST: a fixed box is placed against the window only when no box around it has a transform,
+     and the page's fade-in (fill "both") leaves "transform: translateY(0)" on #content for good. */
+  const FADE = '.wrap > #content { animation-fill-mode:backwards; }';
+  const FOOT = '.cm-todo-status:not(:empty) { position:fixed; left:16px; right:16px; bottom:16px; z-index:310; width:fit-content; margin:0 auto; box-shadow:var(--shadow-md); pointer-events:none; }';
+  assert.ok(css.includes(FADE), 'the fade-in still plays but leaves nothing behind');
+  assert.ok(css.includes(FOOT), 'the line at the foot of the window: centred, never wider than the window less 16px each side, above the top bar (300), and it takes no click from the row under it');
+  assert.ok(css.indexOf('.cm-todo-status:empty { display:none; }') < css.indexOf(FADE) && css.indexOf(FADE) < css.indexOf(FOOT));
+  assert.ok(html.includes(FADE) && html.includes(FOOT), 'both are on the page that has the tab');
+  // what the first rule answers, on this very page: the fade-in keeps its last frame, a transform, and #content is the box .wrap holds
+  assert.ok(html.includes('#content { display: none; animation: fadeUp .45s ease both; }'), 'the page\'s own rule (one id: the pair\'s first rule, a class and an id, wins wherever it stands)');
+  assert.ok(/@keyframes fadeUp \{\s*from \{ opacity: 0; transform: translateY\(16px\); \}\s*to\s+\{ opacity: 1; transform: translateY\(0\); \}\s*\}/.test(html));
+  const above = html.slice(html.indexOf('<main class="wrap">'), html.indexOf('<div id="content">'));
+  assert.ok(html.indexOf('<main class="wrap">') > 0 && above.length > 0);
+  for (const tag of ['div', 'section', 'main']) assert.equal((above.match(new RegExp('<' + tag + '\\b', 'g')) || []).length - (tag === 'main' ? 1 : 0), (above.match(new RegExp('</' + tag + '>', 'g')) || []).length, '#content is a child of .wrap: every ' + tag + ' opened before it is closed');
+  // the line itself is where it was — in the box above the table, inside #content — and no other box around it has a transform
+  const inContent = html.slice(html.indexOf('<div id="content">'), html.indexOf('</div><!-- /content -->'));
+  assert.ok(inContent.includes('<div id="cm-head" class="cm-head"></div>'));
+  assert.ok(todoPage.TODO_PAGE_JS.includes('<div class="cm-todo-status" id="cm-todo-status" role="status">'), 'still written into the box by the page, a role=status line');
+  const styles = [...html.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join('\n');
+  for (const sel of ['.wrap', '.cm-head', 'body', 'html']) for (const m of styles.matchAll(new RegExp('(^|[},\\s])' + sel.replace('.', '\\.') + '\\s*\\{([^}]*)\\}', 'g'))) assert.ok(!/(^|[;\s])(transform|filter|perspective|contain|will-change|backdrop-filter)\s*:/.test(m[2]), sel + ' { ' + m[2].trim() + ' }');
+  // nothing else of the line changed: empty = not shown; never on paper; no script places it (the words are set as before)
+  assert.ok(css.includes('.cm-todo-status:empty { display:none; }'));
+  assert.ok(css.includes('@media print { .cm-todo-pick, .cm-todo-phone, .cm-todo-in, .cm-todo-status, .cm-todo-more, .cm-todo-ended { display:none !important; } }'));
+  assert.ok(!/scrollIntoView|scrollTo\(/.test(todoPage.TODO_PAGE_JS), 'CSS only: the tab\'s code scrolls nothing');
+  assert.ok(todoPage.TODO_PAGE_JS.includes('to.focus({ preventScroll: true })'), 'the focus rule is as it was');
+  // a page without the tab, and the Summary page whatever the switch says, have neither rule
+  const off = await withEnv({ TODO_TAB: undefined }, () => renderRoute('/'));
+  const summary = await withEnv({ TODO_TAB: 'on' }, () => renderRoute('/summary'));
+  for (const other of [off, summary]) {
+    assert.ok(!other.includes('animation-fill-mode') && !other.includes('cm-todo-status'));
+    assert.ok(other.includes('#content { display: none; animation: fadeUp .45s ease both; }'), 'their fade-in is untouched');
+  }
 });
 
 test('every name from Monday is text, never markup: the picker, the select, the title, the headings, the "With" pill, the spoken names, the status line', async () => {

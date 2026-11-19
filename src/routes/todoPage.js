@@ -153,10 +153,12 @@ function cmTodoHead(el, v, rows, st, groups, inView) {
     el.innerHTML = '<div class="cm-line cm-todo-ended" id="cm-todo-ended">Your Monday sign-in has ended. <a href="/q/auth/monday?returnTo=' + escHtml(encodeURIComponent(here)) + '">Sign in with Monday again</a> to see the to-do lists.</div>';
     return;
   }
-  // a redraw must not take the focus off the picker or "More about this list" (new data can arrive while someone is on them)
-  var act = document.activeElement, keep = '';
+  // a redraw must not take the focus off the picker or "More about this list" (new data can arrive while someone is on them):
+  // a picker button is remembered by its own data-who, so the focus comes back to the SAME button — which need not be the pressed one
+  var act = document.activeElement, keep = '', at = null;
   if (act && act.getAttribute && el.contains && el.contains(act) && act !== el) {
-    keep = act.id === 'cm-todo-sel' ? 'select' : act.getAttribute('data-who') !== null ? 'button' : act.id === 'cm-todo-more-s' ? 'more' : '';
+    at = act.getAttribute('data-who');
+    keep = act.id === 'cm-todo-sel' ? 'select' : at !== null ? 'button' : act.id === 'cm-todo-more-s' ? 'more' : '';
   }
   var L = CM_TODO_L || { title: v.label };
   var h = '<div class="cm-top"><span class="cm-title" id="cm-todo-title">' + escHtml(L.title) + '</span>' +
@@ -203,16 +205,23 @@ function cmTodoHead(el, v, rows, st, groups, inView) {
     '</ul></details>';
   el.innerHTML = h;
   if (keep === 'more') { var s = document.getElementById('cm-todo-more-s'); if (s) { try { s.focus({ preventScroll: true }); } catch (e) {} } }
-  else if (keep) cmTodoFocus(keep);
+  else if (keep) cmTodoFocus(keep, keep === 'button' ? at : null);
 }
 function cmTodoMore(open) { CM_TODO_MORE = open === true; }
 
 /* Focus on the control that shows the chosen list: the pressed button (found by its data-who), or the select — on a phone the
-   buttons are hidden and only the select can take it. how: 'select' | 'button' | nothing (whichever is on show). */
-function cmTodoFocus(how) {
-  var C = cmTodoNow(), sel = document.getElementById('cm-todo-sel'), b = null;
+   buttons are hidden and only the select can take it. how: 'select' | 'button' | nothing (whichever is on show).
+   same (only the box's own redraw gives it): the data-who of the button the person was on — that button gets the focus back while
+   it is still drawn (a redraw they did not cause must not move them to the pressed one); when it is gone, the pressed one. */
+function cmTodoFocus(how, same) {
+  var C = cmTodoNow(), sel = document.getElementById('cm-todo-sel'), b = null, was = null;
   var list = document.querySelectorAll('#cm-todo-pick button');
-  for (var i = 0; i < list.length; i++) if (list[i].getAttribute('data-who') === C.who) b = list[i];
+  for (var i = 0; i < list.length; i++) {
+    var w = list[i].getAttribute('data-who');
+    if (w === C.who) b = list[i];
+    if (typeof same === 'string' && w === same) was = list[i];
+  }
+  if (was) b = was;
   var to = how === 'select' ? (sel || b) : (b && b.offsetParent !== null ? b : (sel || b));
   if (!to) return;
   try { to.focus({ preventScroll: true }); } catch (e) { try { to.focus(); } catch (e2) {} }
@@ -314,8 +323,10 @@ const TODO_BOOT_JS = 'cmTodoBoot();';
 
 /* The tab's own look. The picker sits on the stage strip's pill look (cm-st) with a class of its own: no "go to" arrow, and the
    chosen list is filled navy with white text and a tick. At 760px and below the buttons give way to ONE native select with a
-   visible label (16px, so a phone does not zoom in). The picker, the sign-in line, the status line and "More about this list"
-   are not printed: the paper carries the title (it says whose list), the lines and the table. */
+   visible label (16px, so a phone does not zoom in). The status line stays where it is in the box above the table (role=status) but
+   is SHOWN at the foot of the window while it has words: after an Assign far down a long list the box is out of view. The picker,
+   the sign-in line, the status line and "More about this list" are not printed: the paper carries the title (it says whose list),
+   the lines and the table. */
 const TODO_CSS = [
   '    /* ── The To-do tab (stage 1, read-only; the switch TODO_TAB) ── */',
   "    button.cm-todo-b::after { content:none; }   /* a choice of list, not a count that goes to a group: no arrow */",
@@ -331,6 +342,13 @@ const TODO_CSS = [
   '    .cm-todo-in a, .cm-todo-ended a { color:var(--st-blue-fg); font-weight:700; }',
   '    .cm-todo-status { font-size:12.5px; font-weight:700; color:var(--st-green-fg); background:var(--st-green-bg); border:1px solid var(--st-green-solid); border-radius:8px; padding:6px 10px; }',
   '    .cm-todo-status:empty { display:none; }',
+  '    /* The line is written in the box above the table, which is far out of view once the list is scrolled (the page scrolls, not the',
+  '       table): while it has words it is shown at the foot of the window, where the person is looking. THE TWO RULES ARE A PAIR. A fixed',
+  '       box is placed against the window only when no box around it keeps a transform, and the fade-in of the page leaves one on #content',
+  '       when it ends (its fill is "both"). With the first rule the fade-in still plays and leaves nothing behind; without it the second',
+  '       rule puts the line at the foot of the PAGE, out of view again. The line takes no clicks from the row under it. */',
+  '    .wrap > #content { animation-fill-mode:backwards; }',
+  '    .cm-todo-status:not(:empty) { position:fixed; left:16px; right:16px; bottom:16px; z-index:310; width:fit-content; margin:0 auto; box-shadow:var(--shadow-md); pointer-events:none; }',
   '    .cm-todo-more { font-size:12.5px; color:#334155; }',
   '    .cm-todo-more summary { cursor:pointer; font-weight:700; color:var(--navy); width:fit-content; padding:2px 4px; margin-left:-4px; border-radius:5px; }',
   '    .cm-todo-more summary:focus-visible { outline:2px solid var(--navy); outline-offset:2px; }',

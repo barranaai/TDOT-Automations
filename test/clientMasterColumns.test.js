@@ -19,6 +19,7 @@ const mondayApi = require('../src/services/mondayApi');
 const cmv       = require('../src/services/clientMasterViews');
 const S         = require('../src/routes/listSpecs');
 const { listCore, listTableUi } = require('../src/routes/listFilters');
+delete process.env.TODO_TAB;   // the switch is read from the environment: these tests pin the page WITHOUT the To-do tab (tab-on and tab-off pins with an explicit switch are in test/todoPage.test.js and test/todoList.test.js)
 
 const VIEWS = cmv.pageViews();
 const V = Object.fromEntries(VIEWS.map((v) => [v.key, v]));
