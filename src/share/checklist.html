@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<title>TDOT Automation Checklist</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one column of three meeting sections; each item is a row with a status pill; a summary strip on top. */
+:root{
+  --bg:#f7f5f0; --fg:#1f2a37; --muted:#5b6673; --rule:#ddd8cc; --panel:#ffffff;
+  --accent:#0b3b5c;
+  --done-bg:#dff4e4; --done-fg:#0f5b2b; --done-rule:#8fd1a3;
+  --prog-bg:#fff1d6; --prog-fg:#7a4b00; --prog-rule:#f0c56a;
+  --pend-bg:#eef0f3; --pend-fg:#3e4a58; --pend-rule:#c3cad3;
+  --team-bg:#e9eef8; --team-fg:#2a3f6f; --team-rule:#a9b8e0;
+  --display:"Source Serif 4",Georgia,serif; --body:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#161a20; --fg:#e8e6e1; --muted:#a3acb8; --rule:#2d343d; --panel:#1e242c; --accent:#8fc3e8;
+  --done-bg:#15321f; --done-fg:#a9e5bb; --done-rule:#2e6b43;
+  --prog-bg:#3a2a0b; --prog-fg:#f3cf86; --prog-rule:#7a5a1f;
+  --pend-bg:#242b34; --pend-fg:#c7cfd9; --pend-rule:#3b4552;
+  --team-bg:#1f2a44; --team-fg:#bcd0f5; --team-rule:#3a4f80; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#161a20; --fg:#e8e6e1; --muted:#a3acb8; --rule:#2d343d; --panel:#1e242c; --accent:#8fc3e8;
+  --done-bg:#15321f; --done-fg:#a9e5bb; --done-rule:#2e6b43;
+  --prog-bg:#3a2a0b; --prog-fg:#f3cf86; --prog-rule:#7a5a1f;
+  --pend-bg:#242b34; --pend-fg:#c7cfd9; --pend-rule:#3b4552;
+  --team-bg:#1f2a44; --team-fg:#bcd0f5; --team-rule:#3a4f80; color-scheme:dark }
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 56px}
+.wrap{max-width:980px;margin:0 auto}
+h1{font-family:var(--display);font-size:30px;margin:0 0 4px;text-wrap:balance}
+.sub{color:var(--muted);margin:0 0 20px}
+.totals{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 28px}
+.tot{border:1px solid var(--rule);border-radius:8px;padding:8px 14px;background:var(--panel);min-width:0}
+.tot b{font-size:20px;font-variant-numeric:tabular-nums;display:block}
+.tot span{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+h2{font-family:var(--display);font-size:21px;margin:30px 0 4px;text-wrap:balance}
+.meta{color:var(--muted);font-size:13px;margin:0 0 12px}
+h3{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:18px 0 6px;font-weight:600}
+ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+li{display:grid;grid-template-columns:118px 1fr;gap:12px;align-items:start;border:1px solid var(--rule);border-left-width:5px;border-radius:6px;padding:9px 12px;background:var(--panel)}
+li.done{background:var(--done-bg);border-color:var(--done-rule);color:var(--done-fg)}
+li.prog{border-left-color:var(--prog-rule)}
+li.pend{border-left-color:var(--pend-rule)}
+li.team{border-left-color:var(--team-rule)}
+.st{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;border-radius:999px;padding:3px 9px;text-align:center;white-space:nowrap;margin-top:2px}
+.done .st{background:var(--done-fg);color:var(--done-bg)}
+.prog .st{background:var(--prog-bg);color:var(--prog-fg);border:1px solid var(--prog-rule)}
+.pend .st{background:var(--pend-bg);color:var(--pend-fg);border:1px solid var(--pend-rule)}
+.team .st{background:var(--team-bg);color:var(--team-fg);border:1px solid var(--team-rule)}
+.t{min-width:0}
+.t small{display:block;color:var(--muted);font-size:13px;margin-top:2px}
+.done .t small{color:var(--done-fg);opacity:.85}
+.legend{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:13px;color:var(--muted);margin:0 0 6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+@media (max-width:520px){ li{grid-template-columns:1fr} .st{justify-self:start} }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>TDOT Automation Checklist</h1>
+<p class="sub">Every item from the three meetings, plus Faran's own requests, with its state as of 19 November 2026. "Done" means live on app.tdotimm.com.</p>
+<div class="totals">
+  <div class="tot"><b>72</b><span>Done</span></div>
+  <div class="tot"><b>6</b><span>In progress</span></div>
+  <div class="tot"><b>9</b><span>Pending</span></div>
+  <div class="tot"><b>30</b><span>Team / decision</span></div>
+</div>
+<p class="legend"><span><i style="background:var(--done-rule)"></i>Done, live</span><span><i style="background:var(--prog-rule)"></i>In progress or built but held</span><span><i style="background:var(--pend-rule)"></i>Pending, not started</span><span><i style="background:var(--team-rule)"></i>Waits on the team or a decision</span></p>
+
+<h2>Meeting 1 · Monday workspace review (Gauri with Faran, early November)</h2>
+<p class="meta">Leads and consultations pages, mandatory fields, tabs, pop-ups, the Client Master replica.</p>
+<ul>
+  <li class="done"><span class="st">Done</span><div class="t">Add lead: Source / Reference list with Employee, Existing-client and Client referral pickers<small>Live 4 Nov. "Referred By" column on the Leads list live 5 Nov.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Add lead: In Canada now?, Lead Owner (filled by the Monday sign-in), Source and Original Channel<small>Live 15 Oct.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Add lead: full name, an email OR a phone number, and Source / Reference are required; address optional<small>Live 5 Nov. This is the fix for leads where only a phone number is known.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Direct retainer form redesigned: email or phone, address optional, source and notes required, Shafoli-only attachments<small>Live 5 Nov. Shafoli's screenshot upload is also on Add lead and on the lead page (Attachments card).</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Adding a lead from a phone: "Keep me signed in on this device", larger boxes<small>Live 5 Nov. Shafoli still to try Monday sign-in on her phone.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">One standard pop-up and one filter engine across the pages<small>Live 5 Nov.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">From / To date filter on every list<small>Part of the standard filter: the "From" and "To" date boxes. Live 5 Nov.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Leads list in tabs by stage: New · Invite sent · 1st reminder · 2nd reminder · Expired · All<small>Live 5 Nov. Gauri asked again on 7 Nov for collapsible sections; the tabs cover the same need.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Consultations page shows consultations only; Retainers &amp; follow-ups is its own page; Reporting sits on Summary<small>Live 5 Nov. Reporting numbers corrected, live 10 Nov.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Retainers page grouped by outcome as tabs: Retain · Follow-Up · Newsletter · Not Wanted<small>Live 5 Nov.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Consultation record kept forever; key facts copied onto the Client Master row; deleting a case keeps the lead and its folder<small>Live 5 Nov.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Consultation prices read from Square (Shafoli $300 / $450 fixed)<small>Live 5 Nov.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Cases page renamed "Client Master"; Mahesh's Assigning view as a tab with stage counts<small>Live 8 Nov.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Every board gets the standard sub-views: assigning, deadlines, reporting<small>Client Master has Assigning and Deadlines tabs with an Assign button, and since 10 Nov a "Change…" button to change a case's deadline (also on the case page; Monday sign-in and a reason needed, a note is added on the case). Reporting is one section on Summary with charts, linked from Leads, Consultations and Retainers.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Consultation notes typed in the app instead of pasted from Otter<small>Live 10 Nov: a "📝 Consultation notes" box at the top of the client's record. What you type is kept as a draft on that device; "Save notes" adds it to the record's Updates for the team (staff only). A later change is saved as "updated". The Otter summary paste still works.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Pre-onboarding view for Mahesh: what each upcoming client is waiting for<small>Live 10 Nov. The Assigning tab already listed the Pre-Onboarding cases, like Monday. Each one now shows "Waiting for": client signature, our countersignature or payment, or "No agreement on record", with a count of each on top. On 10 Nov: 25 client signature, 5 no agreement on record, 1 countersignature, 1 payment.</small></div></li>
+  <li class="team"><span class="st">Waiting</span><div class="t">"Retained by" credit rule for KPIs<small>Question sent to Gauri: who exactly gets "Retained by" credit when several people handle a client? Agreed so far: never Melanie; admin credit ends at the hand-off to the consultant.</small></div></li>
+  
+  <li class="prog"><span class="st">Built, switched off</span><div class="t">Otter recordings file themselves on the client's record<small>Live 14 Nov, switched off. Otter sends each finished recording to OneDrive through Zapier (running since 12 Nov). The app shows a code on every consultation (for example TD-84363); the consultant types it as the recording title before stopping. The app then puts the summary and transcript on that client's record, and anything unclear goes to an "Otter recordings to match" list. A report-only run on 15 November checked the 15 recordings so far: none could be filed by itself, because 13 had no title and 2 had a name that did not match. That is why the code in the title matters. Next: the message to the consultants, one live test with a code in the title, then switch on. Once on, the recordings also show in the case page's Consultation notes panel.</small></div></li>
+  <li class="team"><span class="st">Decision</span><div class="t">Client Master main table edited only by Asmita; everyone else works from the views<small>A team rule in Monday. The app only changes the Case Support Officer ("Assign…"), for any staff signed in with Monday. Limits by role are under "Access by role" in Meeting 3.</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">All leads go on the board, not in Teams chat, WhatsApp or by word of mouth<small>Team rule: whoever hears of a lead adds it with "＋ Add lead" on the Leads page.</small></div></li>
+</ul>
+
+<h2>Meeting 2 · Reminders and deadlines (Gauri and Mahesh, 5 November)</h2>
+<p class="meta">Document reminders, real vs imaginary deadlines, the Client Master replica, to-do board.</p>
+<h3>Block 1 · Deadline at retain</h3>
+<ul>
+  <li class="done"><span class="st">Done</span><div class="t">Real vs imaginary deadline captured at Retain and landed on the case (Deadline Type, Actual, Internal)<small>Live 6 Nov. Retain is held until it is set. Required on the direct retainer form; optional on Add lead (asked again at Retain). Can be changed later in the Deadline box with "Save deadline"; a change typed in Monday is copied back.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">"Client deadline" pill on the case page<small>Live 7 Nov.</small></div></li>
+  <li class="team"><span class="st">Waiting</span><div class="t">Retain-time notice to the client ("documents 10–15 days before the promise or you slide")<small>Question for Gauri: is it still wanted now that the three reminders chase late clients, and if so the exact wording and 10 or 15 days.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Promised date for imaginary deadlines<small>Staff type the promised date when they mark a deadline as imaginary (live 6 Nov). Faran's decision 10 Nov: keep it typed; no automatic fill.</small></div></li>
+</ul>
+<h3>Block 2 · Document reminders</h3>
+<ul>
+  <li class="done"><span class="st">Done</span><div class="t">Three reminder buttons on the case page with preview and editable text: "Send reminder 1 · friendly", "Send reminder 2 · firm", "Send final reminder"<small>Live 7 Nov. On the "📨 Document reminders" card (Overview and Documents tabs). Any signed-in staff member who can open the case can send, not only Mahesh.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Gauri's three texts as the wording, personalised with the client's name, missing documents and unfinished questionnaire<small>Live 7 Nov.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Templates editable on the Monday board "Reminder Templates"<small>Board created and connected 7 Nov.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">The finished email shown inside the pop-up, updated while staff edit<small>Live 7 Nov.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">The reminder pop-up opens at once and shows "loading" while it gets ready (about 4 seconds); changes to the text show in under a second<small>Live 8 Nov.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Old chasing ladder retired (it had never sent)<small>Live 7 Nov.</small></div></li>
+  <li class="prog"><span class="st">In progress</span><div class="t">Automatic daily email for real deadlines under 50% uploaded<small>Built and live, switched OFF. Before switching on: the email set-up fix, switching off the 9 old escalation emails in Monday, Mahesh's Monday seat and one live test on a test record. Templates board is already connected.</small></div></li>
+  <li class="prog"><span class="st">Built, on hold</span><div class="t">Reminders for imaginary deadlines (the half-month loop)<small>Built (every 3rd day) but switched OFF. Question sent to Gauri: how often should these go? Until then staff use the three buttons, and a promised date 3 days away or passed is listed under Needs attention.</small></div></li>
+  <li class="done"><span class="st">Closed</span><div class="t">AI-suggested reminder emails<small>Not needed (Faran's decision 10 Nov): the three reminder buttons already write the email from Gauri's wording with the client's own missing items, and staff can edit it before sending.</small></div></li>
+  <li class="team"><span class="st">Waiting</span><div class="t">Switch off client emails on the 9 escalation-matrix rows in Monday<small>By hand, Faran.</small></div></li>
+  <li class="team"><span class="st">Waiting</span><div class="t">Email set-up for tdotimm.com so automatic emails do not land in spam (Faran)<small>Needed before any automatic email. Technical name: SPF/DKIM.</small></div></li>
+  <li class="team"><span class="st">Waiting</span><div class="t">Mahesh needs a Monday seat and assignment on the document-collection cases</div></li>
+  <li class="team"><span class="st">Decision</span><div class="t">Gauri to confirm two wording points in her reminder texts<small>The texts say "questionnaire to 100% and at least 80% of documents"; the app's own rules are slightly different (submit from 80%, review needs reviewed documents). The final reminder says "started again, and additional charges will apply" (Faran kept it).</small></div></li>
+</ul>
+<h3>Block 3 · Client Master page</h3>
+<ul>
+  <li class="done"><span class="st">Done</span><div class="t">Client Master page with tabs that copy the Monday views row for row: Assigning, Deadlines, Mahesh, EE after ITA<small>Live 8 Nov. Verified against Monday's own engine: 156 / 111 / 112 / 28. Each tab has a "🖨 Print" button (landscape, with the counts), which replaces the export-and-print agenda.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Real / Imaginary / Not recorded counts per Phase; stage counts; "No Support Officer" count<small>Live 8 Nov.</small></div></li>
+  <li class="prog"><span class="st">Built, on hold</span><div class="t">Half-month windows (1–15 / 16–end) and the "May slide" flag<small>Live, using calendar halves as described in the meeting. Question sent to Gauri: confirm calendar halves, not 14 days from each case's start.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Assign button for the Case Support Officer<small>Live, and tested on 10 Nov on the test case. Monday's Automate list has no rule on Case Support Officer, so an assignment only changes that one column, adds a note on the case, and Monday tells the person. The button replaces the officer; it cannot set "nobody".</small></div></li>
+  <li class="prog"><span class="st">On hold</span><div class="t">Move paid cases out of Pending automatically<small>For now staff move each paid case to its month group by hand. Question sent to Gauri: which month group (month paid or month signed), and who creates each new month's group.</small></div></li>
+  <li class="pend"><span class="st">Pending</span><div class="t">To-do board: add a row at Internal Review with an assignee, sync updates and comments, hand-off columns, money columns for Monica and Shefali only<small>Not started. Add a row (do not move the case). Each person opens on their own board. Hand-offs Farah → Monica → Shefali → Submitted. Asmita's approval is required before submission (a team rule, not built).</small></div></li>
+  <li class="done"><span class="st">Closed</span><div class="t">Email the assignee when a case is assigned (Mahesh's ask)<small>Not needed (Faran's decision 10 Nov): Monday already tells the person when they are assigned.</small></div></li>
+  <li class="team"><span class="st">Decision</span><div class="t">Consultation notes mandatory at Retain<small>Tied to Otter; undecided.</small></div></li>
+  <li class="team"><span class="st">Decision</span><div class="t">Gauri's 16 questions on the Client Master plan (cancelled rows on Deadlines, keep the Mahesh tab, who may assign, slide-rule days, and others)<small>Defaults are live; each is a one-line change.</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">Retire Mahesh's own Monday board once the team is happy with the Mahesh tab<small>Agreed in the meeting. The Mahesh tab is live; nothing in the app retires the board.</small></div></li>
+  <li class="team"><span class="st">Waiting</span><div class="t">Gauri to send the Otter recording of her meeting with Kamal<small>Gauri.</small></div></li>
+</ul>
+
+<h2>Meeting 3 · Leads feedback (Gauri with Melanie, Prajawal and Arpit, 7 November)</h2>
+<p class="meta">Direct consultation, Leads page fixes, lead tiers, reporting, guide, longer-term items.</p>
+<h3>Already in place</h3>
+<ul>
+  <li class="done"><span class="st">Done</span><div class="t">"Sign in with Monday" fills who added the lead<small>Live 15 Oct.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Leads grouped by stage (New, 1st reminder, 2nd reminder, Expired)<small>Live 5 Nov as tabs.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Source / Reference with client referral and employee referral by name<small>Live 4 Nov. Checked 9 Nov: the list has Instagram, Facebook and TikTok. "Booked by" and "Referred By" are kept apart, as Gauri asked.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Retainers tab after the outcome (Retain / Follow-Up / Newsletter / Not Wanted) with notes visible<small>Live 5 Nov. Gauri was describing the existing flow.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Delete button only for named admins<small>Cases: named admins only. Since 9 Nov Gauri and Melanie can also delete leads that have no case and no retainer.</small></div></li>
+</ul>
+<h3>Priority 1</h3>
+<ul>
+  <li class="done"><span class="st">Done</span><div class="t">Direct consultation entry, like direct lead and direct retainer, so Square and urgent bookings and all of Shafoli's consultations appear in the app<small>Live 9 Nov for all staff: "＋ Direct consultation" on the Consultations page. Shafoli or Shermin; no client email unless the package box is ticked; "Change time" on direct records.</small></div></li>
+</ul>
+<h3>Leads page</h3>
+<ul>
+  <li class="done"><span class="st">Done</span><div class="t">Search across all columns: phone, email, everything<small>Live 9 Nov on Leads, Consultations and Retainers: name, phone or email, matched on the server.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Edit a lead's email address after it is added<small>Live 9 Nov: "Change email" at the top of the lead page, or "Change" beside the email. Editable until the lead has a case, locked after (Faran's decision).</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Lead Owner: fix Prajawal's spelling; Arpit sees only two names; people without Monday type their own name<small>Live 9 Nov: list is Gauri, Kamal, Asmita, Prajawal, Melanie, Deeksha, Arpit, Monica, Anna; 35 old owners renamed. Monday sign-in fills the name. Typing in a name is not offered; everyone picks from the list.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">"→ Convert to direct retainer" button on the lead<small>Live 9 Nov: always on the lead page, greyed out with the reason (case exists, retainer in progress, consultation time not passed yet).</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">Export a filtered list to a spreadsheet for bulk email; batches of expired leads<small>Marketing team. Faran's decision 9 Nov: expired-lead batches and bulk email belong to marketing. No export button is planned in the app.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">New job applications and sales pitches sent to info@ no longer become leads<small>Live 10 Nov. New emails only: a job application or sales pitch from a new sender is skipped by its subject. Tested on the 41 earlier email subjects: 17 would be skipped and every real enquiry kept. The earlier email leads already on the board were left as they are. Skipped emails are listed, subject only, on the admin status page (admins only). Known clients' emails still become notes. Resumes to a future HR section is later.</small></div></li>
+  <li class="pend"><span class="st">Pending</span><div class="t">A yes toggle on the add-lead form does not show as switched on for Prajawal<small>Likely the "In Canada now?" toggle. Still waiting for his screenshot.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Page loads take about 30 seconds<small>Fixed, live 10 Nov: pages open at once and refresh in the background; your own changes still show straight away.</small></div></li>
+  <li class="pend"><span class="st">Pending</span><div class="t">Automatic lead tiers T0 / T1 / T2 with good leads first<small>Waits on the team's definitions.</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">Marketing-consent checkbox on the website booking form; newsletters to consenting expired leads via Brevo with unsubscribe synced<small>Website team. Faran's decision 9 Nov: the consent box, newsletters and Brevo are website work, not app work.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Full-width pages and a more colourful, Monday-like look<small>Live 11 Nov: every staff page runs edge to edge like the listings. Statuses are filled pills on one colour scale across all pages (green done or paid, amber waiting, red stuck or overdue, blue new, grey on hold, purple retained). Client pages, emails and PDFs are unchanged.</small></div></li>
+</ul>
+<h3>Consultations and reporting</h3>
+<ul>
+  <li class="done"><span class="st">Done</span><div class="t">Otter summary notes stored on the consultation record<small>Live: every client's record takes typed consultation notes and a pasted Otter summary; direct consultations have their own paste box. The old consultation sheet is kept for now (Faran, 11 Nov); what happens to it is with Gauri.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Consultation record holds: email, phone, in person or call, how and how much paid, new or existing client, topic, who booked, who referred, consultant<small>Live 9 Nov in the Direct consultation pop-up: all of these are captured. Melanie's list can still add fields.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Reporting with charts: lead to booked to consulted to retained, sources, per-consultant numbers<small>Live 10 Nov on Summary → Reporting: a 12-month trend, where retained clients came from, leads by source, consultations and retainers by consultant. A "📊 Reporting" link opens it from Leads, Consultations and Retainers (Faran's decision: charts on Summary, not on each page). Not built: payment method chart.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Investigate the October reporting numbers (0 retained; Shafoli's consultations missing; a chart with more bookings than leads)<small>Fixed 9 Nov, live 10 Nov: October now reads retained 56 (8 from leads, 48 walk-ins), 55 of 56 signers paid, booked 38 with 9 abandoned holds shown apart, future consultations shown as Upcoming, retainers by consultant shown (Shafoli 39, Shermin 17).</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">"Paid, but no signed date" shown on Needs attention<small>Live 10 Nov. Found while fixing the report: three clients were paid and run by hand with the signed date typed only in Monday, so they were not counted as retained. They are listed two working days after payment, with what to do.</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">Every consultation goes through the app, never straight into Square<small>Faran's decision 10 Nov: the app will not read Square. A consultation counts in Reporting only when it is booked through the app or added with "＋ Direct consultation". The team must follow this for Shafoli's consultations too.<br><br><b>Why it matters:</b> the app cannot stop or warn about a booking made straight in Square. In October only 1 of Shafoli's consultations was in the app, so her numbers on the Reporting charts stay near zero until the habit changes.<br><b>To tell the team</b> (by message or at Thursday's review, unless Gauri already has): "Please do not book consultations directly in Square. Book them through the app, or if one was already booked outside it, add it with “＋ Direct consultation” on the Consultations page. Consultations that are not in the app will not show in Reporting."</small></div></li>
+  <li class="team"><span class="st">Waiting</span><div class="t">KPIs and the Monday-morning meeting questions produced by the system<small>The monthly numbers and charts are live on Summary → Reporting. Waiting on Gauri for the exact questions and numbers the team goes through every Monday morning; a weekly page is built from her list.</small></div></li>
+</ul>
+<h3>Guide</h3>
+<ul>
+  <li class="done"><span class="st">Done</span><div class="t">Flowchart guide with a how-to link at every step<small>Live 18 Nov. Every box on the Guide's workflow map now opens a "How do I…" list of 1 to 4 answers, and the guide is brought up to date with the November changes. It still carries the "Draft" badge until Gauri has checked it.</small></div></li>
+  <li class="prog"><span class="st">In progress</span><div class="t">FAQ page built from the groundwork-chat answers<small>The Guide page already answers 104 "How do I…" questions. Still to do: add the questions the team asked in the groundwork chat. Faran will send the chat (11 Nov).</small></div></li>
+</ul>
+<h3>Longer term</h3>
+<ul>
+  <li class="pend"><span class="st">Pending</span><div class="t">Automatic call logging with notes</div></li>
+  <li class="pend"><span class="st">Pending</span><div class="t">AI phone line for bookings and status updates</div></li>
+  <li class="pend"><span class="st">Pending</span><div class="t">CRM page per client with a client ID and full history</div></li>
+  <li class="pend"><span class="st">Pending</span><div class="t">Access by role once all tabs are done</div></li>
+</ul>
+<h3>Team actions (not app work)</h3>
+<ul>
+  <li class="team"><span class="st">Team</span><div class="t">Define good vs bad leads and the T0 / T1 / T2 tiers<small>Melanie, Prajawal, Arpit. First check the operations manual in Google Drive for the old tier definitions. Due Thursday or next Tuesday.</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">Write the marketing-consent wording for the website booking form<small>Melanie and the team, for the website team (no longer sent to Faran for the app).</small></div></li>
+  <li class="team"><span class="st">Not needed</span><div class="t">Set up info@ folders and rules; clear the backlog<small>Not needed for the app any more. Since 10 Nov the app itself skips job applications and sales pitches from new senders by their subject. Arpit can still keep folders for his own tidying.</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">Brevo domain verification<small>Website team (Sparsh or Arpit to pass it on). Not app work.</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">Screenshot of the toggle bug in the main group<small>Prajawal.</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">Test load speed in other rooms and browsers<small>Melanie.</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">Get all 21 November consultations onto the board; list the must-have consultation fields<small>Melanie. Use "＋ Direct consultation" on the Consultations page (live for all staff since 9 Nov; only the last 30 days can be added).</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">List the must-have fields for call logs (no double entry)<small>Melanie, next meeting.</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">Shafoli's consultation fee to $300 in Square Items &amp; Services<small>Square already shows $300 (and $450); the app has read its prices from Square since 5 Nov. Melanie only needs to confirm in Square.</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">The old consultation sheet: kept for now; Gauri to decide when access is limited to her and Melanie<small>Gauri. Faran, 11 Nov: keep the sheet. It must not be deleted in any case, because Add lead searches it for "Existing client" and "Client referral".</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">Add Prajawal and Arpit to the groundwork chat; report day-to-day problems there straight away<small>Gauri, everyone.</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">Weekly rhythm for November: Tuesday feedback to Faran, Wednesday team feedback sessions, Thursday Faran's update<small>Gauri.</small></div></li>
+</ul>
+<h2>Faran's requests · 11–19 November</h2>
+<p class="meta">Asked for directly by Faran, outside the three meetings.</p>
+<ul>
+  <li class="done"><span class="st">Done</span><div class="t">Export on every Leads tab<small>Live 11 Nov: an Export button beside the search box downloads the leads shown (the open tab, with the search and filters applied) as an Excel file: Lead Name, Email, Contact Number, Service, Source/Reference, Referred By, Current Status. All staff can export; each export records how many leads and who. Up to 5,000 leads per file.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Consultations page: filters and sorting like the Leads page<small>Live 11 Nov: every column has a filter (Service, Pre-consult and Outcome are new) and the Date, Time, Client, Service and Consultant columns sort by clicking their name. A "Sorted" chip goes back to the normal order.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Consultations page: a Date column replaces the Today / This week / This month / All buttons<small>Live 11 Nov: the Date column's filter offers Today, Tomorrow, This week, Next week, This month and From / To. The page opens on today; the × on the Date chip shows every date. The day-by-day arrows went with the buttons.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Every consultation stays on the Consultations page, in monthly groups once completed<small>Live 11 Nov: a consultation with an outcome, a retainer under way or a retained client moves to its month under "Completed consultations" and stays there, with a "Now" column (retainer to send / sent / signed / paid, Retained with the case number, following up, newsletter, closed). This month is open, earlier months open with a click. On 11 Nov only 3 consultations were in the groups and 67 past consultations had no outcome recorded: each moves to its month once its outcome is set.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">"Webinar" outcome on the lead page and a Webinar column on the Leads list<small>Live 11 Nov: a Webinar button beside Follow-Up, Newsletter and Not Wanted on the lead page only, and a Webinar column (with the day it was set and a filter) at the end of the Leads list. The Monday label was added. It stops the booking reminders for that lead. Still open: it cannot be taken off from the app, only replaced by another outcome or cleared in Monday.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Consultations page: tabs instead of collapsible sections<small>Live 12 Nov: Booked · Needs outcome · Completed · No date · All over one table, with a month chooser on Completed and All. It replaces the monthly sections that went live on 11 Nov.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Consultations page: filter counts follow the month on view<small>Live 12 Nov: on Completed (and on All with a month chosen) the numbers inside a column's filter count only the month shown. The tabs above still count every month.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Source / Reference: Nasir Khan, Aman Galhotra and Shafoli Friend removed<small>Live 12 Nov (asked in the 10 Nov meeting): the three names are no longer choices on Add lead, Edit basics, Direct consultation or Direct retainer client. No record was using them. The labels are still on the Monday board.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Client Master: the "Mahesh" tab removed<small>Live 12 Nov (asked in the 10 Nov meeting): the tabs are All · Assigning · Deadlines · EE after ITA. An old link to the Mahesh tab opens Deadlines.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Client Master: groups open and close; "All" grouped by month<small>Live 12 Nov (10 Nov meeting, items 10 and 11): every tab's groups open and close on a click, with Open all / Close all. "All" is grouped by month like the Monday main table, the current month open. The Assigning stage counts are buttons that jump to their group. An open group has a clear navy border.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Consultations: every column filters and sorts on every tab<small>Live 12 Nov (Faran): sorting added on Mode, Agreement, Pre-consult, Paid, Outcome and Now; a Time filter (Morning, Afternoon, Evening, No time); Client sorts and points to the search box; the Date filter is on every tab, each tab keeping its own dates (Booked still opens on Today).</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Client Master: the agreed default columns on Assigning, Deadlines and EE after ITA<small>Live 12 Nov (10 Nov meeting, item 12): the 20 columns Gauri and Mahesh listed, one each like Monday, in a table that scrolls sideways with Case Ref and Client kept in view. "All" keeps its columns. The search box also finds email, phone and dependents.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Client Master: choose which columns to show<small>Live 12 Nov (10 Nov meeting, item 13): a "Columns" button on every tab to show or hide columns and add the ones a tab does not show by default, with "Reset to default". Each person's choice is remembered on their own browser. Case Ref and Client always stay.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Client Master: months in date order; the dark "Live Dashboard" band removed<small>Live 14 Nov (Faran): on the "All" tab the month groups run newest first, with Pending and Leads at the top and Cancel and TEST at the end. On Client Master and Summary the data time and "refresh" now sit beside the page title. Also decided: ADR cases stay off the Deadlines tab, as on Monday; the officer is still cleared only in Monday.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">"Email Sent" remark<small>Live 12 Nov: a one-click remark in the Remarks section of the lead page and the consultation record.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Webinar Email on the lead page<small>Live 12 Nov: when a lead's outcome is Webinar, the "Booking invite email" section becomes "Webinar Email" with a standard webinar invitation (editable) and the consultation booking invite is hidden. Each send is noted on the lead; a second send asks first. The Leads list shows "Email sent" with the day. The standard text is a first draft for Faran to approve.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Client Master: one page title, in the same style as the other pages<small>Live 12 Nov (Faran): "Client Master" no longer appears twice at the top. The page title matches Leads, Consultations and Retainers.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Case page: a Consultation notes panel on the right<small>Live and switched on 17 Nov (10 Nov meeting, item 15): on every tab of the case page, the client's consultation notes sit in a panel on the right, newest first, with "Hide" (each browser remembers it). On a narrow screen it folds into a bar above the tabs. Staff signed in with Monday can add a note; notes are added, never overwritten, and stay in the client's record. Once the Otter recordings are switched on, they show here too. Still to try: one note added by a staff member signed in with Monday. Later: filing recordings that have no booking, and Mahesh's notes at Assigning.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Client emails ask the client to reply to the same email<small>Live 19 Nov: every email the app sends to a client, sponsor or lead now ends with a highlighted "Important" box asking them to reply directly to that email rather than start a new one, so all correspondence stays on their file (three approved versions: emails that ask for documents, other case emails, and emails before a case exists). "Please don't reply" is gone from every client email, and replies now go to info@tdotimm.com.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Case email subjects show the case number and the case stage<small>Live 19 Nov: subjects end with the case number and stage, e.g. "— 2026-ABC-001 · Document Collection Started", using the exact stage name from Monday. When the stage is "Stuck" or blank, only the case number is shown. Emails sent before a case exists keep their normal subject.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">A client's reply is filed on the case named in its subject<small>Live 19 Nov: when a reply names a case number in its subject, its "📧 Email received" note goes on that case only, not on every case that shares the same email address (as in a family where one parent handles several children's applications). A reply from an address that is not on the case is still filed there, with a warning line, instead of becoming a new lead.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Client emails come from info@tdotimm.com, with a copy kept<small>Live and switched on 19 Nov: client emails are sent from info@ (not the no-reply address), and a copy of each is kept in info@'s Sent folder, marked with its case. Staff alerts still come from the no-reply address, with no copy. Tested live before switching on. If Microsoft ever refuses, the email goes out the old way, so none is lost or sent twice. Copies start on 19 Nov: earlier emails were never kept.</small></div></li>
+  <li class="done"><span class="st">Done</span><div class="t">Case page: an "Emails" tab with every email to and from the client<small>Live and switched on for all staff 19 Nov: the emails the system sent (from 19 Nov), the client's replies, staff answers sent from info@, and old client replies that had gone to the no-reply address, newest first, in plain text. Click an email to read it and download its attachments (risky file types are blocked). Staff must be signed in with Monday; every email opened and file downloaded is recorded with their name. Matched by the case stamp or case number first, then by the client's email and linked consultations, with a warning when an address is shared with another case. Checked live on real cases: it found client emails nobody had seen, which had gone to the old no-reply address.</small></div></li>
+  <li class="pend"><span class="st">Pending</span><div class="t">Emails tab: formatted view, and replying from the tab<small>Later (Faran, 18 Nov): show emails with their original look, not only plain text, and let staff answer a client from the case page (sent from info@ and kept in the same thread). Not started.</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">Answer clients from info@tdotimm.com, not from personal mailboxes<small>Everyone. Answers sent from info@ appear in the case's Emails tab; answers from a personal mailbox do not.</small></div></li>
+  <li class="team"><span class="st">Team</span><div class="t">Microsoft 365: keep a copy of mail sent "as info@" in the shared mailbox<small>Microsoft 365 admin. When staff send as info@ from their own Outlook, Microsoft keeps the copy in their own Sent folder, unless this setting is switched on for info@. With it on, those answers show in the Emails tab too.</small></div></li>
+  <li class="pend"><span class="st">Pending</span><div class="t">Webinar: send the joining link and date after the client has paid<small>Later work (Faran, 12 Nov): once the client pays for the webinar, email the link and time generated by Microsoft Teams. Not started. Needs deciding first: how the webinar is paid for and how the Teams meeting is created.</small></div></li>
+</ul>
+</div>
+
+</body>
+</html>
