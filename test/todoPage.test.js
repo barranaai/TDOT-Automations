@@ -344,12 +344,14 @@ test('the top bar, switch on: "To-do" right after "Client Master", opening the t
     for (const r of rules) assert.ok(r.startsWith('.admin-hdr.nav-7'), r);
     assert.ok(!/[`\\]|\$\{/.test(css));
     // where each step of the bar happens with seven links — always EARLIER than with six (NAV_CSS: 1100 / 1300, 1190, 1070, 945)
-    assert.deepEqual([...css.matchAll(/@media \(max-width: (\d+)px\)/g)].map((m) => Number(m[1])), [1480, 1340, 1280, 1180, 1060, 560]);
+    assert.deepEqual([...css.matchAll(/@media \(max-width: (\d+)px\)/g)].map((m) => Number(m[1])), [1540, 1420, 1340, 1280, 1180, 1060, 560]);
     const at = (px) => css.slice(css.indexOf('@media (max-width: ' + px + 'px)'), css.indexOf('@media', css.indexOf('@media (max-width: ' + px + 'px)') + 10) < 0 ? css.length : css.indexOf('@media', css.indexOf('@media (max-width: ' + px + 'px)') + 10));
     assert.ok(at(1060).includes('.admin-hdr.nav-7 .nav-lnk .nav-txt { display: none; }'), 'the link words go at 1060px (six links: 945px): icons only, each link keeps its title');
     assert.ok(at(1180).includes('.admin-hdr.nav-7 .who-chip .who-txt { display: none; }'), 'the name\'s words at 1180px (six: 1070px)');
-    assert.ok(at(1340).includes('.admin-hdr.nav-7 .nav-lnk { padding: 7px 10px; }') && at(1340).includes('#sys-text { display: none; }'), 'the tighter spacing at 1340px (six: 1190px)');
-    assert.ok(at(1280).includes('.admin-hdr.nav-7 .hdr-clock { display: none; }') && at(1480).includes(':has(.hdr-who:not(:empty)) .hdr-clock { display: none; }'), 'the clock at 1280px / 1480px beside a name (six: 1100px / 1300px)');
+    assert.ok(at(1340).includes('.admin-hdr.nav-7 .nav-lnk { padding: 7px 10px; }') && !at(1340).includes('#sys-text'), 'the tighter spacing at 1340px (six: 1190px)');
+    // measured in a real browser 2026-11-20: beside a full-length Monday name, "Monday API Offline" needs the light's text gone from 1420px and the clock from 1540px
+    assert.ok(at(1420).includes(':has(.hdr-who:not(:empty)) #sys-text { display: none; }'), 'the light\'s text beside a name at 1420px (six: 1190px)');
+    assert.ok(at(1280).includes('.admin-hdr.nav-7 .hdr-clock { display: none; }') && at(1540).includes(':has(.hdr-who:not(:empty)) .hdr-clock { display: none; }'), 'the clock at 1280px / 1540px beside a name (six: 1100px / 1300px)');
     assert.ok(at(560).includes('.admin-hdr.nav-7 .nav-lnk { padding: 7px 5px; }') && at(560).includes('.admin-hdr.nav-7 .admin-nav { gap: 2px; }'), 'a phone: the seven icons sit closer together');
     assert.ok(css.indexOf('padding: 7px 8px') < css.indexOf('padding: 7px 5px') && css.indexOf('padding: 7px 10px') < css.indexOf('padding: 7px 8px'), 'a narrower step comes later in the style, so it wins');
     assert.ok(css.includes('.admin-hdr.nav-7 #nav-todo .nav-txt { white-space: nowrap; }'), '"To-do" never breaks at its hyphen');

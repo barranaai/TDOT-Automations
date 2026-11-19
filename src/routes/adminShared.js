@@ -136,12 +136,17 @@ ${STATUS_COLOUR_VARS}
 // the six-link bar takes as the window narrows is taken earlier here, by the width of the new
 // link ("To-do" with its icon: about 95px, 87px with the tighter spacing) plus a margin.
 //   six links (NAV_CSS)                         seven links (here)
-//   clock hidden            <= 1100 / 1300*      <= 1280 / 1480*      (* with a Monday name or sign-in link beside it)
+//   clock hidden            <= 1100 / 1300*      <= 1280 / 1540*      (* with a Monday name or sign-in link beside it)
+//   "Online" text hidden*   <= 1190              <= 1420              (the light keeps its dot and tooltip)
 //   tighter spacing         <= 1190              <= 1340
 //   the name's words hidden <= 1070              <= 1180
 //   link words hidden       <= 945               <= 1060   (icons only; each link keeps its title)
 //   icons closer together   —                    <= 560    (seven icons then take less room than the six do today)
-// "To-do" never breaks at its hyphen. Reasoned from the six-link measurements; check it in a browser.
+// "To-do" never breaks at its hyphen.
+// MEASURED in a real browser 2026-11-20 (Inter, 360 to 1600px wide; a full-length Monday name, the sign-in link, and the
+// widest light text "Monday API Offline"): one line, nothing wraps, nothing overflows. The two starred widths are set by
+// the worst case (a full-length name beside "Monday API Offline"); below about 400px the icon strip scrolls sideways
+// inside itself, as the six-link bar already does.
 const todoList = require('../services/todoListService');   // pure: the switch only
 const NAV_TODO_LINK = `
       <a href="/admin/dashboard?view=todo&amp;who=me" class="nav-lnk" id="nav-todo" title="To-do: my list">
@@ -149,11 +154,13 @@ const NAV_TODO_LINK = `
       </a>`;
 const NAV_SEVEN_STYLE = `<style>
   .admin-hdr.nav-7 #nav-todo .nav-txt { white-space: nowrap; }
-  @media (max-width: 1480px) {
+  @media (max-width: 1540px) {
     .admin-hdr.nav-7 .admin-hdr-right:has(.hdr-who:not(:empty)) .hdr-clock { display: none; }
   }
-  @media (max-width: 1340px) {
+  @media (max-width: 1420px) {
     .admin-hdr.nav-7 .admin-hdr-right:has(.hdr-who:not(:empty)) #sys-text { display: none; }
+  }
+  @media (max-width: 1340px) {
     .admin-hdr.nav-7 .admin-brand { padding-right: 12px; }
     .admin-hdr.nav-7 .admin-divider { margin-right: 10px; }
     .admin-hdr.nav-7 .nav-lnk { padding: 7px 10px; }
