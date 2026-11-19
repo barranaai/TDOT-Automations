@@ -19,6 +19,7 @@
 const axios = require('axios');
 const mail = require('./microsoftMailService');
 const { propId, NAMES } = require('../utils/mailTag');
+const { errorOf, odataStr, withToken } = require('../utils/graphRead');   // shared with the case page's Emails tab
 
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 const GRAPH_TIMEOUT_MS = 15000;
@@ -36,26 +37,10 @@ function mailboxForTest() {
   return mail.clientMailbox() || require('../utils/clientContact').CLIENT_REPLY_TO;
 }
 
-/** A Graph GET with one retry after a 401 (a revoked / drifted token) — emailLeadsService's pattern. */
+/** A Graph GET with one retry after a 401 (a revoked / drifted token) — emailLeadsService's pattern (utils/graphRead). */
 async function graphGet(url) {
-  const call = async () => io.get(url, { Authorization: `Bearer ${await io.token()}` });
-  try { return (await call()).data; }
-  catch (err) {
-    if (!(err && err.response && err.response.status === 401)) throw err;
-    io.dropToken();
-    return (await call()).data;
-  }
+  return (await withToken(io, (headers) => io.get(url, headers))).data;
 }
-
-/** Status code + Graph's error code only — never its message, never the URL. */
-function errorOf(err) {
-  const status = (err && err.response && err.response.status) || 0;
-  const raw = err && err.response && err.response.data && err.response.data.error && err.response.data.error.code;
-  const code = /^[A-Za-z0-9_.-]{1,80}$/.test(String(raw || '')) ? String(raw) : (status ? 'graph-error' : 'no-answer');
-  return { status, code };
-}
-
-const odataStr = (s) => `'${String(s).replace(/'/g, "''")}'`;
 
 /**
  * @param {{ sendId?: string }} [opts]
