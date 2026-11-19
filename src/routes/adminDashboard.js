@@ -16,6 +16,13 @@ const { clientMasterWindows } = require('./clientMasterWindows');
 const { clientMasterUi } = require('./clientMasterUi');
 const { clientMasterColumnsUi, CM_COLUMNS_KEY } = require('./clientMasterColumnsUi');   // the Columns button (2026-11-12)
 const { DEADLINE_CHANGE_CSS, DEADLINE_CHANGE_HTML, DEADLINE_CHANGE_JS } = require('./deadlineChangeUi');   // Change… on the Deadlines tab (2026-11-10)
+// The To-do tab (stage 1, read-only; 2026-11-19; switch TODO_TAB): a page-only view. Its switch and definition, its pure helper
+// (injected with toString) and ALL of its own page code — in the page only when the tab is on it (buildDashboardHTML opts.todo).
+const todoList = require('../services/todoListService');
+const { todoUi } = require('./todoUi');
+const todoPage = require('./todoPage');
+const { tryStaffAuth } = require('../middleware/staffAuth');
+const caseAccess = require('../services/caseAccessService');
 
 // ─── View bodies ──────────────────────────────────────────────────────────
 // The dashboard renders ONE of these (user directive 2026-08-05): /admin/dashboard
@@ -335,24 +342,34 @@ const ALL_CASES_BODY_HTML = `
     </div>
 `;
 
-/** The column ids of each Client Master tab: { '': the All tab, assigning: […], deadlines: […], eeita: […] }. */
-function cmTabCols() {
-  const views = clientMasterViews.pageViews(), cols = casesListOpts({ views }).cols, on = listCore({}).colsOnTab;
+/**
+ * The page's tabs, as ONE list: the Monday views (clientMasterViews.pageViews()) and — only when todoOn — the page-only To-do
+ * view, last. It feeds CM_VIEWS, cmTabCols and cmColNames, so the three can never disagree about which tabs the page has.
+ */
+function cmPageViews(todoOn) {
+  const views = clientMasterViews.pageViews();
+  return todoOn ? views.concat([todoList.PAGE_VIEW]) : views;
+}
+
+/** The column ids of each Client Master tab: { '': the All tab, assigning: […], deadlines: […], eeita: […] } — and, when the
+    page has it, the To-do tab's twelve in their own order (todoListService.DEFAULT_COLS: an order colsOnTab cannot give). */
+function cmTabCols(views) {
+  const cols = casesListOpts({ views }).cols, on = listCore({}).colsOnTab;
   const out = { '': on(cols, '').map((c) => c.id) };
-  for (const v of views) out[v.key] = on(cols, v.key).map((c) => c.id);
+  for (const v of views) out[v.key] = v.todoBox ? todoList.DEFAULT_COLS.slice() : on(cols, v.key).map((c) => c.id);
   return out;
 }
 
 /** Each column's name for the Columns panel: { id: label } (the delete column has none and is not a choice). */
-function cmColNames() {
+function cmColNames(views) {
   const out = {};
-  for (const c of casesListOpts({ views: clientMasterViews.pageViews() }).cols) if (c.label) out[c.id] = c.label;
+  for (const c of casesListOpts({ views }).cols) if (c.label) out[c.id] = c.label;
   return out;
 }
 /* The Columns button's code for the page (Client Master only). Built here, outside the page's template literal: the
    function is injected with toString and its options are plain page JavaScript in a normal string. */
-function cmColumnsBoot() {
-  return 'var CM_COLNAMES = ' + JSON.stringify(cmColNames()) + ';\n'
+function cmColumnsBoot(views) {
+  return 'var CM_COLNAMES = ' + JSON.stringify(cmColNames(views)) + ';\n'
     + 'var CMCOLS = (' + clientMasterColumnsUi.toString() + ')(window, CMU, { key: ' + JSON.stringify(CM_COLUMNS_KEY) + ', tabCols: CM_TABCOLS, names: CM_COLNAMES, ids: { btn: "cm-cols-btn", pop: "cm-cols-pop" },\n'
     + '  tabName: function(t) { var v = cmViewDef(t); return v ? v.label : "All"; },\n'
     + '  tab: function() { var v = window.CasesTable ? cmView(window.CasesTable.state()) : null; return v ? v.key : ""; },\n'
@@ -578,8 +595,11 @@ const CM_CSS = `
     }
 `;
 
-function buildDashboardHTML(view = 'cases') {
+function buildDashboardHTML(view = 'cases', opts) {
   const isSummary = view === 'summary';
+  // The To-do tab: on the Client Master page only when the route says so (opts.todo) — never on the Summary page.
+  const todoOn = !isSummary && !!(opts && opts.todo === true);
+  const views = cmPageViews(todoOn);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1150,7 +1170,7 @@ function buildDashboardHTML(view = 'cases') {
     .data-table th { cursor:default; }
     .data-table th:hover { background:#f8fafc; color:#94a3b8; }
     .cs-chips { padding:10px 20px 0; margin:0; }
-    ${isSummary ? '' : CM_CSS}
+    ${isSummary ? '' : CM_CSS}${todoOn ? todoPage.TODO_CSS : ''}
   </style>
 </head>
 <body>
@@ -1209,14 +1229,14 @@ var VIEW = ${JSON.stringify(view)};
 
 var HEALTH_ORDER = { Red: 0, Orange: 1, Green: 2 };
 // The Client Master view tabs (block 3) — from clientMasterViews.pageViews(): key, label, hint, grouping, order.
-var CM_VIEWS = ${JSON.stringify(clientMasterViews.pageViews())};
+var CM_VIEWS = ${JSON.stringify(views)};
 var CM_PRE_ONBOARDING = ${clientMasterViews.PRE_ONBOARDING_INDEX};   // Case Stage "Pre-Onboarding" (label index)
 // The table's columns per tab — '' = All, then one list per view tab (listSpecs casesListOpts: a column's tabs; the same
 // rule the header is drawn by, listCore colsOnTab). The rows and the full-width rows follow it.
-var CM_TABCOLS = ${JSON.stringify(cmTabCols())};
-${isSummary ? '' : 'var CMW = (' + clientMasterWindows.toString() + ')(); var CMU = (' + clientMasterUi.toString() + ')(CMW);'}
+var CM_TABCOLS = ${JSON.stringify(cmTabCols(views))};
+${isSummary ? '' : 'var CMW = (' + clientMasterWindows.toString() + ')(); var CMU = (' + clientMasterUi.toString() + ')(CMW);'}${todoOn ? '\nvar TDU = (' + todoUi.toString() + ')(CMW, CMU);' : ''}
 // The columns a person chose for each tab (the Columns button; remembered on this browser): CMCOLS.ids(tab) is what is drawn.
-${isSummary ? '' : cmColumnsBoot()}
+${isSummary ? '' : cmColumnsBoot(views)}${todoOn ? '\n' + todoPage.TODO_PAGE_JS : ''}
 
 /* ── Count-up animation ──────────────────────────────────────────── */
 function countUp(id, target) {
@@ -2082,12 +2102,17 @@ function cmInitial(st) {
     try { var u = new URL(window.location.href); u.searchParams.delete('view'); history.replaceState(null, '', u.toString()); } catch (e) {}
     return false;
   }
+  // the page-only tab that shows one person's list: its link may also say whose (read once, kept for this browser tab, taken off the address)
+  if (cmViewDef(t).todoBox && typeof cmTodoLink === 'function') cmTodoLink();
   st.sel.view = [t];
   return true;
 }
 function cmOnChange(st) {
   var v = cmView(st);
-  try { var u = new URL(window.location.href); if (v) u.searchParams.set('view', v.key); else u.searchParams.delete('view'); history.replaceState(null, '', u.toString()); } catch (e) {}
+  // the address only ever carries the tab (where the page has the page-only tab, its own code also takes a stray who= off)
+  try { var u = new URL(window.location.href); if (v) u.searchParams.set('view', v.key); else u.searchParams.delete('view'); if (typeof cmTodoAddress === 'function') cmTodoAddress(u); history.replaceState(null, '', u.toString()); } catch (e) {}
+  // … and the top bar follows the tab on screen (only where the page has that tab; never before there is a page)
+  if (typeof document !== 'undefined' && typeof cmTodoNav === 'function') cmTodoNav(v);
 }
 function cmToday() { return CMW.torontoToday(Date.now()); }
 function cmDay(day) { var t = CMW.shortDay(day); return t ? t + ', ' + String(day).slice(0, 4) : ''; }
@@ -2152,7 +2177,8 @@ function cmKeptSave() {
 }
 function cmGroupState(v, groups, st) {
   var filtered = CMU.hasUserFilter(st, 'view');
-  var sig = filtered ? CMU.filterSig(st, 'view', v.key) : null;
+  // on the page-only tab that shows one person's list, another list is another search: the choices made under one are not used for the next
+  var sig = filtered ? CMU.filterSig(st, 'view', v.key + (v.todoBox && typeof cmTodoWho === 'function' ? '|' + cmTodoWho() : '')) : null;
   if (CM_TEMP.sig !== sig) CM_TEMP = { sig: sig, map: {} };   // another search or filter (or none): the temporary choices go
   return { filtered: filtered, open: CMU.openMap(v, groups, { kept: cmKept()[v.key], filtered: filtered, temp: CM_TEMP.map, today: cmToday() }) };
 }
@@ -2187,6 +2213,8 @@ function cmGrpGo(id) {
    on the board's own groups, amber for the pending group and grey for the cancelled one; otherwise none (navy). */
 function cmGroupTone(v, g) {
   var t = String((g && g.title) || '');
+  // the page-only tab that shows one person's list: the stage colour where its groups are stages (nobody assigned), none on a person's own groups (a name is not a status)
+  if (v && v.todoBox) return g && g.section === 'nobody' ? ' tone-' + stageTone(t) : '';
   if (v && v.by === 'stage') return ' tone-' + stageTone(t);
   if (/pending/i.test(t)) return ' tone-amber';
   if (/cancel/i.test(t)) return ' tone-grey';
@@ -2199,8 +2227,11 @@ function cmGroupTone(v, g) {
    total (All only) = every case this person may see. */
 function renderViewTable(v, rows, st, mondayOrder, total) {
   var isAll = v === CMU.ALL_VIEW;
-  var ordered = mondayOrder ? CMU.viewOrder(v, rows) : rows;
-  var groups = CMU.groupRows(v, ordered, (_data && _data.meta) || null);
+  // The page-only tab that shows one person's list at a time (v.todoBox): its own code gives the groups (soonest deadline first unless a
+  // column sort is chosen), the list's size and its words. Its definition is never handed to CMU.viewOrder / CMU.groupRows.
+  var todo = !isAll && v.todoBox ? (typeof cmTodoDraw === 'function' ? cmTodoDraw(rows, st, mondayOrder) : { groups: [], size: 0, none: '' }) : null;
+  var ordered = todo ? rows : mondayOrder ? CMU.viewOrder(v, rows) : rows;
+  var groups = todo ? todo.groups : CMU.groupRows(v, ordered, (_data && _data.meta) || null);
   // All only (2026-11-14): Pending / Leads first, then the months newest first, older history, Cancel and TEST, no group last.
   if (isAll) groups = CMU.allGroupOrder(groups, (_data && _data.meta) || null);
   var tbody = document.getElementById('all-cases-body');
@@ -2221,7 +2252,7 @@ function renderViewTable(v, rows, st, mondayOrder, total) {
   // a redraw must not take the focus off a heading someone is on (open / close with the keyboard, new data)
   var act = document.activeElement, back = act && act.getAttribute && act.className === 'cm-grp-b' ? act.getAttribute('data-gk') : null;
   tbody.innerHTML = '';
-  var inView = isAll ? total : cmInView(v.key);
+  var inView = isAll ? total : todo ? todo.size : cmInView(v.key);
   var gs = cmGroupState(v, groups, st);
   CM_LAST = { v: v, rows: rows, st: st, mondayOrder: mondayOrder, total: total, filtered: gs.filtered, open: gs.open,
     ids: groups.map(function(g) { return CMU.groupId(g.key); }) };
@@ -2229,11 +2260,14 @@ function renderViewTable(v, rows, st, mondayOrder, total) {
   var oc = document.getElementById('cm-oc');
   if (oc) oc.style.display = rows.length ? '' : 'none';
   if (!rows.length) {
-    var tr = document.createElement('tr');
-    tr.className = 'cm-none';
-    tr.innerHTML = '<td colspan="' + span + '"><span class="cm-none-t">' +
-      (inView || isAll ? 'No cases match the current filters.' : 'No cases in the ' + escHtml(v.label) + ' view right now.') + '</span></td>';
-    tbody.appendChild(tr);
+    // the page-only tab has its own words for an empty list (and none at all when the box above the table already says why)
+    var none = todo ? todo.none : (inView || isAll ? 'No cases match the current filters.' : 'No cases in the ' + escHtml(v.label) + ' view right now.');
+    if (none) {
+      var tr = document.createElement('tr');
+      tr.className = 'cm-none';
+      tr.innerHTML = '<td colspan="' + span + '"><span class="cm-none-t">' + none + '</span></td>';
+      tbody.appendChild(tr);
+    }
     cmScrollBox(!wide);
     return { shown: 0, total: inView };
   }
@@ -2247,6 +2281,7 @@ function renderViewTable(v, rows, st, mondayOrder, total) {
       var tc = CMU.typeCounts(g.rows);
       extra = ' <span class="cm-grp-c">— Real ' + tc.real + ' · Imaginary ' + tc.imaginary + ' · Not recorded ' + tc.none + '</span>';
     }
+    if (todo && todo.extra) extra = todo.extra(g);   // "— 3 passed · 9 no deadline"
     h.innerHTML = '<td colspan="' + span + '"><span class="cm-grp-t">' +
       '<button type="button" class="cm-grp-b" data-gk="' + escHtml(gid) + '" aria-expanded="' + (open ? 'true' : 'false') + '" aria-label="' + escHtml(CMU.groupLabel(g.title, n, open)) + '">' +
       '<span class="cm-chev" aria-hidden="true"></span><span><b>' + escHtml(g.title) + '</b> · <span class="cm-grp-n">' + n + '</span></span></button>' + extra + '</span></td>';
@@ -2289,6 +2324,8 @@ function renderCmHead(v, rows, st, groups, inView) {
   if (!el) return;
   if (!v) { el.innerHTML = ''; el.style.display = 'none'; return; }
   el.style.display = '';
+  // the page-only tab that shows one person's list draws its own box: whose list, the choice of list, what the list is
+  if (v.todoBox) { if (typeof cmTodoHead === 'function') cmTodoHead(el, v, rows, st, groups, inView); else el.innerHTML = ''; return; }
   var h = '<div class="cm-top"><span class="cm-title">' + escHtml(v.label) + '</span>' +
     '<span class="cm-dataat" id="cm-dataat">' + escHtml(cmDataTimeText(_data)) + '</span>' +
     '<button type="button" class="cm-print" id="cm-print" onclick="window.print()" title="Print this view (landscape)">🖨 Print</button></div>';
@@ -2419,6 +2456,11 @@ function caseRow(c, v, today, wide) {
     var f = CMW.flagOf(c, today);
     if (f) pr += ' <span class="cm-flag ' + f.kind + '" data-flag="' + f.kind + '" title="' + escHtml(f.tip) + '">' + escHtml(f.label) + '</span>';
   }
+  // "Passed" — on the page-only tab that shows one person's list (soonest deadline first): the date the row is ordered by has passed.
+  // Said in the cell that holds that date (the tab's own code names it). Display only; the Deadlines tab's flags are not drawn there.
+  var due = v && v.todoBox && typeof cmTodoPassed === 'function' ? cmTodoPassed(c, today) : '';
+  var duePill = due ? ' <span class="cm-flag passed" data-due="passed" title="This date has passed. Nothing has been changed.">Passed</span>' : '';
+  if (due === 'internalDeadline') pr += duePill;
   var off = (c.officer ? escHtml(c.officer) : '<span style="color:var(--light);font-size:11px">Nobody</span>') +
     // Assign… (block 3): only where the server says the write is allowed (a Monday sign-in; the access check on that person)
     (c.canAssign ? ' <button type="button" class="cm-assign" data-assign="' + escHtml(String(c.id)) + '" title="Set the Case Support Officer in Monday (replaces who is there now; a note is added on the case)">Assign…</button>' : '') +
@@ -2440,7 +2482,7 @@ function caseRow(c, v, today, wide) {
     subType: cmTextCell('cm-c-sub', c.caseSubType, true),
     // the Actual Deadline with its half-month window; Change… on Deadlines
     actualDeadline: '<td class="cm-dl">' + ((c.actualDeadline ? '<span class="cm-date">' + escHtml(cmDay(c.actualDeadline)) + '</span>' : '') +
-      (win ? ' <span class="cm-win" title="Counted in this half-month window' + (t === 'imaginary' ? ' (by the promised date)' : '') + '">' + escHtml(win.label) + '</span>' : '') || cmNoneDash()) + dlBtn + dlOk + '</td>',
+      (win ? ' <span class="cm-win" title="Counted in this half-month window' + (t === 'imaginary' ? ' (by the promised date)' : '') + '">' + escHtml(win.label) + '</span>' : '') || cmNoneDash()) + (due === 'actualDeadline' ? duePill : '') + dlBtn + dlOk + '</td>',
     deadlineType: '<td class="cm-c-dt">' + (typeTag || cmNoneDash()) + '</td>',
     internalDeadline: '<td class="cm-pr">' + (pr || cmNoneDash()) + '</td>',
     phaseV: cmTextCell('cm-c-phase', c.phase, false),
@@ -2480,6 +2522,14 @@ function caseRow(c, v, today, wide) {
     // control honest for assigned-scope staff) and needs a case reference.
     del: del
   };
+  // "With" — the page-only tab's own column, on a page that has that tab only (the tab's code names the column): the Case Manager(s),
+  // who have the case for review, as a pill; "—" when there is none. The tab's code gives the names (on a person's list it leaves
+  // that person out); without it, every manager on the row. Built here from the same pieces as the other cells.
+  if (typeof CM_TODO_COL === 'string') {
+    var wn = typeof cmTodoWith === 'function' ? cmTodoWith(c, v) : null;
+    if (!wn) wn = { lead: 'With', list: String(c.manager || '').split(',').map(function(x) { return x.trim(); }).filter(function(x) { return x && x !== 'Unassigned'; }) };
+    cells[CM_TODO_COL] = '<td class="cm-c-with">' + (wn.list.length ? '<span class="cm-with">' + escHtml(wn.lead + ' ' + wn.list.join(', ')) + '</span>' : cmNoneDash()) + '</td>';
+  }
   tr.innerHTML = cmColIds(v).map(function(id) { return cells[id] || '<td></td>'; }).join('');
   // the portal link never opens the case (the row's own click does that)
   var pl = tr.querySelector('.cm-portal');
@@ -3095,15 +3145,29 @@ document.addEventListener('DOMContentLoaded', function() {
   if (VIEW === 'summary') { loadKpis(); loadTrend(); }   // the monthly figures and the 12-month charts load on their own, beside the case data
 });
 </script>
-${isSummary ? '' : '<script>' + listTableScript(casesListSpec, casesListOpts, '{ healthOrder: HEALTH_ORDER, views: CM_VIEWS, initial: cmInitial, onChange: cmOnChange, meta: function() { return (_data && _data.meta) || null; }, typeOf: CMW.typeOf }') + '</script>'}
+${isSummary ? '' : '<script>' + listTableScript(casesListSpec, casesListOpts, '{ healthOrder: HEALTH_ORDER, views: CM_VIEWS, initial: cmInitial, onChange: cmOnChange, ' + (todoOn ? 'todoHas: cmTodoHas, ' : '') + 'meta: function() { return (_data && _data.meta) || null; }, typeOf: CMW.typeOf }') + (todoOn ? '\n' + todoPage.TODO_BOOT_JS : '') + '</script>'}
 ${DEADLINE_CHANGE_HTML}
 </body>
 </html>`;
 }
 
+/**
+ * Does this request's page get the To-do tab? The switch TODO_TAB, read at call time:
+ *   off    — no, and the Monday cookie is not even read;
+ *   on     — yes for everybody who opens the page; the cookie is not read here either (who "me" is comes with the data);
+ *   admins — only a Monday sign-in whose email is an admin's: the one mode that reads the cookie on this route.
+ * The data route decides again on every answer (who may have the lists, and who "me" is): the page never trusts this.
+ */
+function cmTodoOn(req) {
+  const mode = todoList.mode();
+  if (mode === 'on') return true;
+  if (mode !== 'admins') return false;
+  return todoList.allowed(tryStaffAuth(req), caseAccess.isAdminEmail);
+}
+
 // The landing view is the Client Master table (user directive 2026-08-05; renamed from All Cases, block 3).
-router.get('/', (_req, res) => {
-  res.type('html').send(buildDashboardHTML('cases'));
+router.get('/', (req, res) => {
+  res.type('html').send(buildDashboardHTML('cases', { todo: cmTodoOn(req) }));
 });
 
 // Everything the dashboard used to carry above the table — KPIs, Action

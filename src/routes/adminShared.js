@@ -127,6 +127,65 @@ ${STATUS_COLOUR_VARS}
   }
 `;
 
+// ─── The "To-do" link in the top bar (2026-11-19; switch TODO_TAB) ─────────────
+// The link shows ONLY while the switch is fully on (todoListService.mode() === 'on', read at
+// every call: each page builds its bar per request). Off, or on for admins only: the bar is
+// byte for byte the six-link bar (test/todoPage.test.js pins its sha256 for every page).
+// NAV_CSS below is written for six links and is NOT changed. With the seventh link the header
+// carries the class nav-7 and this small style of its own, placed just before it: every step
+// the six-link bar takes as the window narrows is taken earlier here, by the width of the new
+// link ("To-do" with its icon: about 95px, 87px with the tighter spacing) plus a margin.
+//   six links (NAV_CSS)                         seven links (here)
+//   clock hidden            <= 1100 / 1300*      <= 1280 / 1480*      (* with a Monday name or sign-in link beside it)
+//   tighter spacing         <= 1190              <= 1340
+//   the name's words hidden <= 1070              <= 1180
+//   link words hidden       <= 945               <= 1060   (icons only; each link keeps its title)
+//   icons closer together   —                    <= 560    (seven icons then take less room than the six do today)
+// "To-do" never breaks at its hyphen. Reasoned from the six-link measurements; check it in a browser.
+const todoList = require('../services/todoListService');   // pure: the switch only
+const NAV_TODO_LINK = `
+      <a href="/admin/dashboard?view=todo&amp;who=me" class="nav-lnk" id="nav-todo" title="To-do: my list">
+        <span class="nav-icon" aria-hidden="true">📋</span> <span class="nav-txt">To-do</span>
+      </a>`;
+const NAV_SEVEN_STYLE = `<style>
+  .admin-hdr.nav-7 #nav-todo .nav-txt { white-space: nowrap; }
+  @media (max-width: 1480px) {
+    .admin-hdr.nav-7 .admin-hdr-right:has(.hdr-who:not(:empty)) .hdr-clock { display: none; }
+  }
+  @media (max-width: 1340px) {
+    .admin-hdr.nav-7 .admin-hdr-right:has(.hdr-who:not(:empty)) #sys-text { display: none; }
+    .admin-hdr.nav-7 .admin-brand { padding-right: 12px; }
+    .admin-hdr.nav-7 .admin-divider { margin-right: 10px; }
+    .admin-hdr.nav-7 .nav-lnk { padding: 7px 10px; }
+    .admin-hdr.nav-7 .admin-hdr-right { gap: 8px; }
+    .admin-hdr.nav-7 .who-chip { padding: 5px 10px; }
+    .admin-hdr.nav-7 .who-chip.on .who-txt { max-width: 110px; }
+  }
+  @media (max-width: 1280px) {
+    .admin-hdr.nav-7 .hdr-clock { display: none; }
+  }
+  @media (max-width: 1180px) {
+    .admin-hdr.nav-7 .who-chip .who-txt { display: none; }
+    .admin-hdr.nav-7 .who-chip { padding: 5px 8px; }
+  }
+  @media (max-width: 1060px) {
+    .admin-hdr.nav-7 { padding: 0 12px; }
+    .admin-hdr.nav-7 #sys-text { display: none; }
+    .admin-hdr.nav-7 .nav-lnk .nav-txt { display: none; }
+    .admin-hdr.nav-7 .nav-lnk { padding: 7px 8px; }
+    .admin-hdr.nav-7 .admin-brand { padding-right: 8px; }
+    .admin-hdr.nav-7 .admin-divider { margin-right: 6px; }
+    .admin-hdr.nav-7 .admin-hdr-right { gap: 6px; }
+    .admin-hdr.nav-7 .status-pill { padding: 5px 8px; }
+    .admin-hdr.nav-7 .sign-out-btn { padding: 6px 10px; }
+  }
+  @media (max-width: 560px) {
+    .admin-hdr.nav-7 .admin-nav { gap: 2px; }
+    .admin-hdr.nav-7 .nav-lnk { padding: 7px 5px; }
+  }
+</style>
+`;
+
 // ─── Shared top navigation bar ────────────────────────────────────────────────
 //  Leads (whole Lead Board) + Consultations (booked only) are the nav
 //  destinations — the Dashboard + Engine Controls links were retired so the
@@ -142,8 +201,11 @@ function buildNavHeader(activePage) {
   // The dashboard is the firm-wide Client Master page (called "Cases" until block 3); the per-case
   // cockpit also passes 'dashboard', so "Client Master" stays highlighted while viewing a single case.
   const isCases   = activePage === 'dashboard';
+  // The To-do link (after Client Master): only while the switch TODO_TAB is fully on. It opens the To-do tab of the
+  // Client Master page on the person's own list; which of the two links is lit is the page's own doing (the tab on screen).
+  const todoOn    = todoList.mode() === 'on';
 
-  return `<header class="admin-hdr">
+  return `${todoOn ? NAV_SEVEN_STYLE : ''}<header class="admin-hdr${todoOn ? ' nav-7' : ''}">
   <div class="admin-hdr-left">
     <div class="admin-brand">
       ${TDOT_LOGO_SVG}
@@ -161,7 +223,7 @@ function buildNavHeader(activePage) {
       </a>
       <a href="/admin/dashboard" class="nav-lnk${isCases ? ' active' : ''}" title="Client Master"${isCases ? ' aria-current="page"' : ''}>
         <span class="nav-icon" aria-hidden="true">🗂️</span> <span class="nav-txt">Client Master</span>
-      </a>
+      </a>${todoOn ? NAV_TODO_LINK : ''}
       <a href="/admin/dashboard/summary" class="nav-lnk${isSummary ? ' active' : ''}" title="Summary"${isSummary ? ' aria-current="page"' : ''}>
         <span class="nav-icon" aria-hidden="true">📊</span> <span class="nav-txt">Summary</span>
       </a>
