@@ -367,7 +367,7 @@ test('markAssignable under "assigned": only the rows the Monday person is on (ev
 test('the routes: dashboard-stats sends viewer.canAssign from the Monday sign-in; assign + staff list are behind the same gate', () => {
   const src = fs.readFileSync(require.resolve('../src/server'), 'utf8');
   const i = src.indexOf("app.get('/admin/dashboard-stats'");
-  const ds = src.slice(i, i + 1400);
+  const ds = src.slice(i, i + 1800);
   assert.match(ds, /markAssignable\(stats\.cases, tryStaffAuth\(req\)\)/);
   assert.match(ds, /viewer: \{[^}]*canAssign \}/);
   const a = src.indexOf("app.post('/admin/client-master/assign'");

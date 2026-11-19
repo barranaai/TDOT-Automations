@@ -187,10 +187,12 @@ function clientMasterUi(W) {
   /**
    * The "Filtered" line on a view tab: shown only when a search or a filter of the person's own is on.
    * shown = rows on screen; inView = the rows of Monday's view this person may see (before their own filters).
+   * words (optional): what the rows are counted in, for a tab that is not a Monday view ('on this list' →
+   * "Filtered: 3 of 22 on this list"); without it the text is as it always was.
    */
-  function filteredLine(shown, inView, hasUserFilter) {
+  function filteredLine(shown, inView, hasUserFilter, words) {
     if (!hasUserFilter) return null;
-    return { shown: shown, total: inView, text: 'Filtered: ' + shown + ' of ' + inView + " in Monday's view" };
+    return { shown: shown, total: inView, text: 'Filtered: ' + shown + ' of ' + inView + ' ' + (s(words) || "in Monday's view") };
   }
   /** Is any search or filter of the person's own on (anything but the tab)? */
   function hasUserFilter(st, tabFacet) {

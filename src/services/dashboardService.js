@@ -56,6 +56,10 @@ const COLS = {
 // The row fields that are client contact details or carry the client's portal token. They leave this
 // service only when the caller asks for them (the Client Master page's own route, after the access filter).
 const CONTACT_FIELDS = ['clientEmail', 'clientPhone', 'portalLink'];
+// The row fields only the To-do tab needs (stage 1, read-only; switch TODO_TAB — todoListService). The same rule as the
+// contact details: they leave this service only when the caller asks ({ todo: true } — the Client Master page's own
+// route, and only for a viewer the tab is on for); /api/dashboard/stats and every other caller never get them.
+const TODO_FIELDS = ['managerIds'];
 
 const caseAccess = require('./caseAccessService');
 const clientMasterViews = require('./clientMasterViews');
@@ -381,6 +385,7 @@ function parseItem(item, boardIdx) {
     caseTypeIds:        clientMasterViews.dropdownIds(valueByColId[COLS.caseType]),
     officer:            col(COLS.caseSupportOfficer),
     officerIds,         // { personIds, teamIds } of Case Support Officer only
+    managerIds:         peopleIds(valueByColId[COLS.caseManager]),   // { personIds, teamIds } of Case Manager only — a TODO_FIELDS field
     docUploadedPct:     numOrNull(col(COLS.docUploaded)),   // blank = null (docReadiness above reads it as 0)
     paymentStatus:      statusText(cvOf(COLS.paymentStatus)).trim(),   // empty cell = '' (never the id-5 label)
     // ── the view tabs' own columns (item 12): '' / null = an empty cell (the page shows "—") ──
@@ -404,10 +409,12 @@ function parseRow(item, boardIdx) {
 // ─── Aggregate all cases into dashboard stats ─────────────────────────────────
 // @param {Object} [viewer]  when supplied AND not an admin, only cases this
 //   viewer is assigned to (any people column) are counted/returned.
-// @param {{ fresh?: boolean, contact?: boolean }} [opts]  fresh = the page's Refresh (re-read only when the copy is > 30 s old);
+// @param {{ fresh?: boolean, contact?: boolean, todo?: boolean }} [opts]  fresh = the page's Refresh (re-read only when the copy is > 30 s old);
 //   contact = keep the client contact details and the portal link on the rows (CONTACT_FIELDS) — only the Client
 //   Master page's own route asks for them; every other caller gets the rows without them.
-async function getDashboardStats(viewer, { fresh = false, contact = false } = {}) {
+//   todo = keep the To-do tab's fields on the rows (TODO_FIELDS: managerIds) — only `true` keeps them, and only the
+//   page's own route asks, for a viewer the tab is on for; every other caller gets the rows without them.
+async function getDashboardStats(viewer, { fresh = false, contact = false, todo = false } = {}) {
   const read     = await _casesForPage({ refresh: !!fresh });
   const rawItems = read.items;
   let   cases    = rawItems.map((it, i) => parseRow(it, i));
@@ -416,6 +423,7 @@ async function getDashboardStats(viewer, { fresh = false, contact = false } = {}
     cases = cases.filter((c) => caseAccess.viewerCanSee(c.assignees, viewer));
   }
   if (!contact) for (const c of cases) for (const f of CONTACT_FIELDS) delete c[f];
+  if (todo !== true) for (const c of cases) for (const f of TODO_FIELDS) delete c[f];
 
   // Summary counters
   const summary = {
@@ -580,4 +588,4 @@ async function getDashboardStats(viewer, { fresh = false, contact = false } = {}
 module.exports = {
   fetchAllItems, invalidateCases, patchCachedColumn, getCasesMeta,
   _casesIo: { refresh: _refreshCases, io: _io, overrides: _overrides, parseMeta: _parseMeta, FRESH_MIN_AGE_MS, OVERRIDE_MAX_MS, CASES_HARD_MS },
-  getDashboardStats, parseItem: parseRow, peopleIds, COLS, CONTACT_FIELDS };
+  getDashboardStats, parseItem: parseRow, peopleIds, COLS, CONTACT_FIELDS, TODO_FIELDS };

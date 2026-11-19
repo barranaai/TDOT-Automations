@@ -682,6 +682,9 @@ function markWaiting(cases) {
 // Master view tabs' columns, 2026-11-12). Only the Client Master list's own load asks for them (the Summary page
 // and the quiet "waiting" re-fetch do not, so they never receive them); they are never logged.
 // Never kept by the browser: the answer can carry the clients' portal links (private, no-store on every answer).
+// The To-do tab (stage 1, read-only; switch TODO_TAB — todoListService): who may have the lists, and who "me" is, come
+// from the Monday sign-in alone (tryStaffAuth) — never from `viewer`: with the team key resolveViewer says "Admin" for
+// everybody. Only for such a viewer do the rows keep managerIds, the open rows get 'todo' in views, and the answer `todo`.
 app.get('/admin/dashboard-stats', async (req, res) => {
   res.set('Cache-Control', 'private, no-store');
   const viewer = resolveViewer(req);
@@ -689,8 +692,10 @@ app.get('/admin/dashboard-stats', async (req, res) => {
     return res.status(401).json({ error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' });
   }
   try {
+    const todoList = require('./services/todoListService');
+    const staff = tryStaffAuth(req); const todoOk = todoList.allowed(staff, caseAccess.isAdminEmail);
     // ?fresh=1 = the page's Refresh: Monday is asked again only when the copy is older than 30 s
-    const stats = await dashboardService.getDashboardStats(viewer.scope === 'all' ? undefined : viewer, { fresh: req.query.fresh === '1', contact: req.query.contact === '1' });
+    const stats = await dashboardService.getDashboardStats(viewer.scope === 'all' ? undefined : viewer, { fresh: req.query.fresh === '1', contact: req.query.contact === '1', todo: todoOk });
     // Assign… (block 3): only for a Monday sign-in, and per row only where the write would be allowed — the
     // write's access check uses the Monday identity and ignores the shared key (a page convenience; the route re-checks).
     const canAssign = require('./services/caseAssignService').markAssignable(stats.cases, tryStaffAuth(req));
@@ -698,7 +703,8 @@ app.get('/admin/dashboard-stats', async (req, res) => {
     // (a Monday sign-in who may see the case); the route re-checks on a fresh read.
     for (const c of stats.cases || []) c.canChangeDeadline = !!c.canAssign;
     const waitingAt = markWaiting(stats.cases);
-    res.json({ ...stats, waitingAt, viewer: { name: viewer.name, email: viewer.email, scope: viewer.scope, isAdmin: viewer.isAdmin, canAssign } });
+    const todo = todoList.forAnswer(stats.cases, staff, caseAccess.isAdminEmail);   // null = not for this viewer
+    res.json({ ...stats, waitingAt, viewer: { name: viewer.name, email: viewer.email, scope: viewer.scope, isAdmin: viewer.isAdmin, canAssign }, ...(todo ? { todo } : {}) });
   } catch (err) {
     console.error('[Dashboard] Identity stats failed:', err.stack || err.message);
     res.status(500).json({ error: 'Internal server error' });

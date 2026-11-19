@@ -164,7 +164,7 @@ test('the route: /admin/dashboard-stats (the Client Master page) asks for the co
   const src = fs.readFileSync(require.resolve('../src/server'), 'utf8');
   const page = src.slice(src.indexOf("app.get('/admin/dashboard-stats'"), src.indexOf("app.get('/admin/needs-attention'"));
   assert.match(page, /const viewer = resolveViewer\(req\);\s+if \(!viewer\) \{\s+return res\.status\(401\)/, 'signed-in staff only');
-  assert.match(page, /getDashboardStats\(viewer\.scope === 'all' \? undefined : viewer, \{ fresh: req\.query\.fresh === '1', contact: req\.query\.contact === '1' \}\)/);
+  assert.match(page, /getDashboardStats\(viewer\.scope === 'all' \? undefined : viewer, \{ fresh: req\.query\.fresh === '1', contact: req\.query\.contact === '1', todo: todoOk \}\)/);
   const api = src.slice(src.indexOf("app.get('/api/dashboard/stats'"), src.indexOf('function hasAdminKey'));
   assert.match(api, /dashboardService\.getDashboardStats\(\);/);
   const svc = fs.readFileSync(require.resolve('../src/services/dashboardService'), 'utf8');

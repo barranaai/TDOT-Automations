@@ -202,9 +202,17 @@ function retainerListOpts(ctx) {
 /* ctx: { healthOrder: { Red: 0, Orange: 1, Green: 2 },
           views: the Client Master view tabs (clientMasterViews.pageViews(): [{ key, label, hint }…]), initial(state), onChange(state),
           meta(): the board meta of the data on the page ({ stageOrder, phaseOrder } — label indexes in board order) or null,
-          typeOf(r): 'real' | 'imaginary' | 'none' (clientMasterWindows.typeOf) }
+          typeOf(r): 'real' | 'imaginary' | 'none' (clientMasterWindows.typeOf),
+          todoHas(r): is this row on the to-do list on screen (the To-do tab only — see below) }
    The view tabs (Assigning, Deadlines, EE after ITA) have their own columns since 2026-11-12 (team meeting 2026-11-10, item 12):
-   the agreed twenty, one column each. The All tab keeps the columns it had. A column's `tabs` says where it shows. */
+   the agreed twenty, one column each. The All tab keeps the columns it had. A column's `tabs` says where it shows.
+   The To-do tab (stage 1, 2026-11-19; switch TODO_TAB) is a PAGE-ONLY view: `views` holds it (todoListService.PAGE_VIEW —
+   { key: 'todo', pageOnly: true, todoBox: true }) only when the tab is on the page. Only then: the "With" column, its own
+   filter and sort exist (all three named todoWith), the tab's twelve columns also show on it, and the tab is narrowed to the
+   list on screen inside the `view` facet (ctx.todoHas). With no such view everything here is exactly as it was.
+   Both functions below are pasted into EVERY Client Master page as text, comments and all — so, to keep a page without the
+   tab free of it, neither function names the tab or its column in its own text: the tab's key comes from the view (the one
+   with todoBox) and the column's id is that key + 'With'. Keep it so (test/todoList.test.js checks the text). */
 function casesListSpec(ctx) {
   function s(v) { return String(v == null ? '' : v).trim(); }
   var HO = ctx.healthOrder || { Red: 0, Orange: 1, Green: 2 };
@@ -215,6 +223,21 @@ function casesListSpec(ctx) {
   function natural(v) { return txt(v).replace(/[0-9]+/g, function (d) { return ('00000' + d).slice(-6); }); }
   var VIEWS = ctx.views || [], VK = VIEWS.map(function (v) { return v.key; }), VL = {};
   VIEWS.forEach(function (v) { VL[v.key] = v.label; });
+  /* The page-only tab that shows one person's list at a time (the view with todoBox): its key, or '' when the page has no such tab. */
+  var TODO = '';
+  VIEWS.forEach(function (v) { if (v && v.todoBox) TODO = v.key; });
+  /* The tabs a row is under: the views the server worked out. The page-only tab is narrowed HERE to the list on screen
+     (ctx.todoHas(r), the page's hook), so the engine's own numbers — the tab's number, the count beside the search box,
+     the counts inside the header filters, the search — are all about that list: a row the server marked for the tab
+     stays under it only when it is on the chosen list. No hook, no list chosen or a hook that fails = no row.
+     A page without the tab: the row's views as they are. */
+  function viewsOf(r) {
+    var vs = r.views || [];
+    if (!TODO || vs.indexOf(TODO) < 0) return vs;
+    var on = false;
+    try { on = !!(ctx.todoHas && ctx.todoHas(r)); } catch (e) { on = false; }
+    return on ? vs : vs.filter(function (k) { return k !== TODO; });
+  }
   /* A cell of names ("A, B"): each name is its own choice; whole names only. */
   function names(v) { return s(v).split(',').map(s).filter(function (m) { return m && m !== 'Unassigned'; }); }
   function dtype(r) { if (ctx.typeOf) return ctx.typeOf(r); var t = s(r.deadlineType); return t === 'Deadline' ? 'real' : t === 'Imaginary' ? 'imaginary' : 'none'; }
@@ -229,7 +252,7 @@ function casesListSpec(ctx) {
     return ('000' + (at < 0 ? 999 : at)).slice(-3) + ' ' + text;
   }
   function pct(v) { var n = Number(v); return (v === '' || v == null || isNaN(n)) ? null : n; }
-  return {
+  var spec = {
     facets: {
       stage: { label: 'Stage', get: function (r) { return s(r.caseStage); }, none: 'No stage' },
       health: { label: 'Health', get: function (r) { return s(r.health); }, none: 'Not set', order: ['Red', 'Orange', 'Green'], fixed: true },
@@ -246,7 +269,7 @@ function casesListSpec(ctx) {
       paymentStatus: { label: 'Payment status', get: function (r) { return s(r.paymentStatus); }, none: 'Not set' },
       officer: { label: 'Support officer', get: function (r) { return names(r.officer); }, none: 'Nobody' },
       // The view tabs above the table (block 3): a row is in every Monday view it passes (worked out on the server).
-      view: { label: 'View', quick: true, fixed: true, order: VK, text: function (v) { return VL[v] || v; }, get: function (r) { return r.views || []; }, none: 'No view' },
+      view: { label: 'View', quick: true, fixed: true, order: VK, text: function (v) { return VL[v] || v; }, get: viewsOf, none: 'No view' },
     },
     sorts: {
       createdAt: function (r) { return s(r.createdAt); },
@@ -288,16 +311,33 @@ function casesListSpec(ctx) {
     search: { chip: 'Search', text: function (r) { return [r.clientName, r.caseRef, r.caseType, r.officer, r.clientEmail, r.clientPhone, r.dependents]; },
       digits: function (r) { return s(r.clientPhone); } },
   };
+  if (TODO) {
+    /* The page-only tab's own column, "With" (its id: the tab's key + 'With'): the case's Case Manager(s) — who has it for
+       review. Its OWN filter (the empty choice reads "Nobody") and sort, so the Manager filter and sort of the other tabs
+       are not touched. */
+    var WITH = TODO + 'With';
+    spec.facets[WITH] = { label: 'With', get: function (r) { return names(r.manager); }, none: 'Nobody' };
+    spec.sorts[WITH] = function (r) { var t = txt(r.manager); return t === 'unassigned' ? '' : t; };
+    spec.sortBlanksLast.push(WITH);
+  }
+  return spec;
 }
 function casesListOpts(ctx) {
   var AZ = ['A → Z', 'Z → A'], ASC = ['asc', 'desc'], SOON = ['Soonest first', 'Latest first'];
   var VIEWS = ctx.views || [], hints = {};
   VIEWS.forEach(function (v) { if (v.hint) hints[v.key] = v.hint; });
   /* Where a column shows: ALL = the All tab only (the columns it has always had); VT = the view tabs only (the agreed
-     twenty, team meeting 2026-11-10 item 12); no tabs = both (Case Ref, Client). */
-  var ALL = [''], VT = VIEWS.map(function (v) { return v.key; });
+     twenty, team meeting 2026-11-10 item 12) — the Monday views, never a page-only view; no tabs = every tab (Case Ref, Client).
+     TD = VT and the page-only tab that shows one person's list (the view with todoBox, when the page has it): the nine
+     view-tab columns that are also among that tab's twelve — Case type, Sub-type, Stage, Actual deadline, Deadline type,
+     Internal deadline, Support officer, Questionnaire %, Documents uploaded % (with Case Ref, Client and its own "With").
+     Without that tab TD is VT itself — every column as it was. */
+  var ALL = [''], VT = VIEWS.filter(function (v) { return !v.pageOnly; }).map(function (v) { return v.key; });
+  var TODO = '';
+  VIEWS.forEach(function (v) { if (v && v.todoBox) TODO = v.key; });
+  var TD = TODO ? VT.concat([TODO]) : VT;
   var PCT = ['Highest first', 'Lowest first'], DESC = ['desc', 'asc'], BOARD = ['In the board’s order', 'The other way'];
-  return {
+  var opts = {
     key: 'tdot_list_cases',
     ids: { head: 'cs-headrow', chips: 'cs-chips', count: 'table-count', search: 'search-box', pop: 'cs-pop' },
     render: 'renderCasesList', api: 'CasesTable',
@@ -308,8 +348,12 @@ function casesListOpts(ctx) {
        tab opens on All; the tab shown is kept until the browser tab is closed. A link's ?view= opens that tab. */
     quick: { facet: 'view', box: 'cs-quick', tabs: true, allLast: false, all: 'All', storeKey: 'tdot_list_cases_tab',
       values: VIEWS.map(function (v) { return v.key; }), hints: hints },
-    /* No column sorts by the creation time (All) or by Monday's order (a view tab): a column sort shows as a chip whose × goes back. */
-    sortReset: function (st) { var v = st && st.sel && st.sel.view; return v && v.length ? "Monday's order for this view" : 'newest case first'; },
+    /* No column sorts by the creation time (All), by Monday's order (a view tab) or by the soonest deadline (the page-only tab): a column sort shows as a chip whose × goes back. */
+    sortReset: function (st) {
+      var v = st && st.sel && st.sel.view;
+      if (TODO && v && v.length && v[0] === TODO) return 'soonest deadline first';
+      return v && v.length ? "Monday's order for this view" : 'newest case first';
+    },
     countText: function (shown, total) { return shown + (shown !== total ? ' of ' + total : '') + ' case' + (total !== 1 ? 's' : ''); },
     cols: [
       { id: 'caseRef', label: 'Case Ref', sort: 'caseRef', sortText: AZ, sortDirs: ASC },
@@ -332,23 +376,30 @@ function casesListOpts(ctx) {
       { id: 'dependents', label: 'Dependents', title: 'Dependents / Inviter / Sponsor — the search box above the table finds a case by them', sort: 'dependents', sortText: AZ, sortDirs: ASC, tabs: VT },
       { id: 'clientEmail', label: 'Client email', title: 'Client Email — the search box above the table finds a case by it', sort: 'clientEmail', sortText: AZ, sortDirs: ASC, tabs: VT },
       { id: 'clientPhone', label: 'Contact number', title: 'Client Contact Number — the search box above the table finds a case by it', sort: 'clientPhone', sortText: ['0 → 9', '9 → 0'], sortDirs: ASC, tabs: VT },
-      { id: 'caseTypeV', label: 'Case type', title: 'Primary Case Type', menu: 'facet', facets: ['caseType'], sort: 'caseTypeV', sortText: AZ, sortDirs: ASC, tabs: VT },
-      { id: 'subType', label: 'Sub-type', title: 'Case Sub Type', menu: 'facet', facets: ['subType'], sort: 'subType', sortText: AZ, sortDirs: ASC, tabs: VT },
-      { id: 'actualDeadline', label: 'Actual deadline', title: 'The Actual Deadline and the half-month window the case is counted in', sort: 'actualDeadline', sortText: SOON, sortDirs: ASC, tabs: VT },
-      { id: 'deadlineType', label: 'Deadline type', title: 'Real (a real deadline) or Imaginary (a date we promised)', menu: 'facet', facets: ['deadlineType'], sort: 'deadlineType', sortText: ['Real first', 'Imaginary first'], sortDirs: ASC, tabs: VT },
-      { id: 'internalDeadline', label: 'Internal deadline', title: 'The Internal Deadline (the date promised on an Imaginary deadline)', sort: 'promisedDate', sortText: SOON, sortDirs: ASC, tabs: VT },
+      { id: 'caseTypeV', label: 'Case type', title: 'Primary Case Type', menu: 'facet', facets: ['caseType'], sort: 'caseTypeV', sortText: AZ, sortDirs: ASC, tabs: TD },
+      { id: 'subType', label: 'Sub-type', title: 'Case Sub Type', menu: 'facet', facets: ['subType'], sort: 'subType', sortText: AZ, sortDirs: ASC, tabs: TD },
+      { id: 'actualDeadline', label: 'Actual deadline', title: 'The Actual Deadline and the half-month window the case is counted in', sort: 'actualDeadline', sortText: SOON, sortDirs: ASC, tabs: TD },
+      { id: 'deadlineType', label: 'Deadline type', title: 'Real (a real deadline) or Imaginary (a date we promised)', menu: 'facet', facets: ['deadlineType'], sort: 'deadlineType', sortText: ['Real first', 'Imaginary first'], sortDirs: ASC, tabs: TD },
+      { id: 'internalDeadline', label: 'Internal deadline', title: 'The Internal Deadline (the date promised on an Imaginary deadline)', sort: 'promisedDate', sortText: SOON, sortDirs: ASC, tabs: TD },
       { id: 'phaseV', label: 'Phase', menu: 'facet', facets: ['phase'], sort: 'phaseBoard', sortText: BOARD, sortDirs: ASC, tabs: VT },
       { id: 'retainedBy', label: 'Retained by', menu: 'facet', facets: ['retainedBy'], sort: 'retainedBy', sortText: AZ, sortDirs: ASC, tabs: VT },
       { id: 'retainerStatus', label: 'Retainer status', menu: 'facet', facets: ['retainerStatus'], sort: 'retainerStatus', sortText: AZ, sortDirs: ASC, tabs: VT },
       { id: 'paymentStatus', label: 'Payment status', menu: 'facet', facets: ['paymentStatus'], sort: 'paymentStatus', sortText: AZ, sortDirs: ASC, tabs: VT },
-      { id: 'stageV', label: 'Stage', title: 'Case Stage', menu: 'facet', facets: ['stage'], sort: 'stageBoard', sortText: BOARD, sortDirs: ASC, tabs: VT },
+      { id: 'stageV', label: 'Stage', title: 'Case Stage', menu: 'facet', facets: ['stage'], sort: 'stageBoard', sortText: BOARD, sortDirs: ASC, tabs: TD },
       { id: 'portal', label: 'Client portal', title: 'Opens the client’s own portal page in a new tab', tabs: VT },
-      { id: 'officerV', label: 'Support officer', title: 'Case Support Officer', menu: 'facet', facets: ['officer'], sort: 'officer', sortText: AZ, sortDirs: ASC, tabs: VT },
+      { id: 'officerV', label: 'Support officer', title: 'Case Support Officer', menu: 'facet', facets: ['officer'], sort: 'officer', sortText: AZ, sortDirs: ASC, tabs: TD },
       { id: 'managerV', label: 'Case manager', menu: 'facet', facets: ['manager'], sort: 'managerV', sortText: AZ, sortDirs: ASC, tabs: VT },
-      { id: 'qPct', label: 'Questionnaire %', title: 'Questionnaire Readiness %', sort: 'qPct', sortText: PCT, sortDirs: DESC, tabs: VT },
-      { id: 'docPct', label: 'Documents uploaded %', title: 'Documents Uploaded %', sort: 'docPct', sortText: PCT, sortDirs: DESC, tabs: VT },
+      { id: 'qPct', label: 'Questionnaire %', title: 'Questionnaire Readiness %', sort: 'qPct', sortText: PCT, sortDirs: DESC, tabs: TD },
+      { id: 'docPct', label: 'Documents uploaded %', title: 'Documents Uploaded %', sort: 'docPct', sortText: PCT, sortDirs: DESC, tabs: TD },
     ],
   };
+  /* The page-only tab's own column (only when the page has the tab): who has the case for review. Its id, filter and sort
+     are the tab's key + 'With'. It comes last in this list; the tab's own column order (With third) is the page's (CM_TABCOLS). */
+  if (TODO) {
+    var WITH = TODO + 'With';
+    opts.cols.push({ id: WITH, label: 'With', title: 'Case Manager on Client Master: who has the case for review', menu: 'facet', facets: [WITH], sort: WITH, sortText: AZ, sortDirs: ASC, tabs: [TODO] });
+  }
+  return opts;
 }
 
 module.exports = { consultListSpec, consultListOpts, retainerListSpec, retainerListOpts, casesListSpec, casesListOpts };
