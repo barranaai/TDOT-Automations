@@ -248,3 +248,55 @@ test('textSegments: only http, https and mailto become links; trailing punctuati
   const big = L.textSegments('x'.repeat(L.MAX_TEXT + 10));
   assert.equal(big.length, 1); assert.ok(big[0].t.endsWith('(the rest of this email is not shown — open it in Outlook)'));
 });
+
+/* ══ review fixes (2026-11-19) ════════════════════════════════════════════════ */
+
+test('textSegments stays linear on a run of closing brackets — a crafted body (200,000 ")" / "]" / ").") is done in well under a second, never minutes', () => {
+  for (const tail of [')', ']', ').', '].']) {
+    const body = 'see https://www.canada.ca/a' + tail.repeat(Math.ceil(L.MAX_TEXT / tail.length));
+    const t0 = process.hrtime.bigint();
+    const segs = L.textSegments(body);
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    assert.ok(ms < 1000, `${JSON.stringify(tail)}: ${ms.toFixed(0)} ms`);
+    assert.deepEqual(segs[1], { u: 'https://www.canada.ca/a' }, tail);
+  }
+  // the same answers as before: a balanced bracket stays in the address, an unbalanced one and the punctuation do not
+  assert.deepEqual(L.textSegments('(see https://en.example.org/wiki/A_(b)).'), [{ t: '(see ' }, { u: 'https://en.example.org/wiki/A_(b)' }, { t: ').' }]);
+  assert.deepEqual(L.textSegments('[https://www.canada.ca/x?a=[1]]'), [{ t: '[' }, { u: 'https://www.canada.ca/x?a=[1]' }, { t: ']' }]);
+});
+
+test('the list preview hides link secrets exactly like the opened email (critique #10) — the pre-consult chase\'s lead code never shows', () => {
+  const code = 'LEAD-' + 'a1b2c3d4'.repeat(4);
+  const k = keys();
+  const chase = appCopy({ _proved: { leadId: '11' }, subject: 'Please complete your pre-consultation form',
+    bodyPreview: `Hi Asha, please complete your pre-consultation form before your call:\r\n\r\nhttps://tdot-automations.onrender.com/consult/11?t=${code}\r\n\r\nReply to this email if you have questions.` });
+  const it = R.listItem(chase, R.matchMessage(chase, k));
+  assert.ok(!it.preview.includes('a1b2c3d4'), it.preview);
+  assert.ok(it.preview.includes('https://tdot-automations.onrender.com/consult/11?t=…hidden'));
+  assert.ok(it.preview.length <= 200);
+  // a link cut off at the end of Graph's preview keeps its secret hidden; a third-party token too
+  const cut = msg({ bodyPreview: 'x '.repeat(70) + `https://tdot-automations.onrender.com/consult/11?t=${code.slice(0, 14)}` });
+  const cutPrev = R.listItem(cut, R.matchMessage(cut, k)).preview;
+  assert.ok(!cutPrev.includes('a1b2'), cutPrev); assert.ok(cutPrev.endsWith('?t=…hidden'), cutPrev);
+  const third = msg({ bodyPreview: 'Join:  https://zoom.example.test/j/1?pwd=Secret123&lang=en' });
+  assert.equal(R.listItem(third, R.matchMessage(third, k)).preview, 'Join: https://zoom.example.test/j/1?pwd=…hidden&lang=en');
+});
+
+test('an email the office mailbox SENT, outside Sent Items, whose stamp was never read → not shown ("not checked"); once its stamp is read (open) the stamp decides — list and open agree', () => {
+  const k = keys({ q1Complete: true });
+  for (const folder of ['F-DEL', 'F-JUNK', 'F-IN', 'F-ARCHIVE']) {
+    const moved = appCopy({ parentFolderId: folder, subject: 'Your consultation is booked' });   // no ref in the subject
+    assert.equal(R.matchMessage(moved, k).out, 'unverified', folder);
+  }
+  // opening reads the stamp field by field (_stampKnown): another lead's booking copy → another record
+  const other = appCopy({ parentFolderId: 'F-DEL', subject: 'Your consultation is booked', _stampKnown: true, singleValueExtendedProperties: [prop('TdotLeadId', '999'), prop('TdotTo', CLIENT), prop('TdotKind', 'booking-invite')] });
+  assert.equal(R.matchMessage(other, k).out, 'other-record');
+  // a staff answer moved to Deleted Items: read, no stamp → shown when opened, "Staff", badged
+  const staff = appCopy({ parentFolderId: 'F-DEL', subject: 'Re: question', _stampKnown: true, singleValueExtendedProperties: [] });
+  const m = R.matchMessage(staff, k);
+  assert.deepEqual([m.include, m.direction, m.deleted], [true, 'staff', true]);
+  // in Sent Items with a complete stamp look: still a staff answer; the client's own mail in Deleted Items is unaffected
+  assert.equal(R.matchMessage(appCopy({ subject: 'Re: question' }), k).direction, 'staff');
+  const del = R.matchMessage(msg({ parentFolderId: 'F-DEL' }), k);
+  assert.deepEqual([del.include, del.direction], [true, 'client']);
+});

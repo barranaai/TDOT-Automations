@@ -506,3 +506,91 @@ test('attachmentView / safeName: control characters and path separators stripped
   assert.equal(svc.attachmentView({ id: 'A', name: 'x', contentType: 'text/html', size: 1 }).downloadable, false);
   assert.equal(svc.attachmentView({ id: 'A/B', name: 'x.pdf', size: 1 }).downloadable, false, 'an id outside the safe characters is never offered');
 });
+
+/* ══ review fixes (2026-11-19) ════════════════════════════════════════════════ */
+
+test('a capped TdotTo look: office-sent answers are "not checked" AND the list says so — never complete, never "No emails yet." (staffHidden)', async () => {
+  const otherCopy = (i) => APP(`o${i}`, { subject: 'Documents — 2026-SPE-017', singleValueExtendedProperties: [prop('TdotCaseItemId', '901'), prop('TdotTo', CLIENT)] });
+  const page = (i) => ({ value: Array.from({ length: 50 }, (_, j) => otherCopy(i * 50 + j)), '@odata.nextLink': `https://graph.microsoft.com/v1.0/users/${OFFICE}/mailFolders/sentitems/messages?to-page=${i + 1}` });
+  const staffAnswer = M('s1', { from: addr(OFFICE), sender: addr(OFFICE), toRecipients: [addr(CLIENT)], parentFolderId: 'F-SENT', subject: 'Re: question' });
+  await run({ search: [staffAnswer] }, async () => {
+    const keep = svc.io.get;
+    svc.io.get = async (url, headers) => {
+      const u = decodeURIComponent(url);
+      if (u.includes(`Name TdotTo' and ep/value eq '${CLIENT}'`)) return { data: page(0) };
+      const m = u.match(/sentitems\/messages\?to-page=(\d+)$/);
+      if (m) return { data: page(Number(m[1])) };
+      return keep(url, headers);
+    };
+    try {
+      const out = await svc.list(LIST);
+      assert.deepEqual(out.items, []);
+      assert.deepEqual([out.counts.otherRecords, out.counts.unverified], [100, 1], 'the staff answer could not be told from an app copy');
+      assert.equal(out.sources.office.ok, true);
+      assert.equal(out.sources.office.cappedApp, true);
+      assert.equal(out.complete, false);
+      assert.equal(out.staffHidden, true);
+    } finally { svc.io.get = keep; }
+  });
+  // nothing cut → complete, nothing hidden
+  await run({ search: [staffAnswer] }, async () => {
+    const out = await svc.list(LIST);
+    assert.deepEqual([out.complete, out.staffHidden, out.items.map((i) => i.direction)], [true, false, ['staff']]);
+  });
+});
+
+test('the consultations not all read (partial / unreadable) → never complete (lead emails and lead stamps were not all searched); different people named alone stays complete', async () => {
+  const base = { leads: [{ leadId: '11', via: 'link', email: CLIENT }], multipleClaimants: false, claimantCount: 1, partial: false };
+  for (const [leadSet, complete] of [[{ ...base, partial: true }, false], [new Error('Monday down'), false], [{ ...base, multipleClaimants: true, claimantCount: 2 }, true], [base, true]]) {
+    await run({ leadSet }, async () => {
+      const out = await svc.list(LIST);
+      assert.equal(out.complete, complete, leadSet instanceof Error ? 'unreadable' : JSON.stringify(leadSet));
+      assert.equal(out.staffHidden, false);
+      const pub = svc.forViewer(out, ADMIN);
+      assert.equal(pub._keys, undefined); assert.ok(!JSON.stringify(pub).includes('leadsPartial'), 'nothing new reaches the page');
+    });
+  }
+});
+
+test('more than 10 linked leads: the first 10 are asked for, a copy stamped for the 11th is still THIS client\'s (never "another record"), and the list is not complete', async () => {
+  const leads = Array.from({ length: 11 }, (_, i) => ({ leadId: String(100 + i), via: 'link', email: CLIENT }));
+  const q1 = { [`TdotTo=${CLIENT}`]: [APP('L11', { subject: 'Your consultation is booked', singleValueExtendedProperties: [prop('TdotLeadId', '110'), prop('TdotTo', CLIENT), prop('TdotKind', 'booking-invite')] })] };
+  await run({ q1, leadSet: { leads, multipleClaimants: false, claimantCount: 11, partial: false } }, async (h) => {
+    const out = await svc.list(LIST);
+    assert.deepEqual(out.items.map((i) => [i.id, i.how, i.direction]), [['L11', 'stamp', 'app']]);
+    assert.equal(out.counts.otherRecords, 0);
+    assert.equal(out.keys.leadCount, 11);
+    assert.equal(h.urls.filter((u) => u.includes("Name TdotLeadId' and ep/value eq")).length, 10, 'the first 10 leads are asked for');
+    assert.ok(!h.urls.some((u) => u.includes("Name TdotLeadId' and ep/value eq '110'")));
+    assert.deepEqual([out.sources.office.cappedApp, out.complete, out.staffHidden], [true, false, false]);
+  });
+});
+
+test('an app copy of ANOTHER lead moved out of Sent Items (no ref in its subject): the list leaves it out ("not checked"), opening it is refused — list and open agree; a moved staff answer opens', async () => {
+  const moved = APP('m1', { subject: 'Your consultation is booked', parentFolderId: 'F-DEL', uniqueBody: { content: 'other lead' }, body: { content: 'other lead' } });
+  const staff = M('s2', { from: addr(OFFICE), sender: addr(OFFICE), toRecipients: [addr(CLIENT)], parentFolderId: 'F-DEL', subject: 'Re: question', uniqueBody: { content: 'staff text' }, body: { content: 'staff text' } });
+  await run({ search: [moved, staff], messages: { [`${OFFICE}/m1`]: moved, [`${OFFICE}/s2`]: staff }, stamps: { m1: { TdotLeadId: '999', TdotTo: CLIENT, TdotKind: 'booking-invite' } } }, async () => {
+    const out = svc.forViewer(await svc.list(LIST), ADMIN);
+    assert.deepEqual(out.items, [], 'another lead\'s subject / preview never shows on this case');
+    assert.equal(out.counts.unverified, 2);
+    assert.equal(out.complete, true, 'the looks themselves were complete');
+    await assert.rejects(svc.open({ ...LIST, source: 'office', id: 'm1', viewer: ADMIN }), (e) => e.notFound && e.why === 'other-record');
+    const r = await svc.open({ ...LIST, source: 'office', id: 's2', viewer: ADMIN });
+    assert.deepEqual([r.item.direction, r.item.deleted, r.unique], ['staff', true, [{ t: 'staff text' }]]);
+  });
+});
+
+test('attachment names: trailing dots / spaces, a control character or the 150-character cut can never turn a name into a blocked type; Outlook\'s Level-1 equivalents are blocked; an attached email is judged by its .eml name', () => {
+  const v = (name, o = {}) => svc.attachmentView({ id: 'A', name, size: 1, ...o });
+  for (const name of ['x.exe.', 'x.exe .', 'x.EXE. . ', 'x.wsf', 'x.jse', 'x.vbe', 'x.com', 'x.pif', 'x.cpl', 'x.msc', 'x.reg', 'x.chm', 'x.url', 'x.mht', 'x.xhtml', 'x.jar', 'x.dll', 'x.vhdx', 'x.appx', 'x.exe\u0000', 'x.exe\u0007', 'a'.repeat(146) + '.exe.pdf']) {
+    const r = v(name);
+    assert.deepEqual([r.downloadable, r.note], [false, 'This file type can\'t be downloaded here — open it in Outlook.'], JSON.stringify(name));
+  }
+  assert.equal(v('x', { contentType: 'application/xhtml+xml' }).downloadable, false);
+  for (const name of ['report.pdf', 'Report.PDF.', 'scan.jpg', 'notes.docx', 'letter from example.com.pdf']) assert.equal(v(name).downloadable, true, name);
+  assert.equal(v('Report.PDF. .').name, 'Report.PDF', 'saved without the trailing dots / spaces');
+  assert.equal(svc.safeName('x.exe .', 'file'), 'x.exe');
+  assert.equal(svc.safeName('...', 'file'), 'attachment');
+  const item = v('Message from info@example.com', { '@odata.type': '#microsoft.graph.itemAttachment' });
+  assert.deepEqual([item.name, item.downloadable], ['Message from info@example.com.eml', true]);
+});

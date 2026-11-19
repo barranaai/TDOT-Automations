@@ -242,3 +242,52 @@ test('the staff guide: one how-to for the Emails tab — Monday sign-in, read-on
   assert.equal(h[0].lane, 'case');
   for (const re of [/Sign in with Monday/, /read-only/, /Copies of app emails start 19 Nov 2026/, /old no-reply address/, /Not switched on yet\.$/]) assert.match(h[0].answer, re);
 });
+
+/* ══ review fixes (2026-11-19) ════════════════════════════════════════════════ */
+
+test('phones: a row never grows wider than the screen — the one-column track has a 0 minimum and the text column may shrink (the nowrap preview no longer widens the page)', () => {
+  const css = W.CASE_EMAILS_CSS;
+  const mobile = css.match(/@media \(max-width: 600px\) \{(.*)\}/)[1];
+  assert.match(mobile, /\.cem-row \{ grid-template-columns:minmax\(0,1fr\); \}/);
+  assert.ok(!/grid-template-columns:1fr\b/.test(css), 'no bare 1fr track (its minimum is the min-content width)');
+  assert.match(css, /\.cem-main \{ min-width:0; \}/);
+});
+
+test('widget: a 503 on opening an email / downloading an attachment shows the plain words, never the code "temporarily-unavailable"; other refusals keep their words', async () => {
+  const BUSY = 'Could not read the emails just now — retry in a moment.';
+  const busy = { s: 503, j: { ok: false, error: 'temporarily-unavailable', message: BUSY } };
+  let w = widget({ answers: { '/message?': busy } });
+  w.d.tab.click(); await tick();
+  w.d.byId['cem-list'].childNodes[0].onclick(); await tick();
+  let t = w.dialogs[0].box.textContent;
+  assert.ok(t.includes(BUSY) && !t.includes('temporarily-unavailable'), t);
+  w = widget({ answers: { '/message?': { s: 404, j: { ok: false, error: 'This email is not on this case any more (it may have been moved or deleted). Reload the list.' } } } });
+  w.d.tab.click(); await tick();
+  w.d.byId['cem-list'].childNodes[0].onclick(); await tick();
+  assert.ok(w.dialogs[0].box.textContent.includes('This email is not on this case any more'));
+  // the download: open fine, the attachment answers 503 / 415
+  const open = { s: 200, j: { ok: true, item: { ...LIST().items[0] }, from: { name: '', address: 'asha.sample@example.org' }, toPeople: [], ccPeople: [], replyToPeople: [], unique: [{ t: 'x' }], whole: null,
+    attachments: [{ id: 'AT-1', name: 'passport.pdf', size: 10, kind: 'file', downloadable: true, note: '' }], inlineImages: 0 } };
+  for (const [ans, want] of [[busy, BUSY], [{ s: 415, j: { ok: false, error: 'This file type can\'t be downloaded here — open it in Outlook.' } }, 'This file type can\'t be downloaded here']]) {
+    w = widget({ answers: { '/message?': open, '/attachment?': ans } });
+    w.d.tab.click(); await tick();
+    w.d.byId['cem-list'].childNodes[0].onclick(); await tick();
+    const box = w.dialogs[0].box;
+    box.all().find((n) => n.tagName === 'BUTTON' && n.textContent === 'Download').onclick(); await tick();
+    t = box.textContent;
+    assert.ok(t.includes(want) && !t.includes('temporarily-unavailable'), t);
+  }
+});
+
+test('widget: a list cut short with every mailbox answering (a cap / the consultations not all read) — "not everything could be checked", never "No emails yet."; staffHidden → its own banner', async () => {
+  const w = widget({ answers: { 'case-emails/2026-EE-900': { s: 200, j: LIST({ complete: false, staffHidden: true, items: [], counts: { unverified: 1 }, sources: { office: { ok: true, failed: [], cappedApp: true }, old: { ok: true, failed: [] } } }) } } });
+  w.d.tab.click(); await tick();
+  assert.equal(w.text(), 'No emails found so far — not everything could be checked (see above).');
+  const b = w.d.byId['cem-banners'].textContent;
+  assert.ok(b.includes('Too many app emails to this address to check them all, so answers sent from the office mailbox are not shown — open Outlook for them.'), b);
+  assert.ok(b.includes('Some older app emails are not shown'));
+  assert.ok(w.d.byId['cem-foot'].textContent.includes('1 email could not be checked against this case'));
+  const plain = widget({ answers: { 'case-emails/2026-EE-900': { s: 200, j: LIST({ staffHidden: false }) } } });
+  plain.d.tab.click(); await tick();
+  assert.ok(!plain.d.byId['cem-banners'].textContent.includes('Too many app emails'));
+});

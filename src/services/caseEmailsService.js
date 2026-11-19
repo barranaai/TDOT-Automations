@@ -14,8 +14,10 @@
  *
  * The list (one Graph plan, each source answers for itself — a failed source is never "no emails"):
  *   Q1 office Sent Items, $filter on the stamp: TdotCaseItemId = this case (paged up to a cap), TdotLeadId = each
- *      lead of the case, TdotTo = each client address; $expand reads the stamp fields back (critique #4) — a copy
- *      found by TdotTo whose case / lead fields did not come back is left out ("not checked").
+ *      lead of the case (the first 10), TdotTo = each client address; $expand reads the stamp fields back
+ *      (critique #4) — a copy found by TdotTo whose case / lead fields did not come back is left out ("not
+ *      checked"). Any cap (pages, leads) or a partial consultation read → the list is NOT complete (never "No
+ *      emails yet.", kept 15 s only); a cut TdotTo look also hides the office's own answers (staffHidden).
  *   Q2 office, every folder: $search "participants:a OR … OR subject:\"REF\"" (≤ 300, next links; never mixed with
  *      $filter / $orderby). Graph refusing the quoted ref → once more with the ref unquoted.
  *   Q3 office, the last 30 minutes ($filter receivedDateTime ge …, newest first, 50) — the search index lags.
@@ -69,8 +71,24 @@ const CM_EMAIL_COL = 'text_mm0xw6bp';
 const CM_REF_COL = 'text_mm142s49';
 const ID_RE = /^[A-Za-z0-9_=-]{1,512}$/;
 const EMAIL_RE = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
-const BLOCKED_EXT = new Set(['html', 'htm', 'svg', 'js', 'vbs', 'hta', 'lnk', 'exe', 'bat', 'cmd', 'ps1', 'scr', 'msi', 'iso', 'img']);
-const BLOCKED_TYPES = /^(text\/html|image\/svg\+xml|application\/(x-)?javascript|text\/javascript|application\/hta|application\/x-msdownload)\b/i;
+/**
+ * Never downloaded here ("open it in Outlook"): web pages / scripts / programs / shortcuts / installers / disk
+ * images — the spec's list plus their common equivalents and the rest of Outlook's own Level-1 blocked types
+ * (the tab must not hand out what Outlook itself refuses to open).
+ */
+const BLOCKED_EXT = new Set([
+  // web pages and pictures that run script
+  'html', 'htm', 'xhtml', 'shtml', 'mht', 'mhtml', 'svg', 'htc', 'xbap',
+  // scripts
+  'js', 'jse', 'vbs', 'vbe', 'vb', 'vbp', 'wsf', 'wsh', 'wsc', 'ws', 'wsb', 'hta', 'sct', 'jar', 'jnlp', 'bat', 'cmd',
+  'ps1', 'psm1', 'psd1', 'ps1xml', 'ps2', 'ps2xml', 'psc1', 'psc2', 'msh', 'msh1', 'msh2', 'mshxml', 'msh1xml', 'msh2xml',
+  // programs, shortcuts, settings
+  'exe', 'com', 'pif', 'scr', 'cpl', 'msc', 'reg', 'inf', 'ins', 'isp', 'chm', 'hlp', 'dll', 'sys', 'xll', 'gadget',
+  'lnk', 'url', 'scf', 'shb', 'shs', 'website', 'settingcontent-ms', 'appref-ms', 'application', 'diagcab',
+  // installers and disk images
+  'msi', 'msp', 'mst', 'msu', 'appx', 'appxbundle', 'msix', 'msixbundle', 'appinstaller', 'iso', 'img', 'vhd', 'vhdx',
+]);
+const BLOCKED_TYPES = /^(text\/html|application\/xhtml\+xml|image\/svg\+xml|application\/(x-)?javascript|text\/javascript|application\/hta|application\/x-msdownload)\b/i;
 const OPEN_SELECT = rules.SELECT + ',uniqueBody,body';
 
 const s = (v) => String(v == null ? '' : v).trim();
@@ -240,7 +258,11 @@ async function caseKeys({ itemId, caseRef, row }) {
   const ownDomains = [...new Set(['tdotimm.com', office.split('@')[1], old.split('@')[1]].filter(Boolean))];
   return {
     itemId: s(itemId), caseRef: ref,
-    leadIds: [...new Set(leads.map((l) => s(l.leadId)).filter((x) => rules.ITEM_ID_RE.test(x)))].slice(0, MAX_LEADS),
+    // EVERY lead id for the match (a copy stamped for the 11th lead is this client's, never "another record");
+    // the stamp look asks for the first MAX_LEADS only and then says the list is not complete (readOffice)
+    leadIds: [...new Set(leads.map((l) => s(l.leadId)).filter((x) => rules.ITEM_ID_RE.test(x)))],
+    // the consultations could not be read in full → the lead emails / lead stamps were not all searched: never complete
+    leadsPartial: !set || !!set.partial,
     addresses: got.addresses, shared, banners,
     officeBox: office, oldBox: old, ownDomains, ownAddresses: skipAddresses.map(low),
     folders: null, q1Complete: false,
@@ -279,9 +301,10 @@ async function readOffice(keys) {
   // Q1 — the app's stamped copies: this case, each lead, each address (the filter proves what it matched)
   const q1 = [
     { name: 'TdotCaseItemId', key: 'caseItemId', value: keys.itemId, max: CASE_PAGES },
-    ...keys.leadIds.map((l) => ({ name: 'TdotLeadId', key: 'leadId', value: l, max: OTHER_PAGES })),
+    ...keys.leadIds.slice(0, MAX_LEADS).map((l) => ({ name: 'TdotLeadId', key: 'leadId', value: l, max: OTHER_PAGES })),
     ...keys.addresses.map((a) => ({ name: 'TdotTo', key: 'to', value: a, max: OTHER_PAGES })),
   ];
+  if (keys.leadIds.length > MAX_LEADS) capped.app = true;   // the oldest leads' own look was not made
   // complete = every TdotTo look answered in full: then any app copy to a client address is in hand with its
   // stamp, and an office-sent email found only by the search is a staff answer (matchMessage, "unverified")
   let toComplete = true;
@@ -402,7 +425,10 @@ async function build({ itemId, caseRef, row }) {
   return {
     caseRef: keys.caseRef,
     loadedAt: new Date(io.now()).toISOString(),
-    complete: office.ok && old.ok,
+    // a capped stamp look or a partial consultation read never looks complete ("No emails yet." / the 90 s cache)
+    complete: office.ok && old.ok && !office.capped.app && !keys.leadsPartial,
+    // a TdotTo look was cut: office-sent answers could not be told from app copies, so they are left out — say so
+    staffHidden: office.ok && !office.q1Complete,
     sources: {
       office: { ...source(office, SOURCE_NAMES.office), cappedApp: !!office.capped.app, cappedSearch: !!office.capped.search },
       old: { ...source(old, SOURCE_NAMES.old), capped: !!old.capped },
@@ -527,16 +553,29 @@ function attachmentKind(a) {
   if (/referenceAttachment/i.test(t)) return 'reference';
   return 'file';
 }
+/** The name the file is saved under: no control characters or path separators, at most 150 characters, and no
+ *  trailing dots / spaces (Windows drops them, which would change the extension the block list saw). */
 function safeName(name, kind) {
-  let n = String(name == null ? '' : name).replace(/[\u0000-\u001f\u007f/\\]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 150);
+  let n = String(name == null ? '' : name).replace(/[\u0000-\u001f\u007f/\\]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 150).replace(/[\s.]+$/, '');
   if (!n) n = 'attachment';
   if (kind === 'item' && !/\.eml$/i.test(n)) n += '.eml';
   return n;
 }
-function blockedWhy(a) {
-  const name = s(a && a.name).toLowerCase();
-  const ext = name.includes('.') ? name.split('.').pop() : '';
-  if (BLOCKED_EXT.has(ext) || BLOCKED_TYPES.test(s(a && a.contentType))) return 'This file type can\'t be downloaded here — open it in Outlook.';
+/** The extension Windows would act on: lower-cased, trailing dots and spaces dropped ("x.exe ." → "exe"). */
+function extOf(name) {
+  const n = String(name == null ? '' : name).toLowerCase().replace(/[\s.]+$/, '');
+  const at = n.lastIndexOf('.');
+  return at === -1 ? '' : n.slice(at + 1);
+}
+/**
+ * Blocked by the name as SENT and by the name as SAVED (safeName's cut / clean-up must never make an ".exe").
+ * An attached email is always saved as .eml, so only its saved name counts (its "name" is a subject — "… from
+ * example.com" is not a program).
+ */
+function blockedWhy(a, kind) {
+  const saved = safeName(a && a.name, kind);
+  const names = kind === 'item' ? [saved] : [a && a.name, saved];
+  if (names.some((n) => BLOCKED_EXT.has(extOf(n))) || BLOCKED_TYPES.test(s(a && a.contentType))) return 'This file type can\'t be downloaded here — open it in Outlook.';
   return '';
 }
 function attachmentView(a) {
@@ -544,7 +583,7 @@ function attachmentView(a) {
   const size = Number(a && a.size) || 0;
   let note = '';
   if (kind === 'reference') note = 'A link — open it in Outlook.';
-  else if (blockedWhy(a)) note = blockedWhy(a);
+  else if (blockedWhy(a, kind)) note = blockedWhy(a, kind);
   else if (size > ATTACH_MAX_BYTES) note = 'Too large to download here — open it in Outlook.';
   return { id: s(a.id), name: safeName(a.name, kind), size, kind, downloadable: !note && ID_RE.test(s(a.id)), note };
 }

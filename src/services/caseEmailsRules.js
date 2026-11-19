@@ -10,7 +10,9 @@
  *     (no case id) TdotCaseRef is this case, or (neither) TdotLeadId is one of this case's leads, or (no case /
  *     lead stamp at all) TdotTo is one of this client's addresses. A stamp naming another case / lead → OUT
  *     (counted "belong to other records"). What a Graph FILTER proved counts as read (the filter itself proves
- *     ownership); a copy found only by TdotTo whose other stamp fields could not be read → OUT ("not checked").
+ *     ownership); a copy found only by TdotTo whose other stamp fields could not be read → OUT ("not checked");
+ *     so is an email the office mailbox sent, outside Sent Items, whose stamp was never read (the list's stamp
+ *     look covers Sent Items only; opening it reads the stamp, so both views agree).
  *  2. No stamp, the subject names case refs (emailLeadsService.subjectCaseRefs): in only when THIS ref is one.
  *  3. No stamp, no ref: in when a participant (from, sender, to, cc, reply-to — NEVER bcc) is one of this
  *     client's addresses; a bulk mail (more than 10 to + cc) is out.
@@ -24,6 +26,7 @@
 const { propId, NS } = require('../utils/mailTag');
 const { odataStr } = require('../utils/graphRead');
 const { subjectCaseRefs } = require('./emailLeadsService');
+const { textSegments } = require('../utils/caseEmailLinks');   // requires nothing itself — no cycle
 
 /** The stamp fields read back on a message (TdotSendId is not needed to decide anything). */
 const STAMP_NAMES = Object.freeze(['TdotCaseItemId', 'TdotCaseRef', 'TdotLeadId', 'TdotTo', 'TdotKind']);
@@ -238,8 +241,11 @@ function matchMessage(msg, keys) {
       if (p.to.length + p.cc.length > BULK_RECIPIENTS) return out('bulk');
       const hit = [p.from, p.sender, ...p.to, ...p.cc, ...p.replyTo].find((a) => a && A.has(a));
       if (!hit) return out(p.bcc.some((a) => A.has(a)) ? 'bcc-only' : 'no-match');
-      // a copy in the office mailbox's Sent Items whose stamp we could not rule out (the stamp look failed / was cut)
-      if (src === 'office' && folder === 'sentitems' && fromAddr === low(keys.officeBox) && !keys.q1Complete) return out('unverified');
+      // an email the office mailbox SENT whose stamp was never read: in Sent Items while the stamp look failed / was
+      // cut, or anywhere else at all (the stamp look reads Sent Items only — an app copy moved to Deleted Items /
+      // Archive may be another record's). Fail closed. Opening reads the stamp itself (_stampKnown), so list and
+      // open agree; the cost is a staff answer moved out of Sent Items counts as "not checked" in the list.
+      if (src === 'office' && fromAddr === low(keys.officeBox) && !known && (folder !== 'sentitems' || !keys.q1Complete)) return out('unverified');
       how = 'address'; matched = hit; addrBased = true;
     }
   }
@@ -284,6 +290,15 @@ function dedupeSort(entries) {
 
 const person = (r) => ({ name: nameOf(r), address: addrOf(r) });
 
+/**
+ * The list's short preview: Graph's bodyPreview through the SAME link-secret hiding as the opened email (critique
+ * #10) — a pre-consult chase shows its link as text, so a portal / lead code would otherwise sit in the preview.
+ * Hidden first, then cut: a link cut off at the end keeps its ?t= hidden.
+ */
+function previewOf(msg) {
+  return textSegments(s(msg && msg.bodyPreview).replace(/\s+/g, ' ')).map((x) => (x.u != null ? x.u : x.t)).join('').slice(0, 200);
+}
+
 /** What the list shows for one email (no body; a short preview). PURE. */
 function listItem(msg, m) {
   return {
@@ -297,7 +312,7 @@ function listItem(msg, m) {
     to: ((msg.toRecipients || []).map(addrOf).filter(Boolean)).slice(0, 5),
     toMore: Math.max(0, (msg.toRecipients || []).length - 5),
     subject: s(msg.subject),
-    preview: s(msg.bodyPreview).replace(/\s+/g, ' ').slice(0, 200),
+    preview: previewOf(msg),
     hasAttachments: !!msg.hasAttachments,
     how: m.how, kind: kindLabel(m.kind),
     warnings: m.warnings || [],

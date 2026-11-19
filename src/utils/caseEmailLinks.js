@@ -109,16 +109,24 @@ function shownLink(raw) {
   return inert ? { t: shown } : { u: shown };
 }
 
-/** Trailing punctuation is not part of an address ("see https://x.com/a." / "(https://x.com/a)"). */
+/**
+ * Trailing punctuation is not part of an address ("see https://x.com/a." / "(https://x.com/a)").
+ * LINEAR on purpose: the brackets are counted once and the end is moved by index — re-counting the whole address
+ * for every trimmed ")" was quadratic, and a body of 200,000 ")" (anyone can send one to the office mailbox)
+ * froze the server for minutes when it was opened.
+ */
 function trimTail(url) {
-  let u = url;
-  for (;;) {
-    const last = u.slice(-1);
-    if (/[.,;:!?'"]/.test(last)) { u = u.slice(0, -1); continue; }
-    if (last === ')' && (u.match(/\(/g) || []).length < (u.match(/\)/g) || []).length) { u = u.slice(0, -1); continue; }
-    if (last === ']' && (u.match(/\[/g) || []).length < (u.match(/\]/g) || []).length) { u = u.slice(0, -1); continue; }
-    return u;
+  const n = { '(': 0, ')': 0, '[': 0, ']': 0 };
+  for (const ch of url) if (ch in n) n[ch]++;
+  let end = url.length;
+  while (end > 0) {
+    const last = url[end - 1];
+    if (/[.,;:!?'"]/.test(last)) { end--; continue; }
+    if (last === ')' && n['('] < n[')']) { n[')']--; end--; continue; }
+    if (last === ']' && n['['] < n[']']) { n[']']--; end--; continue; }
+    break;
   }
+  return url.slice(0, end);
 }
 
 const URL_RE = /\b(?:https?:\/\/|mailto:)[^\s<>"`]+/gi;
