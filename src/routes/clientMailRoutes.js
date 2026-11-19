@@ -13,6 +13,11 @@
  * GET /admin/client-mail/check[?sendId=…] — NAMED admins only (signed in with Monday AND on ADMIN_EMAILS —
  *   staffIdentity.namedAdminCheck); the shared team key alone is refused: the answer describes the office
  *   mailbox. Read-only. Every answer: private, no-store. Counts and booleans only (clientMailCheckService).
+ *
+ * GET /admin/client-mail/old-replies[?format=csv][&refresh=1] — NAMED admins only, the same gate. Everyone who wrote
+ *   to the old no-reply inbox and is a case or a lead, with whether info@ answered after (oldRepliesService).
+ *   Read-only. JSON by default; format=csv → the same rows as a download (attachment, nosniff). Private, no-store.
+ *   No list can be made (Monday or the old inbox could not be read) → 503 with plain words — never a partial list.
  */
 
 const { namedAdminCheck } = require('../utils/staffIdentity');
@@ -63,4 +68,26 @@ async function check(req, res, deps) {
   }
 }
 
-module.exports = { testEmail, check };
+async function oldReplies(req, res, deps) {
+  res.set('Cache-Control', 'private, no-store');
+  const r = namedAdminCheck(deps.staff(req), deps.isAdminEmail, { what: 'see who wrote to the old no-reply address', hint: '' });
+  if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.loginUrl ? { loginUrl: r.loginUrl } : {}) });
+  const q = req.query || {};
+  const format = typeof q.format === 'string' ? q.format.trim().toLowerCase() : '';
+  if (format && format !== 'json' && format !== 'csv') return res.status(400).json({ error: 'format must be json or csv.' });
+  const refresh = typeof q.refresh === 'string' && /^(1|true|yes)$/i.test(q.refresh.trim());
+  const svc = (deps && deps.oldReplies) || require('../services/oldRepliesService');
+  let out;
+  try { out = await svc.list({ refresh }); }
+  catch (err) {
+    const status = err && err.publicStatus;
+    return res.status(status || 500).json({ error: (status && err.publicError) || 'The old no-reply list could not be made.' });
+  }
+  if (format !== 'csv') return res.status(200).json(out);
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="${svc.csvFileName(out)}"`);
+  res.set('X-Content-Type-Options', 'nosniff');
+  return res.status(200).send(svc.toCsv(out.rows));
+}
+
+module.exports = { testEmail, check, oldReplies };

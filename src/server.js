@@ -891,6 +891,9 @@ app.post('/admin/email-leads/run', async (req, res) => {
 // (CLIENT_MAIL_FROM) on, can the app read that mailbox's Sent Items, and — with ?sendId= from a
 // POST /api/test-email {"client": true} — was the copy kept, and which stamp fields came back.
 app.get('/admin/client-mail/check', (req, res) => require('./routes/clientMailRoutes').check(req, res, { staff: tryStaffAuth, isAdminEmail: caseAccess.isAdminEmail }));
+// Old no-reply replies (Faran 2026-11-19, "start with #1"): ONE read-only list of the cases and leads who wrote to the
+// old no-reply inbox, and whether info@ answered after. NAMED admins only; JSON, or ?format=csv as a download.
+app.get('/admin/client-mail/old-replies', (req, res) => require('./routes/clientMailRoutes').oldReplies(req, res, { staff: tryStaffAuth, isAdminEmail: caseAccess.isAdminEmail }));
 
 // ─── Otter notes in OneDrive: READ-ONLY look (Faran 2026-10-28) ────────────────
 // Where Otter saves meeting notes (noreply@tdotimm.com's OneDrive) and what the files
