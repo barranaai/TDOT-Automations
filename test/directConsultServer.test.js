@@ -2,9 +2,6 @@
 // The live app has NO direct-only consultant (Faran 2026-11-09: Gauri is not a consultant).
 // The not-an-RCIC rules stay; these tests name one so the rules are still proven.
 process.env.DIRECT_ONLY_CONSULTANTS = 'Gauri Berde';
-// Money first (CONSULT_MONEY_FIRST, 2026-11-20) ships off: these tests are the switched-off app whatever the machine's
-// environment says. The tests of the switch set it themselves.
-delete process.env.CONSULT_MONEY_FIRST;
 
 // Direct consultation, commit 2 — the server (step 2, 2026-11-09). "＋ Direct consultation":
 // a consultation booked OUTSIDE the app (Melanie books most in Square) added by hand —
@@ -32,6 +29,12 @@ const retainer2   = require('../src/services/retainerService2');
 const updates     = require('../src/services/updatesService');
 const routing     = require('../config/consultantRouting');
 const C           = require('../src/data/newLeadsBoard.json').columns;
+
+// Money first (CONSULT_MONEY_FIRST, 2026-11-20) ships off: these tests are the switched-off app whatever the machine's
+// environment or its .env file says. The tests of the switch set it themselves.
+// This line must stay AFTER the requires above: the first require of app code loads .env (config/monday.js calls
+// dotenv), and dotenv fills in any variable that is not set — a delete placed before the requires is undone.
+delete process.env.CONSULT_MONEY_FIRST;
 
 function stub(obj, key, fn) { const orig = obj[key]; obj[key] = fn; return () => { obj[key] = orig; }; }
 function quiet() { const l = console.log, w = console.warn; console.log = () => {}; console.warn = () => {}; return () => { console.log = l; console.warn = w; }; }

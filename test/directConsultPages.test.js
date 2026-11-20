@@ -199,6 +199,7 @@ function popupWorld({ matches = null, answer = { s: 200, j: { ok: true, message:
   };
   el('dq-fees').querySelectorAll = () => [];
   const posts = [];
+  const net = { lookup: null };   // a test may answer the look-up itself: net.lookup = (url) => a promise of the response
   const dlg = { box, openId: 1, still: () => true, setBusy(on) { dlg.busy = on; }, close() { dlg.closed = true; return true; }, tryClose() { dlg.closed = true; } };
   const ctx = {
     DQ_FORM: DQ.dqFormHtml(), DQ_OPTS: null, Intl, Date, Math, Number, String, isFinite, isNaN, encodeURIComponent, JSON, setTimeout, clearTimeout,
@@ -210,7 +211,10 @@ function popupWorld({ matches = null, answer = { s: 200, j: { ok: true, message:
     location: { pathname: '/admin/consultations' },
     document: { getElementById: (id) => el(id) },
     fetch: (url, o) => {
-      if (String(url).startsWith('/api/consultation/client-matches')) return Promise.resolve({ ok: true, json: () => Promise.resolve(matches || { clients: [], cases: [], leads: [] }) });
+      if (String(url).startsWith('/api/consultation/client-matches')) {
+        if (net.lookup) return net.lookup(String(url));
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(matches || { clients: [], cases: [], leads: [] }) });
+      }
       posts.push({ url, body: JSON.parse(o.body) });
       return Promise.resolve({ status: answer.s, json: () => Promise.resolve(answer.j) });
     },
@@ -219,7 +223,7 @@ function popupWorld({ matches = null, answer = { s: 200, j: { ok: true, message:
   vm.runInContext(DQ.DQ_JS + '\nDQ_OPTS=' + JSON.stringify({ ...OPTIONS, ...options }) + ';\nopenDirectConsult();', ctx);
   const pickRadio = (n, v) => { R[n].forEach((r) => { r.checked = r.value === v; }); const r = R[n].find((x) => x.value === v); if (r && r.onchange) r.onchange({}); };
   const type = (id, v, ev = 'input') => { el(id).value = v; el(id).fire(ev); };
-  return { el, R, pickRadio, type, posts, dlg, ctx, settle: () => new Promise((r) => setTimeout(r, 20)) };
+  return { el, R, pickRadio, type, posts, dlg, ctx, net, settle: () => new Promise((r) => setTimeout(r, 20)) };
 }
 
 test('pop-up: a future Square booking — the payload the server gets (date and time split, the fee in cents, "in Square", no package, a new row)', async () => {
@@ -422,6 +426,9 @@ test('pop-up: the server refuses "Free" with no reason (a page left open from be
 
 const PAY_FIRST_LINE = 'A new client pays first. “Not paid yet” is only for an existing client (about their current file) or a follow-up.';
 const NO_FILE_LINE = 'The app finds no file for this email or phone, so “Not paid yet” is not offered.';
+const TYPE_FIRST_LINE = 'Type the client’s email or phone first — “Not paid yet” is offered when the app finds their file.';
+const LOOKING_LINE = 'Looking for this client’s file…';
+const LOOK_FAILED_LINE = 'The app could not look this client up just now. Click in the email or phone box and out again to try once more.';
 const ON = { options: { moneyFirst: true } };
 const notPaid = (w) => w.R['dq-pay'].find((r) => r.value === 'none');
 const offered = (w) => notPaid(w).disabled !== true;
@@ -486,10 +493,128 @@ test('money first ON, pop-up: "existing client" picked but no file found — gre
   w = popupWorld({ ...ON, matches: { clients: [], cases: [], leads: [{ id: '88', name: 'Asha Example', hasCase: true, conversionStatus: 'Retained' }] } });
   filled(w, { choice: 'existing' }); await lookedUp(w);
   assert.equal(offered(w), true); assert.equal(hint(w), '');
-  // the look-up did not answer (or there is no email / phone yet): greyed — the server would refuse too
+  // no email / phone typed yet: greyed — but the app has not looked, so it does not say "finds no file"
   w = popupWorld(ON);
   w.pickRadio('dq-choice', 'existing');
+  assert.equal(offered(w), false); assert.equal(hint(w), TYPE_FIRST_LINE);
+  // an email that is taken out again is "nothing typed" again
+  filled(w, { choice: 'existing' }); await lookedUp(w);
+  assert.equal(hint(w), NO_FILE_LINE);
+  w.type('dq-email', ''); await lookedUp(w);
+  assert.equal(offered(w), false); assert.equal(hint(w), TYPE_FIRST_LINE);
+});
+
+/* The line under Payment says what the app KNOWS (review 2026-11-20): "finds no file" only after a look-up that
+   answered. And one failed look-up never takes a ticked "Not paid yet" away from a client whose file is on screen. */
+const http500 = () => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: 'Something went wrong' }) });
+const WITH_CASE = { clients: [], cases: [A_CASE], leads: [] };
+const NOTHING = { clients: [], cases: [], leads: [] };
+
+test('money first ON, pop-up: the four lines for "existing client" with no file held are in the browser code — nothing typed, looking, could not look, no file', () => {
+  for (const [name, line] of [['DQ_TYPE_FIRST', TYPE_FIRST_LINE], ['DQ_LOOKING', LOOKING_LINE], ['DQ_LOOK_FAILED', LOOK_FAILED_LINE], ['DQ_NO_FILE', NO_FILE_LINE]]) {
+    assert.ok(DQ.DQ_JS.includes('var ' + name + "='" + line + "';"), name);
+  }
+});
+
+test('money first ON, pop-up: while the look-up is still running the line says "Looking…", never "finds no file"; it goes when the answer comes', async () => {
+  const w = popupWorld(ON);
+  let answer; w.net.lookup = () => new Promise((res) => { answer = res; });
+  filled(w, { choice: 'existing' });
+  w.el('dq-email').fire('blur'); await w.settle();          // asked, no answer yet
+  assert.equal(offered(w), false, 'greyed while nothing is known');
+  assert.equal(hint(w), LOOKING_LINE);
+  answer({ ok: true, status: 200, json: () => Promise.resolve(WITH_CASE) }); await w.settle();
+  assert.equal(offered(w), true); assert.equal(hint(w), '');
+  // a slow answer of "nothing found" ends in the true line
+  const w2 = popupWorld(ON);
+  let answer2; w2.net.lookup = () => new Promise((res) => { answer2 = res; });
+  filled(w2, { choice: 'existing' }); w2.el('dq-email').fire('blur'); await w2.settle();
+  assert.equal(hint(w2), LOOKING_LINE);
+  answer2({ ok: true, status: 200, json: () => Promise.resolve(NOTHING) }); await w2.settle();
+  assert.equal(offered(w2), false); assert.equal(hint(w2), NO_FILE_LINE);
+});
+
+test('money first ON, pop-up: ONE failed look-up (an HTTP 500, or no connection) after "Not paid yet" was ticked keeps the tick, the file on screen and the choice — the email and phone are the same ones', async () => {
+  for (const [what, failure] of [['HTTP 500', http500], ['no connection', () => Promise.reject(new Error('offline'))], ['an answer that is not JSON', () => Promise.resolve({ ok: true, status: 200, json: () => Promise.reject(new Error('bad')) })]]) {
+    const w = popupWorld({ ...ON, matches: WITH_CASE });
+    filled(w, { choice: 'existing' }); await lookedUp(w);
+    w.pickRadio('dq-pay', 'none');
+    assert.equal(notPaid(w).checked, true, what);
+    const panel = w.el('dq-match').innerHTML;
+    assert.ok(panel.includes('2026-SP-001'), 'the case is listed');
+    w.net.lookup = failure;
+    await lookedUp(w);                                        // leaving the email box again: the look-up fails this once
+    assert.equal(notPaid(w).checked, true, what + ': the tick stays');
+    assert.equal(offered(w), true, what + ': still offered');
+    assert.equal(hint(w), '', what + ': no false line');
+    assert.equal(w.el('dq-match').innerHTML, panel, what + ': the file found a moment ago is still shown');
+    w.pickRadio('dq-pay', 'waived');
+    assert.equal(w.el('dq-reason').value, 'Existing client — about their current file', 'Free still works as before');
+    w.pickRadio('dq-pay', 'none');
+    w.el('dq-save').onclick(); await w.settle();
+    assert.equal(w.posts.length, 1, what);
+    assert.deepEqual([w.posts[0].body.choice, w.posts[0].body.payment], ['existing', { kind: 'none' }], 'the server is the judge on Save');
+  }
+});
+
+test('money first ON, pop-up: a failed look-up after the email was CHANGED empties the match — the file of the earlier email never vouches for the new one; the line says the app could not look, and the next good answer brings it back', async () => {
+  for (const [what, failure] of [['HTTP 500', http500], ['no connection', () => Promise.reject(new Error('offline'))]]) {
+    const w = popupWorld({ ...ON, matches: WITH_CASE });
+    filled(w, { choice: 'existing' }); await lookedUp(w);
+    w.pickRadio('dq-pay', 'none');
+    assert.equal(offered(w), true);
+    w.net.lookup = failure;
+    w.el('dq-email').value = 'someone.else@example.com';
+    await lookedUp(w);
+    assert.equal(w.el('dq-match').innerHTML, '', what + ': the panel is emptied');
+    assert.equal(offered(w), false, what); assert.equal(notPaid(w).checked, false, what + ': unticked');
+    assert.equal(hint(w), LOOK_FAILED_LINE, what + ': not "finds no file" — the app did not look');
+    w.net.lookup = null;                                      // the look-up works again
+    await lookedUp(w);
+    assert.equal(offered(w), true, what); assert.equal(hint(w), '');
+  }
+  // the very first look-up fails: nothing is held, the line says so; a phone number alone works the same way
+  const w = popupWorld(ON);
+  w.net.lookup = http500;
+  w.pickRadio('dq-choice', 'existing'); w.type('dq-phone', '416 555 0100'); w.el('dq-phone').fire('blur'); await w.settle();
+  assert.equal(offered(w), false); assert.equal(hint(w), LOOK_FAILED_LINE);
+  // a new matter keeps the general line whatever the look-up did
+  w.pickRadio('dq-choice', 'new');
+  assert.equal(hint(w), PAY_FIRST_LINE);
+});
+
+test('money first ON, pop-up: the app looked and found no file, then one look-up for the SAME email fails — the line still says "finds no file" (that answer stands)', async () => {
+  const w = popupWorld({ ...ON, matches: NOTHING });
+  filled(w, { choice: 'existing' }); await lookedUp(w);
+  assert.equal(hint(w), NO_FILE_LINE);
+  w.net.lookup = http500;
+  await lookedUp(w);
   assert.equal(offered(w), false); assert.equal(hint(w), NO_FILE_LINE);
+  // and asking again for the same email does not flicker through "Looking…"
+  let answer; w.net.lookup = () => new Promise((res) => { answer = res; });
+  w.el('dq-email').fire('blur'); await w.settle();
+  assert.equal(hint(w), NO_FILE_LINE);
+  answer({ ok: true, status: 200, json: () => Promise.resolve(WITH_CASE) }); await w.settle();
+  assert.equal(offered(w), true); assert.equal(hint(w), '');
+});
+
+test('money first OFF, pop-up: a failed look-up behaves exactly as before — an HTTP 500 empties the match panel, a lost connection leaves it; no line, nothing greyed', async () => {
+  for (const options of [{}, { moneyFirst: false }]) {
+    const w = popupWorld({ options, matches: WITH_CASE });
+    filled(w, { choice: 'existing' }); await lookedUp(w);
+    w.pickRadio('dq-pay', 'none');
+    const panel = w.el('dq-match').innerHTML;
+    assert.ok(panel.includes('2026-SP-001'));
+    w.net.lookup = () => Promise.reject(new Error('offline'));
+    await lookedUp(w);
+    assert.equal(w.el('dq-match').innerHTML, panel, 'a lost connection: left as it was');
+    w.net.lookup = http500;
+    await lookedUp(w);
+    assert.equal(w.el('dq-match').innerHTML, '', 'an HTTP 500: emptied, as before');
+    assert.equal(notPaid(w).checked, true, 'the tick is never taken away');
+    assert.notEqual(notPaid(w).disabled, true);
+    assert.equal(w.el('dq-pay-hint').textContent, ''); assert.notEqual(w.el('dq-pay-hint').style.display, '');
+  }
 });
 
 test('money first ON, pop-up: live for a time that has ALREADY PASSED (entered late), for anyone; greyed again when the time is moved ahead', async () => {

@@ -413,6 +413,12 @@ async function createLocked(n, actor) {
   // file" when the app itself finds that person's file by email or phone (the button alone is nobody's proof).
   // A new matter pays first, even for someone who has a file. A consultation that has already happened and is
   // entered late may still be saved unpaid (it then shows the red "Not paid"). "Free" with a reason always works.
+  // KNOWN, NOT CLOSED HERE (one question for Faran before the switch is turned on — the two are the same door and
+  // must be closed together, or closing one closes nothing):
+  //   - "follow-up" above asks only for an earlier consultation that was HELD, not one that was paid. A new client
+  //     entered late and unpaid (allowed, decision 5) is therefore a follow-up next time, and may be unpaid again;
+  //   - "Change time" on the record page can move a late-entered unpaid row to a time still ahead.
+  // Both leave a trace: the past row shows the red "Not paid" under "Needs outcome".
   if (!n.payment && !b.past && require('./consultPaymentService').moneyFirstEnabled()) {
     if (kind === DC.EXISTING) { if (!hasFile) throw badRequest(NO_FILE_ERROR); }
     else if (kind !== 'Follow-up') throw badRequest(PAY_FIRST_ERROR);

@@ -166,6 +166,11 @@ var DQ_REASON_EXISTING='Existing client — about their current file';
 /* Money first (the server's switch, told to this page as DQ_OPTS.moneyFirst): the line under "Payment" while "Not paid yet" is not offered. */
 var DQ_PAY_FIRST='A new client pays first. “Not paid yet” is only for an existing client (about their current file) or a follow-up.';
 var DQ_NO_FILE='The app finds no file for this email or phone, so “Not paid yet” is not offered.';
+/* "Existing client" with no file held: the line says what the app KNOWS — it has not looked yet, it is looking, it
+   could not look, or it looked and found no file (DQ_NO_FILE only then). */
+var DQ_TYPE_FIRST='Type the client’s email or phone first — “Not paid yet” is offered when the app finds their file.';
+var DQ_LOOKING='Looking for this client’s file…';
+var DQ_LOOK_FAILED='The app could not look this client up just now. Click in the email or phone box and out again to try once more.';
 
 /* The button: shown only when the server says this person may use it. */
 function dqInitButton(){
@@ -203,7 +208,9 @@ function openDirectConsult(){
   var box=dlg.box; box.innerHTML=DQ_FORM;
   var run=dlg.openId;
   function q(id){ return box.querySelector('#'+id); }
-  var st={ match:null, matchSeq:0, matchTimer:null, feeTouched:false, lenTouched:false, blHit:false, clashAck:false, live:[], reasonAuto:false, reasonTouched:false };
+  /* matchKey: the email + phone the held match was found for. look: what the look-up last did — 'none' (nothing to
+     look up), 'looking', 'failed', 'done' (it answered). Both are read only when money first is on. */
+  var st={ match:null, matchKey:'', look:'none', matchSeq:0, matchTimer:null, feeTouched:false, lenTouched:false, blHit:false, clashAck:false, live:[], reasonAuto:false, reasonTouched:false };
   var ref=tdotRef('dq');
 
   /* Fill the lists from the options. */
@@ -276,6 +283,8 @@ function openDirectConsult(){
     if(choice==='new') return dqFollowUp() && !dqHasFile();
     return false;
   }
+  /* "finds no file" is said only when the look-up answered and found none. */
+  function dqNoFileLine(){ return st.look==='none'?DQ_TYPE_FIRST:(st.look==='looking'?DQ_LOOKING:(st.look==='failed'?DQ_LOOK_FAILED:DQ_NO_FILE)); }
   function syncNotPaid(){
     if(!o.moneyFirst) return;
     var ok=notPaidOffered(), unticked=false;
@@ -285,7 +294,7 @@ function openDirectConsult(){
       if(!ok && r.checked){ r.checked=false; unticked=true; }
     });
     var h=q('dq-pay-hint');
-    h.textContent=ok?'':((radio('dq-choice')==='existing' && !dqHasFile())?DQ_NO_FILE:DQ_PAY_FIRST);
+    h.textContent=ok?'':((radio('dq-choice')==='existing' && !dqHasFile())?dqNoFileLine():DQ_PAY_FIRST);
     h.style.display=ok?'none':'';
     if(unticked){ syncFees(); syncPackage(); }
   }
@@ -329,13 +338,32 @@ function openDirectConsult(){
   function lookUp(){
     var email=q('dq-email').value.trim(), phone=q('dq-phone').value.trim();
     var digits=phone.replace(/[^0-9]/g,'');
-    if(!(/^[^ @]+@[^ @]+[.][^ @]+$/.test(email)) && digits.length<7){ st.match=null; renderMatch(); return; }
+    if(!(/^[^ @]+@[^ @]+[.][^ @]+$/.test(email)) && digits.length<7){ st.match=null; st.matchKey=''; st.look='none'; renderMatch(); return; }
     var key=dqKey(); if(!key) return;
-    var seq=++st.matchSeq;
+    var seq=++st.matchSeq, typed=email.toLowerCase()+'|'+digits, got=false;
+    /* No answer is held for this email / phone yet: say "Looking…" (money first only), not "finds no file". */
+    if(st.matchKey!==typed){ st.look='looking'; syncNotPaid(); }
     fetch('/api/consultation/client-matches?email='+encodeURIComponent(email)+'&phone='+encodeURIComponent(phone),{headers:{'X-Api-Key':key}})
       .then(function(r){ return r.ok?r.json():null; })
-      .then(function(m){ if(!dlg.still(run) || seq!==st.matchSeq) return; st.match=m; renderMatch(); })
-      .catch(function(){ /* the server checks again on Save */ });
+      .then(function(m){
+        if(!dlg.still(run) || seq!==st.matchSeq) return;
+        got=true;
+        if(!m && o.moneyFirst){ lookFailed(typed); return; }
+        st.match=m; st.matchKey=m?typed:''; st.look=m?'done':'failed'; renderMatch();
+      })
+      .catch(function(){
+        /* the server checks again on Save. Money first: the line under Payment must not go on saying "Looking…". */
+        if(got || !o.moneyFirst || !dlg.still(run) || seq!==st.matchSeq) return;
+        lookFailed(typed);
+      });
+  }
+  /* Money first only — a look-up that failed (an error answer, or no connection). One blip must not untick a
+     "Not paid yet" the rule allows: an answer already held for this same email + phone stands. An answer held for
+     another email / phone is dropped — somebody else's file never vouches for this client. */
+  function lookFailed(typed){
+    if(st.match && st.matchKey===typed){ st.look='done'; }
+    else { st.match=null; st.matchKey=''; st.look='failed'; }
+    renderMatch();
   }
   function lookUpSoon(){ clearTimeout(st.matchTimer); st.matchTimer=setTimeout(lookUp,600); }
   function leadLine(l){

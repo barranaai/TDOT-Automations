@@ -31,7 +31,7 @@ async function withSwitch(value, fn) {
 delete process.env.CONSULT_PACKAGE_ON_RECORD;
 delete process.env.CONSULT_MONEY_FIRST;
 const TODAY = '2026-11-20';
-const TICK_ERROR = 'Tick “The invoice has been paid”. An invoice that is only sent is not recorded — record it when the money is in. Nothing was saved.';
+const TICK_ERROR = 'Tick “The invoice has been paid”. An invoice that is only sent is not recorded — record it when the money is in. Nothing was saved. If you cannot see the tick, reload the page first.';
 
 /* ── the switch ── */
 
@@ -48,6 +48,8 @@ test('the switch: CONSULT_MONEY_FIRST unset = off; only 1 / true / on / yes turn
 test('validateRecord, switch handed in as ON: "invoice" needs invoicePaid === true — the exact words; nothing new is kept; every other kind is as before', () => {
   const on = (o) => cp.validateRecord(o, { today: TODAY, moneyFirst: true });
   assert.equal(cp.INVOICE_TICK_ERROR, TICK_ERROR);
+  // these words reach a page loaded before the switch was turned on, which has no tick: they must say what to do
+  assert.ok(cp.INVOICE_TICK_ERROR.endsWith(' Nothing was saved. If you cannot see the tick, reload the page first.'));
   assert.deepEqual(on({ kind: 'invoice', amountCents: 30000 }), { ok: false, error: TICK_ERROR }, 'no tick (also what a page left open from before sends)');
   for (const tick of [false, null, undefined, 'true', 'yes', 1, 'on', {}, []]) assert.deepEqual(on({ kind: 'invoice', amountCents: 30000, invoicePaid: tick }), { ok: false, error: TICK_ERROR }, 'not a real tick: ' + JSON.stringify(tick));
   assert.deepEqual(on(JSON.stringify({ kind: 'invoice', amountCents: 30000, on: TODAY, reference: 'INV-9', note: '' })), { ok: false, error: TICK_ERROR }, 'as the record box posts it');

@@ -11,10 +11,6 @@
 // Every outbound seam is stubbed; the no-network guard (npm test) refuses the rest
 // and these tests also assert that no send result carries its refusal.
 
-// Money first (CONSULT_MONEY_FIRST, 2026-11-20) ships off: these tests are the switched-off app whatever the machine's
-// environment says. The tests of the switch set it themselves.
-delete process.env.CONSULT_MONEY_FIRST;
-
 const test   = require('node:test');
 const assert = require('node:assert/strict');
 const vm     = require('node:vm');
@@ -28,6 +24,12 @@ const meetingService      = require('../src/services/meetingService');
 const bookingService      = require('../src/services/bookingService');
 const blacklistService    = require('../src/services/blacklistService');
 const microsoftMail       = require('../src/services/microsoftMailService');
+
+// Money first (CONSULT_MONEY_FIRST, 2026-11-20) ships off: these tests are the switched-off app whatever the machine's
+// environment or its .env file says. The tests of the switch set it themselves.
+// This line must stay AFTER the requires above: the first require of app code loads .env (config/monday.js calls
+// dotenv), and dotenv fills in any variable that is not set — a delete placed before the requires is undone.
+delete process.env.CONSULT_MONEY_FIRST;
 
 function stub(obj, key, fn) { const orig = obj[key]; obj[key] = fn; return () => { obj[key] = orig; }; }
 function withEnv(vars, fn) {
@@ -1183,7 +1185,7 @@ test('F4c the agreement link and the retainer link make a missing link code too'
 test('money first ON: an invoice WITH the tick + a booking + "Yes" runs exactly as a cash record does — the record, then the booking, then ONE package run; WITHOUT the tick nothing at all happens', withEnv({ ...ON, CONSULT_MONEY_FIRST: '1' }, async () => {
   const w = world({ lead: { consultOption: JSON.stringify({ durationMin: 15 }) } });
   try {
-    await assert.rejects(apply(PAID({ kind: 'invoice' })), (e) => e.badRequest && e.message === 'Tick “The invoice has been paid”. An invoice that is only sent is not recorded — record it when the money is in. Nothing was saved.');
+    await assert.rejects(apply(PAID({ kind: 'invoice' })), (e) => e.badRequest && e.message === 'Tick “The invoice has been paid”. An invoice that is only sent is not recorded — record it when the money is in. Nothing was saved. If you cannot see the tick, reload the page first.');
     assert.deepEqual([w.writes.length, w.notes.length, w.autoCalls.length, w.meetings.length], [0, 0, 0, 0], 'no record, no booking, no note, no email, no meeting');
     const r = await apply(PAID({ kind: 'invoice', invoicePaid: true }));
     assert.equal(r.ok, true, r.message);

@@ -51,8 +51,11 @@ test('validateRecord: waived with no reason, spaces only or 2 characters is refu
   // the length cap is unchanged and is checked first
   assert.equal(v({ kind: 'waived', note: 'x'.repeat(200) }).ok, true);
   assert.deepEqual(v({ kind: 'waived', note: 'x'.repeat(201) }), { ok: false, error: 'Keep the note under 200 characters.' });
-  // a non-text reason is not a reason
-  for (const note of [true, 0, 7, [], {}]) assert.equal(v({ kind: 'waived', note }).ok === true && v({ kind: 'waived', note }).normalized.note.length < 3, false, JSON.stringify(note));
+  // a note that is not text is turned into text first, as every note always was (only a hand-made request can send
+  // one — both pop-ups send typed text); what is left must still be 3 characters
+  for (const note of [0, 7, [], null, undefined]) assert.deepEqual(v({ kind: 'waived', note }), { ok: false, error: REASON_ERROR }, JSON.stringify(note));
+  assert.equal(v({ kind: 'waived', note: true }).normalized.note, 'true');
+  assert.equal(v({ kind: 'waived', note: ['abc'] }).normalized.note, 'abc');
 });
 
 test('validateRecord: every other kind keeps its optional note; "Remove record" asks no reason', () => {
