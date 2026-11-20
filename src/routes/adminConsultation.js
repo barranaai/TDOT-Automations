@@ -295,7 +295,12 @@ function rowHtml(c,ready){
   var pc=c.preConsultSubmitted?qpill('green','Submitted'):qpill('amber','Pending');
   var oc=outcomeCell(c);   // the outcome, and a follow-up date amber once it is due (today or earlier)
   var ag=c.agreementSigned?qpill('green','Signed '+c.agreementSigned):c.agreementSent?qpill('blue','Sent '+c.agreementSent):'<span class="pill grey">—</span>';
-  var pd=paidPill(c);
+  /* Not paid (Gauri B4, Faran 2026-11-20): no payment of any kind is recorded, the consultation is not completed and it
+     has a date — still to happen, or past and waiting for an outcome: a red "Not paid" in place of the grey dash. A
+     completed consultation and one with no date keep the dash; "Waived" stays grey. It only shows what is already true
+     (the Paid filter's "Not paid" finds the same rows). paidPill is shared with the Retainers page and is not touched. */
+  var unpaid=!c.paid&&!c.done&&!!dParts(String(c.bookedSlot||'').slice(0,10));
+  var pd=unpaid?'<span class="pill red" title="No payment is recorded and the consultation is not marked free. Open it and use “Record payment / Waived”.">Not paid</span>':paidPill(c);
   return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
     '<td>'+dateCell(c)+'</td><td>'+timeCell(c)+'</td>'+
     '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+directPill(c)+(c.recCode?'<span class="rec-code" title="Recording code: type it as the Otter recording title before you stop the recording">'+escHtml(c.recCode)+'</span>':'')+'</td>'+

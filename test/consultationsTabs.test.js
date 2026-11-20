@@ -902,7 +902,7 @@ function consultPage(rows, store, nowIso, realRows) {
     function escHtml(s){ return String(s==null?'':s); }
     function todayStr(){ return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto'}).format(new Date()); }
     function ssGet(k){ return sessionStorage.getItem(k)||''; } function ssSet(k,v){ sessionStorage.setItem(k,v); }
-    ${realRows ? "var TDOT_DEL_SVG='<svg/>';\n" + ['qpill', 'paidPill', 'outcomeCell', 'dAdd', 'dLabel', 'dateCell', 'timeCell', 'directPill', 'nowCell', 'readyPill', 'rowHtml'].map(pick).join('\n') : "function rowHtml(c){ return '['+c.id+']'; }"} function bindRowClicks(){}
+    ${realRows ? "var TDOT_DEL_SVG='<svg/>';\n" + pickVar('PAID_LABELS') + '\n' + ['qpill', 'paidPill', 'outcomeCell', 'dAdd', 'dLabel', 'dateCell', 'timeCell', 'directPill', 'nowCell', 'readyPill', 'rowHtml'].map(pick).join('\n') : "function rowHtml(c){ return '['+c.id+']'; }"} function bindRowClicks(){}
     var MONTH_PICK={ done:'', all:'' }, MONTH_KEY={ done:'tdot_list_consult_month', all:'tdot_list_consult_month_all' };
     ${pickVar('TAB_TEXT')}
     ${['dParts', 'consultTab', 'monthOf', 'monthLabel', 'tabMonths', 'pickMonth', 'setMonth', 'consultPanelRow', 'renderMonthBar', 'consultOnChange', 'latestFirst', 'consultEmptyMsg', 'renderConsultList'].map(pick).join('\n')}`, ctx);
@@ -1117,4 +1117,117 @@ test('page, run for real — Ready: the pill on Booked / No date / All, a dash f
   // an empty list still spans the whole table
   p.go('booked').set("st.sort=null; st.sel.consultant=['Nobody'];");
   assert.match(p.els.qbody.innerHTML, /^<tr><td colspan="13" class="empty">/);
+});
+
+// Gauri B4 ("only after it is received, everywhere"), Faran 2026-11-20: a plain red "Not paid" in the Paid cell of a
+// consultation that has a date, is not completed and has no payment of any kind. It only shows what is already true.
+const NOT_PAID = '<td><span class="pill red" title="No payment is recorded and the consultation is not marked free. Open it and use “Record payment / Waived”.">Not paid</span></td>';
+const PAID_DASH = '<td><span class="pill grey">—</span></td>';
+
+test('page row — Not paid: red for a consultation still to happen and for a past one waiting for an outcome; a completed consultation and one with no date keep the grey dash; Waived stays grey; a paid row stays green', () => {
+  const html = require('../src/routes/adminConsultation').buildQueueHTML();
+  const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
+  const pick = (name) => { const i = js.indexOf(`function ${name}(`); assert.ok(i >= 0, name); let depth = 0, j = js.indexOf('{', i); for (; j < js.length; j++) { if (js[j] === '{') depth++; else if (js[j] === '}' && --depth === 0) break; } return js.slice(i, j + 1); };
+  const ctx = { escHtml: (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'), todayStr: () => '2026-11-12', TDOT_DEL_SVG: '<svg/>', Intl };
+  vm.createContext(ctx);
+  vm.runInContext(js.match(/var PAID_LABELS=\{[^}]*\};/)[0] + '\n' + ['qpill', 'paidPill', 'outcomeCell', 'dParts', 'dAdd', 'dLabel', 'dateCell', 'timeCell', 'directPill', 'nowCell', 'readyPill', 'rowHtml'].map(pick).join('\n'), ctx);
+  const cells = (row) => { const h = ctx.rowHtml({ id: '1', name: 'N', ...row }, ''); const c = h.split('<td').slice(1).map((x) => '<td' + x.replace(/<\/tr>$/, '')); assert.equal(c.length, 13); return c; };
+  const paid = (row) => cells(row)[9];   // the tenth cell: Date, Time, Client, Service, Consultant, Mode, Ready, Agreement, Pre-consult, Paid
+  // still to happen: today, tomorrow, next year — no payment of any kind
+  for (const slot of ['2026-11-12 10:00', '2026-11-13 09:00', '2027-01-04 09:00', '2026-11-12']) assert.equal(paid({ bookedSlot: slot }), NOT_PAID, 'still to happen: ' + slot);
+  for (const v of ['', null, undefined]) assert.equal(paid({ bookedSlot: '2026-11-13 09:00', paid: v, paidCents: null }), NOT_PAID, 'nothing recorded: ' + String(v));
+  // past, waiting for an outcome (the Needs outcome tab) — also with an agreement signed and the form in: the money is its own fact
+  assert.equal(paid({ bookedSlot: '2026-11-03 10:00' }), NOT_PAID);
+  assert.equal(paid({ bookedSlot: '2026-11-03 10:00', agreementSigned: '2026-11-01', preConsultSubmitted: true, ready: 'ready' }), NOT_PAID);
+  // an existing client or a follow-up added with "Not paid yet" is red too while it is ahead — red says "no money recorded and not free"
+  assert.equal(paid({ bookedSlot: '2026-11-13 09:00', direct: 'Existing client', bookedBy: 'Staff One' }), NOT_PAID);
+  assert.equal(paid({ bookedSlot: '2026-11-13 09:00', direct: 'Follow-up' }), NOT_PAID);
+  // an outcome set but the row not completed yet (a client who booked again): still red
+  assert.equal(paid({ bookedSlot: '2026-11-20 09:00', outcome: 'Follow-Up' }), NOT_PAID);
+  // completed: the grey dash, whatever the date — the old months do not turn red
+  for (const row of [{ bookedSlot: '2026-10-02 10:00', outcome: 'Retain', done: true, now: 'Retained' }, { bookedSlot: '2026-11-25 10:00', outcome: 'Retain', done: true, now: 'Retainer to send' }, { bookedSlot: '', done: true, now: 'Closed' }, { bookedSlot: '2026-11-03 10:00', direct: 'Existing client', done: true, now: 'Existing client' }])
+    assert.equal(paid(row), PAID_DASH, 'completed: ' + JSON.stringify(row));
+  // no date (the No date tab): the grey dash
+  for (const slot of ['', null, undefined, 'not a date', '10:00', '2026-1-3 10:00']) {
+    assert.equal(paid({ bookedSlot: slot }), PAID_DASH, 'no date: ' + String(slot));
+    assert.equal(cells({ bookedSlot: slot })[0], '<td><span class="pill grey">no date</span></td>', 'and the Date cell says so — one rule for both');
+  }
+  // any payment: exactly what the shared pill says (it is not touched)
+  assert.equal(paid({ bookedSlot: '2026-11-13 09:00', paid: 'waived', paidCents: 0, paidBy: 'Staff Two', paidOn: '2026-11-10', paidVerified: true }), '<td><span class="pill grey" title="Waived · recorded by Staff Two on 2026-11-10">Waived</span></td>');
+  assert.equal(paid({ bookedSlot: '2026-11-13 09:00', paid: 'app', paidCents: 22600 }), '<td><span class="pill green">Paid (app) $226</span></td>');
+  assert.equal(paid({ bookedSlot: '2026-11-13 09:00', paid: 'app', paidCents: null }), '<td><span class="pill green">Paid (app)</span></td>', 'the whole-firm free setting marks the row paid by the app — never red');
+  assert.equal(paid({ bookedSlot: '2026-11-03 10:00', paid: 'cash', paidCents: 20000, paidBy: 'Staff One' }), '<td><span class="pill green" title="Cash · recorded by Staff One (name as typed)">Cash $200</span></td>');
+  for (const kind of ['e-transfer', 'square', 'invoice', 'other']) assert.match(paid({ bookedSlot: '2026-11-13 09:00', paid: kind, paidCents: 20000 }), /^<td><span class="pill green" title="[^"]+">[^<]+ \$200<\/span><\/td>$/, kind);
+  for (const row of [{ paid: 'waived' }, { paid: 'app' }, { paid: 'cash' }, { paid: 'somethingNew' }]) assert.ok(!paid({ bookedSlot: '2026-11-13 09:00', ...row }).includes('Not paid'), JSON.stringify(row));
+  // the mark is one fixed pill: nothing about the client is in it, and no other cell changed
+  const a = cells({ bookedSlot: '2026-11-13 09:00', name: 'A "B" <c>', service: 'Study permit' }), b = cells({ bookedSlot: '2026-11-13 09:00', name: 'A "B" <c>', service: 'Study permit', done: true });
+  assert.equal(a[9], NOT_PAID);
+  assert.deepEqual(a.filter((x, i) => ![9, 11, 12].includes(i)), b.filter((x, i) => ![9, 11, 12].includes(i)), 'the same row completed differs only in Paid, Now and the bin');
+  // where it lives: once, in the Consultations row — the shared pill and the Retainers page do not have it
+  assert.equal(html.split('No payment is recorded and the consultation is not marked free').length - 1, 1);
+  assert.ok(pick('rowHtml').includes('var unpaid=!c.paid&&!c.done&&!!dParts(String(c.bookedSlot||\'\').slice(0,10));'));
+  assert.ok(!pick('paidPill').includes('Not paid') && !pick('paidPill').includes('red'), 'paidPill is not touched');
+  assert.ok(pick('paidPill').includes("if(!c.paid) return '<span class=\"pill grey\">—</span>';"));
+  const r = require('../src/routes/adminConsultation').buildRetainersHTML();
+  assert.ok(!r.includes('No payment is recorded') && !r.includes('var unpaid='), 'not on the Retainers & follow-ups page');
+  assert.ok(r.includes("((c.kind==='direct' && !c.paid)?'<span class=\"pill grey\" title=\"Direct retainer client — no consultation\">n/a</span>':paidPill(c))"), 'its Consult fee cell is as before: n/a for a direct retainer client, else the shared pill');
+});
+
+const PAID_SAMPLE = [
+  { id: 'b1', name: 'Asha', bookedSlot: '2026-11-12 09:00', paid: 'app', paidCents: 22600 }, { id: 'b2', name: 'Bo', bookedSlot: '2026-11-13 14:00' },
+  { id: 'b3', name: 'Chen', bookedSlot: '2026-11-20 18:00', paid: 'waived', paidCents: 0 }, { id: 'b4', name: 'Dev', bookedSlot: '2026-11-21 10:00', direct: 'Existing client' },
+  { id: 'n1', name: 'Eli', bookedSlot: '2026-11-03 10:00' }, { id: 'n2', name: 'Fay', bookedSlot: '2026-11-10 11:00', paid: 'cash', paidCents: 20000 },
+  { id: 'd1', name: 'Gia', bookedSlot: '2026-11-05 10:00', done: true, outcome: 'Retain', now: 'Retained' }, { id: 'd2', name: 'Hal', bookedSlot: '2026-11-06 13:00', done: true, outcome: 'Follow-Up', now: 'Following up', paid: 'app', paidCents: 22600 },
+  { id: 'z1', name: 'Ida', bookedSlot: '' }, { id: 'z2', name: 'Jo', bookedSlot: '', paid: 'e-transfer', paidCents: 20000 },
+];
+
+test('page, run for real — Not paid: red on Booked, Needs outcome and All; never on Completed or No date; the Paid filter and every tab number are as before', () => {
+  const p = consultPage(PAID_SAMPLE, {}, '2026-11-12T17:00:00Z', true);
+  p.go('booked').run("ConsultTable.core.setDates(ConsultTable.state(),'',''); ConsultTable.apply('filter');");   // every date
+  assert.equal(p.cells(10), 'b1:Paid (app) $226 | b2:Not paid | b3:Waived | b4:Not paid');
+  assert.equal(p.go('needs').cells(10), 'n2:Cash $200 | n1:Not paid');
+  assert.equal(p.go('done').cells(10), 'd2:Paid (app) $226 | d1:—', 'a completed consultation with no payment keeps the dash');
+  assert.equal(p.go('nodate').cells(10), 'z1:— | z2:E-transfer $200', 'no date: the dash');
+  assert.equal(p.go('all').cells(10), 'b4:Not paid | b3:Waived | b2:Not paid | b1:Paid (app) $226 | n2:Cash $200 | d2:Paid (app) $226 | d1:— | n1:Not paid | z1:— | z2:E-transfer $200');
+  // red = exactly the rows with a date, not completed, nothing recorded
+  const red = (p.els.qbody.innerHTML.split('</tr>').filter((tr) => tr.includes('<span class="pill red" title="No payment is recorded')).map((tr) => tr.match(/data-id="([^"]*)"/)[1])).sort().join();
+  assert.equal(red, PAID_SAMPLE.filter((r) => !r.paid && !r.done && r.bookedSlot).map((r) => r.id).sort().join());
+  assert.equal(red, 'b2,b4,n1');
+  // display only: the numbers on the tabs and the Paid filter did not move
+  assert.deepEqual(p.nums(), { booked: 4, needs: 2, done: 2, nodate: 2, all: 10 });
+  assert.equal(p.panel('paid'), '["Paid (app) 2","Paid — recorded by staff 2","Waived 1","Not paid 5"]', 'the filter\'s "Not paid" still counts every row with nothing recorded — the completed and no-date ones too');
+  p.set("st.sel.paid=['none'];");
+  assert.deepEqual([p.cells(10), p.chips()], ['b4:Not paid | b2:Not paid | d1:— | n1:Not paid | z1:—', 'Paid: Not paid']);
+  assert.equal(p.go('booked').cells(10), 'b2:Not paid | b4:Not paid', 'Booked + the Paid filter "Not paid" = the red rows still to happen');
+  p.set("delete st.sel.paid; st.sort={ key:'paid', dir:'desc' };");
+  assert.equal(p.go('all').cells(10).replace(/\w+:/g, ''), 'Not paid | Not paid | — | Not paid | — | Waived | Cash $200 | E-transfer $200 | Paid (app) $226 | Paid (app) $226', '"Not paid first" sorts as before');
+});
+
+test('Not paid, from the board to the page: a row paid through the booking link — also the whole-firm free setting — is never red; a waived or staff-recorded fee is never red; nothing recorded is', async () => {
+  snap._reset();
+  const rows = [
+    L(1, { bookingStatus: 'Booked', bookedSlot: '2026-11-24 11:00', squareConsultTxnId: 'free-config' }),
+    L(2, { bookingStatus: 'Booked', bookedSlot: '2026-11-24 12:00', squareConsultTxnId: 'SQ2', consultOption: JSON.stringify({ durationMin: 30, feeCents: 20000, paidCents: 22600 }) }),
+    L(3, { bookingStatus: 'Booked', bookedSlot: '2026-11-24 13:00', consultPayment: JSON.stringify({ kind: 'waived', on: '2026-11-19', by: 'Staff One' }) }),
+    L(4, { bookingStatus: 'Booked', bookedSlot: '2026-11-24 14:00', consultPayment: JSON.stringify({ kind: 'invoice', amountCents: 30000, on: '2026-11-19', by: 'Staff One' }) }),
+    L(5, { bookingStatus: 'Booked', bookedSlot: '2026-11-24 15:00' }),                                  // marked Booked by hand in Monday, with a time
+    L(6, { bookingStatus: 'Booked', bookedSlot: '2026-11-10 10:00' }),                                  // past, no outcome
+    L(7, { bookingStatus: 'Booked' }),                                                                 // no time
+    L(8, { bookingStatus: 'Booked', bookedSlot: '2026-11-05 10:00', outcome: 'Not Wanted' }),            // completed, nothing recorded
+    L(9, { bookingStatus: 'Booked', bookedSlot: '2026-11-24 16:00', consultPayment: '{ not json' }),    // a record that cannot be read = nothing recorded
+  ];
+  const restore = [stub(snap.io, 'fetchLeads', async () => rows)];
+  try {
+    const b = await portal.getConsultationsBoard({ now: new Date('2026-11-20T17:00:00Z'), withCompleted: true });
+    const all = JSON.parse(JSON.stringify(b.consultations.concat(b.completed)));
+    assert.deepEqual(Object.fromEntries(all.map((r) => [r.id, r.paid])), { 1: 'app', 2: 'app', 3: 'waived', 4: 'invoice', 5: '', 6: '', 7: '', 8: '', 9: '' });
+    const html = require('../src/routes/adminConsultation').buildQueueHTML();
+    const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
+    const pick = (name) => { const i = js.indexOf(`function ${name}(`); assert.ok(i >= 0, name); let depth = 0, j = js.indexOf('{', i); for (; j < js.length; j++) { if (js[j] === '{') depth++; else if (js[j] === '}' && --depth === 0) break; } return js.slice(i, j + 1); };
+    const ctx = { escHtml: (s) => String(s == null ? '' : s), todayStr: () => '2026-11-20', TDOT_DEL_SVG: '<svg/>', Intl };
+    vm.createContext(ctx);
+    vm.runInContext(js.match(/var PAID_LABELS=\{[^}]*\};/)[0] + '\n' + ['qpill', 'paidPill', 'outcomeCell', 'dParts', 'dAdd', 'dLabel', 'dateCell', 'timeCell', 'directPill', 'nowCell', 'readyPill', 'rowHtml'].map(pick).join('\n'), ctx);
+    const paidWords = Object.fromEntries(all.map((r) => [r.id, ('<td' + ctx.rowHtml(r, '').split('<td')[10]).replace(/<[^>]+>/g, '')]));
+    assert.deepEqual(paidWords, { 1: 'Paid (app)', 2: 'Paid (app) $226', 3: 'Waived', 4: 'Invoice $300', 5: 'Not paid', 6: 'Not paid', 7: '—', 8: '—', 9: 'Not paid' });
+  } finally { restore.forEach((r) => r()); snap._reset(); }
 });
