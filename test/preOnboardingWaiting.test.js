@@ -323,7 +323,7 @@ test('mark: `waiting` on Pre-Onboarding rows only; the views, groups and counts 
   const at = W.mark(after, { leads, at: 1_700_000_000_000 });
   assert.equal(at, 1_700_000_000_000);
   for (const r of after) {
-    assert.equal('paymentStatus' in r, false, 'the board cell was read for the label only');
+    assert.equal('paymentStatus' in r, true, 'the board Payment Status stays on the row: the view tabs show it in their Payment status column');
     if (r.stageIdx === PRE) assert.ok(W.CODES.includes(r.waiting.code)); else assert.equal('waiting' in r, false);
   }
   assert.deepEqual([pre[0].waiting.code, pre[1].waiting.code, pre[2].waiting.code, pre[3].waiting.code], ['client-sign', 'ready', 'payment', 'unclear']);
@@ -349,10 +349,10 @@ test('the payload: only code / also / partPaid / why reach the browser — no si
     ];
     W.mark(cases, { leads, at: 1 });
     assert.deepEqual(cases, [
-      { id: '900', stageIdx: PRE, waiting: { code: 'countersign', also: [], partPaid: true } },
-      { id: '901', stageIdx: PRE, waiting: { code: 'unclear', also: [], partPaid: false, why: 'pro-bono' } },
-      { id: '902', stageIdx: PRE, waiting: { code: 'unclear', also: [], partPaid: false, why: 'no-lead' } },
-      { id: '903', stageIdx: 1 },
+      { id: '900', stageIdx: PRE, paymentStatus: '', waiting: { code: 'countersign', also: [], partPaid: true } },
+      { id: '901', stageIdx: PRE, paymentStatus: 'Pro Bono', waiting: { code: 'unclear', also: [], partPaid: false, why: 'pro-bono' } },
+      { id: '902', stageIdx: PRE, paymentStatus: '', waiting: { code: 'unclear', also: [], partPaid: false, why: 'no-lead' } },
+      { id: '903', stageIdx: 1, paymentStatus: 'Paid' },   // the board Payment Status stays on every row (the view tabs' Payment status column)
     ]);
     const json = JSON.stringify(cases);
     assert.ok(!/SECRET|sign\.example|signUrl|envelope|BANKREF|example\.com|4165550100|Person/i.test(json));
@@ -364,7 +364,7 @@ test('no lead copy yet: every Pre-Onboarding row says "unchecked", nothing waits
   const cases = [{ id: '1', stageIdx: PRE, paymentStatus: 'Paid' }, { id: '2', stageIdx: 0, paymentStatus: '' }];
   const out = W.mark(cases, null);
   assert.equal(out, null, 'a plain value — not a promise');
-  assert.deepEqual(cases, [{ id: '1', stageIdx: PRE, waiting: { code: 'unchecked', also: [], partPaid: false } }, { id: '2', stageIdx: 0 }]);
+  assert.deepEqual(cases, [{ id: '1', stageIdx: PRE, paymentStatus: 'Paid', waiting: { code: 'unchecked', also: [], partPaid: false } }, { id: '2', stageIdx: 0, paymentStatus: '' }]);
   assert.equal(W.mark(undefined, null), null);
   assert.equal(W.mark([], { leads: [], at: 9 }), 9);
 });

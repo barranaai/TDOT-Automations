@@ -41,7 +41,8 @@ const COLS = {
   actualDeadline:     'date_mm33sj6t',
   promisedDate:       'date_mm3t66pa',    // Internal Deadline (the promise on an Imaginary case)
   caseSupportOfficer: 'multiple_person_mm0xm710',
-  // Read only for the Pre-Onboarding "Waiting for" label (2026-11-10): a board "Paid" counts as the payment.
+  // Used twice: the Pre-Onboarding "Waiting for" label (2026-11-10: a board "Paid" counts as the payment) AND the
+  // view tabs' "Payment status" column — so it must stay on the row all the way to the page.
   paymentStatus:      'color_mm0x9fnn',
   // ── The view tabs' own columns (team meeting 2026-11-10, item 12): read only, shown one column each ──
   dependents:         'text_mm0x1zdk',              // "Dependents/Inviter/Sponsor"

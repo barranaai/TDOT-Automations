@@ -126,8 +126,9 @@ function claimantsByCase(leads) {
 }
 
 /**
- * Sets `waiting` on the Pre-Onboarding rows ONLY (every other stage: nothing) and takes the board
- * Payment Status off every row (it was read for this alone). Synchronous — `snap` is
+ * Sets `waiting` on the Pre-Onboarding rows ONLY (every other stage: nothing). The board Payment Status
+ * STAYS on every row: the view tabs' "Payment status" column shows it (it used to be taken off here, which
+ * left that column a dash on every row — found 2026-11-20). Synchronous — `snap` is
  * leadSnapshot.peek(): null = no lead copy yet → every Pre-Onboarding row is 'unchecked'.
  * @returns {number|null} when the lead copy was read (ms), or null
  */
@@ -136,7 +137,6 @@ function mark(cases, snap) {
   const byCase = leads ? claimantsByCase(leads) : null;
   for (const c of cases || []) {
     const cmPayment = c.paymentStatus;
-    delete c.paymentStatus;
     if (c.stageIdx !== PRE_ONBOARDING_INDEX) continue;
     c.waiting = byCase
       ? waitingFor({ cmPayment }, byCase.get(s(c.id)) || [])

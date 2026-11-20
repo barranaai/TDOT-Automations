@@ -280,6 +280,31 @@ test('the delivery rule: `more` rides ONLY on the page\'s own load (contact) —
   }
 });
 
+test('the whole road from the board to the page: after the route\'s own steps every row field the page was read for is still on the row — only managerIds may go (the Payment status column was a dash on every row because a step took its value off)', async () => {
+  // This copies the steps of /admin/dashboard-stats (src/server.js) by hand, in the route's order: a new step in the route must be added here too.
+  const board = fakeBoard([item(1, FULL_CELLS.concat([{ id: 'color_mm0x9fnn', text: 'Signed (Unpaid)', value: '{"index":3}' }]), 'Road Example')]);
+  const restoreClock = stub(dash._casesIo.io, 'now', () => Date.parse('2026-11-20T15:00:00Z'));
+  const prev = process.env.TODO_TAB;
+  delete process.env.TODO_TAB;
+  try {
+    dash.invalidateCases(); dash._casesIo.overrides.clear();
+    const stats = await dash.getDashboardStats(undefined, { contact: true, todo: true });
+    const before = Object.keys(stats.cases[0]);
+    assert.equal(stats.cases[0].paymentStatus, 'Signed (Unpaid)');
+    require('../src/services/caseAssignService').markAssignable(stats.cases, null);
+    for (const c of stats.cases) c.canChangeDeadline = !!c.canAssign;
+    require('../src/services/preOnboardingWaiting').mark(stats.cases, { leads: [], at: 1 });
+    require('../src/services/todoListService').forAnswer(stats.cases, null, () => false);   // the switch is off: not for this viewer
+    const after = Object.keys(stats.cases[0]);
+    assert.deepEqual(before.filter((k) => !after.includes(k)), ['managerIds'], 'no step takes a shown value off the row');
+    assert.equal(stats.cases[0].paymentStatus, 'Signed (Unpaid)', 'the Payment status column has its value');
+  } finally {
+    board.restore(); restoreClock();
+    if (prev === undefined) delete process.env.TODO_TAB; else process.env.TODO_TAB = prev;
+    dash.invalidateCases(); dash._casesIo.overrides.clear();
+  }
+});
+
 test('the delivery rule in the code: one request flag (contact=1) — the route passes it only when asked, the list page asks, the Summary and the quiet re-fetch do not, /api/dashboard/stats never; the three unwanted ids are nowhere in the service', async () => {
   const svc = fs.readFileSync(require.resolve('../src/services/dashboardService'), 'utf8');
   assert.match(svc, /if \(!contact\) for \(const c of cases\) for \(const f of MORE_FIELDS\) delete c\[f\];/);
