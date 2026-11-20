@@ -20,12 +20,14 @@
  * outside itself. Node requires this file for the tests.
  *
  * cfg: { key, tabCols: { '': [ids], viewKey: [ids] }, names: { id: label }, tabName(tab) -> 'All' | 'Assigning' …,
- *        tab() -> the tab on view ('' = All), onChange() (redraw the table and its header), ids: { btn, pop } }
+ *        tab() -> the tab on view ('' = All), onChange() (redraw the table and its header), ids: { btn, pop },
+ *        moreCols: [ids] — the columns that are on no tab by default (Faran 2026-11-20): every tab's panel lists them
+ *        last, under "More from the Monday board", all unticked until a person ticks one }
  */
 
 /* eslint-disable no-var */
 function clientMasterColumnsUi(win, CMU, cfg) {
-  var doc = win.document, KEY = cfg.key, TC = cfg.tabCols || {}, NAMES = cfg.names || {};
+  var doc = win.document, KEY = cfg.key, TC = cfg.tabCols || {}, NAMES = cfg.names || {}, MORE = cfg.moreCols || [];
   var prefs = {};                 // { all | viewKey: { hidden, added } } — the choices, in memory (and kept, where the browser lets us)
   var plans = {}, chosen = {};    // per tab: what it offers, and the ids to draw (worked out once per change)
   var isOpen = false, openTab = '', pop = null, wired = false;
@@ -35,7 +37,7 @@ function clientMasterColumnsUi(win, CMU, cfg) {
   var kept = read();
   if (kept) prefs = kept;
 
-  function plan(tab) { var t = tab == null ? '' : String(tab); if (!plans[t]) plans[t] = CMU.colPlan(TC, t); return plans[t]; }
+  function plan(tab) { var t = tab == null ? '' : String(tab); if (!plans[t]) plans[t] = CMU.colPlan(TC, t, MORE); return plans[t]; }
   function pref(tab) { var p = plan(tab); return CMU.colPref(p, prefs[CMU.colTabKey(p.tab)]); }
   /** The column ids to draw on a tab, in order. */
   function ids(tab) { var p = plan(tab); if (!chosen[p.tab]) chosen[p.tab] = CMU.colIds(p, prefs[CMU.colTabKey(p.tab)]); return chosen[p.tab]; }
@@ -98,6 +100,7 @@ function clientMasterColumnsUi(win, CMU, cfg) {
     return '<div class="qp-h"><span>Columns on ' + esc(tabName(p.tab)) + '</span><button type="button" class="qp-x" data-act="close" aria-label="Close">×</button></div><div class="qp-b">'
       + '<div class="qp-sec"><div class="qp-list">' + p.own.map(function (id) { return row(id, pr.hidden.indexOf(id) < 0); }).join('') + '</div></div>'
       + (p.extra.length ? '<div class="qp-sec"><div class="qp-t">More columns</div><div class="qp-list">' + p.extra.map(function (id) { return row(id, pr.added.indexOf(id) >= 0); }).join('') + '</div></div>' : '')
+      + (p.more && p.more.length ? '<div class="qp-sec"><div class="qp-t">More from the Monday board</div><div class="qp-list">' + p.more.map(function (id) { return row(id, pr.added.indexOf(id) >= 0); }).join('') + '</div></div>' : '')
       + '</div><div class="qp-f"><button type="button" class="qp-link" data-act="reset"' + (sum.custom ? '' : ' disabled') + '>Reset to default</button>'
       + '<button type="button" class="qp-done" data-act="close">Done</button></div>';
   }

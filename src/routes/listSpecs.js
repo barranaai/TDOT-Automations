@@ -252,6 +252,9 @@ function casesListSpec(ctx) {
     return ('000' + (at < 0 ? 999 : at)).slice(-3) + ' ' + text;
   }
   function pct(v) { var n = Number(v); return (v === '' || v == null || isNaN(n)) ? null : n; }
+  /* More from the Monday board (2026-11-20): the optional columns' values sit together on the row, in r.more, keyed by the
+     column's id. A row without it (a page that did not ask for it) reads as blank everywhere. */
+  function more(r, k) { var m = r && r.more; return m && m[k] != null ? m[k] : ''; }
   var spec = {
     facets: {
       stage: { label: 'Stage', get: function (r) { return s(r.caseStage); }, none: 'No stage' },
@@ -270,6 +273,13 @@ function casesListSpec(ctx) {
       officer: { label: 'Support officer', get: function (r) { return names(r.officer); }, none: 'Nobody' },
       // The view tabs above the table (block 3): a row is in every Monday view it passes (worked out on the server).
       view: { label: 'View', quick: true, fixed: true, order: VK, text: function (v) { return VL[v] || v; }, get: viewsOf, none: 'No view' },
+      // More from the Monday board (2026-11-20): the optional columns that are a status, people or short text filter like the rest.
+      qStatus: { label: 'Questionnaire status', get: function (r) { return s(more(r, 'qStatus')); }, none: 'Not set' },
+      docsLocation: { label: 'Documents location', get: function (r) { return s(more(r, 'docsLocation')); }, none: 'Not set' },
+      supervisor: { label: 'Ops supervisor', get: function (r) { return names(more(r, 'supervisor')); }, none: 'Nobody' },
+      consultant: { label: 'Consultant', get: function (r) { return s(more(r, 'consultant')); }, none: 'No consultant' },
+      consultOutcome: { label: 'Consultation outcome', get: function (r) { return s(more(r, 'consultOutcome')); }, none: 'No outcome' },
+      sourceRef: { label: 'Source / Reference', get: function (r) { return s(more(r, 'sourceRef')); }, none: 'No source' },
     },
     sorts: {
       createdAt: function (r) { return s(r.createdAt); },
@@ -302,10 +312,33 @@ function casesListSpec(ctx) {
       managerV: function (r) { var t = txt(r.manager); return t === 'unassigned' ? '' : t; },
       qPct: function (r) { return pct(r.qReadinessPct); },
       docPct: function (r) { return pct(r.docUploadedPct); },
+      // More from the Monday board (2026-11-20): a date as its plain day, a number as a number, text A → Z; blanks last both ways.
+      // A link column sorts by whether the case has the link (the address itself is never read here).
+      stageStart: function (r) { return s(more(r, 'stageStart')); },
+      hardDeadlineSys: function (r) { return s(more(r, 'hardDeadlineSys')); },
+      softDeadlineSys: function (r) { return s(more(r, 'softDeadlineSys')); },
+      prepDeadlineSys: function (r) { return s(more(r, 'prepDeadlineSys')); },
+      reminderCount: function (r) { return pct(more(r, 'reminderCount')); },
+      paymentConfirmed: function (r) { return s(more(r, 'paymentConfirmed')); },
+      retainerSigned: function (r) { return s(more(r, 'retainerSigned')); },
+      missingRequired: function (r) { return pct(more(r, 'missingRequired')); },
+      qStatus: function (r) { return txt(more(r, 'qStatus')); },
+      lastActivity: function (r) { return s(more(r, 'lastActivity')); },
+      supervisor: function (r) { return txt(more(r, 'supervisor')); },
+      escalationReason: function (r) { return txt(more(r, 'escalationReason')); },
+      folder: function (r) { return more(r, 'folder') ? 0 : 1; },
+      docsLocation: function (r) { return txt(more(r, 'docsLocation')); },
+      consultant: function (r) { return txt(more(r, 'consultant')); },
+      consultOutcome: function (r) { return txt(more(r, 'consultOutcome')); },
+      consultFee: function (r) { return txt(more(r, 'consultFee')); },
+      sourceRef: function (r) { return txt(more(r, 'sourceRef')); },
+      consultRecord: function (r) { return more(r, 'consultRecord') ? 0 : 1; },
     },
     // a case with no date / phase / officer goes last, whichever way the column sorts (A → Z must not open on every blank)
     sortBlanksLast: ['actualDeadline', 'promisedDate', 'phase', 'officer',
-      'dependents', 'clientEmail', 'clientPhone', 'caseTypeV', 'subType', 'deadlineType', 'phaseBoard', 'stageBoard', 'retainedBy', 'retainerStatus', 'paymentStatus', 'managerV', 'qPct', 'docPct'],
+      'dependents', 'clientEmail', 'clientPhone', 'caseTypeV', 'subType', 'deadlineType', 'phaseBoard', 'stageBoard', 'retainedBy', 'retainerStatus', 'paymentStatus', 'managerV', 'qPct', 'docPct',
+      'stageStart', 'hardDeadlineSys', 'softDeadlineSys', 'prepDeadlineSys', 'reminderCount', 'paymentConfirmed', 'retainerSigned', 'missingRequired', 'qStatus', 'lastActivity',
+      'supervisor', 'escalationReason', 'docsLocation', 'consultant', 'consultOutcome', 'consultFee', 'sourceRef'],
     defaultSort: { key: 'createdAt', dir: 'desc' },   // newest case first
     // The search box also finds a case by the client's email, phone (however the number is written) and dependents (2026-11-12).
     search: { chip: 'Search', text: function (r) { return [r.clientName, r.caseRef, r.caseType, r.officer, r.clientEmail, r.clientPhone, r.dependents]; },
@@ -337,6 +370,12 @@ function casesListOpts(ctx) {
   VIEWS.forEach(function (v) { if (v && v.todoBox) TODO = v.key; });
   var TD = TODO ? VT.concat([TODO]) : VT;
   var PCT = ['Highest first', 'Lowest first'], DESC = ['desc', 'asc'], BOARD = ['In the board’s order', 'The other way'];
+  /* More from the Monday board (Faran 2026-11-20): nineteen more board columns, each OPTIONAL — on NO tab by default
+     (tabs: NONE), so every tab shows exactly the columns it always did. A person switches one on with the Columns button
+     (a column with more: … is what the page offers there, in this order, on every tab). The same word says how the page shows
+     the value: date | num | status | names | text | clip (long text, cut to two lines) | link. Read-only, like every column here. */
+  var NONE = [], LATE = ['Latest first', 'Earliest first'], MOST = ['Most first', 'Fewest first'], LINK = ['With a link first', 'Without a link first'];
+  var SYS = ' Set by the system from the stage timings. Not the client’s deadline (see Actual deadline).';
   var opts = {
     key: 'tdot_list_cases',
     ids: { head: 'cs-headrow', chips: 'cs-chips', count: 'table-count', search: 'search-box', pop: 'cs-pop' },
@@ -391,6 +430,26 @@ function casesListOpts(ctx) {
       { id: 'managerV', label: 'Case manager', menu: 'facet', facets: ['manager'], sort: 'managerV', sortText: AZ, sortDirs: ASC, tabs: VT },
       { id: 'qPct', label: 'Questionnaire %', title: 'Questionnaire Readiness %', sort: 'qPct', sortText: PCT, sortDirs: DESC, tabs: TD },
       { id: 'docPct', label: 'Documents uploaded %', title: 'Documents Uploaded %', sort: 'docPct', sortText: PCT, sortDirs: DESC, tabs: TD },
+      // ── more from the Monday board: optional, on no tab until a person switches one on (the Columns button) ──
+      { id: 'stageStart', label: 'Stage start date', title: 'Stage Start Date: the day the case entered its stage', sort: 'stageStart', sortText: LATE, sortDirs: DESC, tabs: NONE, more: 'date' },
+      { id: 'hardDeadlineSys', label: 'Hard deadline (system)', title: 'Hard Deadline.' + SYS, sort: 'hardDeadlineSys', sortText: SOON, sortDirs: ASC, tabs: NONE, more: 'date' },
+      { id: 'softDeadlineSys', label: 'Soft deadline (system)', title: 'Soft Deadline.' + SYS, sort: 'softDeadlineSys', sortText: SOON, sortDirs: ASC, tabs: NONE, more: 'date' },
+      { id: 'prepDeadlineSys', label: 'Submission prep deadline (system)', title: 'Submission Prep Deadline.' + SYS, sort: 'prepDeadlineSys', sortText: SOON, sortDirs: ASC, tabs: NONE, more: 'date' },
+      { id: 'reminderCount', label: 'Reminder count', title: 'Reminder Count: how many reminders the board has counted for this case', sort: 'reminderCount', sortText: MOST, sortDirs: DESC, tabs: NONE, more: 'num' },
+      { id: 'paymentConfirmed', label: 'Payment confirmation date', title: 'Payment Confirmation Date', sort: 'paymentConfirmed', sortText: LATE, sortDirs: DESC, tabs: NONE, more: 'date' },
+      { id: 'retainerSigned', label: 'Retainer signed date', title: 'Retainer Signed Date', sort: 'retainerSigned', sortText: LATE, sortDirs: DESC, tabs: NONE, more: 'date' },
+      { id: 'missingRequired', label: 'Missing required documents', title: 'Missing Required Documents: how many required documents are still missing', sort: 'missingRequired', sortText: MOST, sortDirs: DESC, tabs: NONE, more: 'num' },
+      { id: 'qStatus', label: 'Questionnaire completion status', title: 'Questionnaire Completion Status', menu: 'facet', facets: ['qStatus'], sort: 'qStatus', sortText: AZ, sortDirs: ASC, tabs: NONE, more: 'status' },
+      { id: 'lastActivity', label: 'Last client activity date', title: 'Last Client Activity Date', sort: 'lastActivity', sortText: LATE, sortDirs: DESC, tabs: NONE, more: 'date' },
+      { id: 'supervisor', label: 'Ops supervisor', title: 'Ops Supervisor', menu: 'facet', facets: ['supervisor'], sort: 'supervisor', sortText: AZ, sortDirs: ASC, tabs: NONE, more: 'names' },
+      { id: 'escalationReason', label: 'Escalation reason', title: 'Escalation Reason: a long reason is cut to two lines, hover the cell for the whole text', sort: 'escalationReason', sortText: AZ, sortDirs: ASC, tabs: NONE, more: 'clip' },
+      { id: 'folder', label: 'OneDrive folder', title: 'Opens the case’s OneDrive folder in a new tab', sort: 'folder', sortText: LINK, sortDirs: ASC, tabs: NONE, more: 'link' },
+      { id: 'docsLocation', label: 'Documents location', title: 'Documents Location', menu: 'facet', facets: ['docsLocation'], sort: 'docsLocation', sortText: AZ, sortDirs: ASC, tabs: NONE, more: 'status' },
+      { id: 'consultant', label: 'Consultant', title: 'Consultant: copied from the consultation record', menu: 'facet', facets: ['consultant'], sort: 'consultant', sortText: AZ, sortDirs: ASC, tabs: NONE, more: 'text' },
+      { id: 'consultOutcome', label: 'Consultation outcome', title: 'Consultation Outcome: copied from the consultation record', menu: 'facet', facets: ['consultOutcome'], sort: 'consultOutcome', sortText: AZ, sortDirs: ASC, tabs: NONE, more: 'text' },
+      { id: 'consultFee', label: 'Consultation fee', title: 'Consultation Fee: copied from the consultation record, shown as it is written on the board', sort: 'consultFee', sortText: AZ, sortDirs: ASC, tabs: NONE, more: 'text' },
+      { id: 'sourceRef', label: 'Source / Reference', title: 'Source / Reference: copied from the consultation record', menu: 'facet', facets: ['sourceRef'], sort: 'sourceRef', sortText: AZ, sortDirs: ASC, tabs: NONE, more: 'text' },
+      { id: 'consultRecord', label: 'Consultation record', title: 'Opens the consultation record in a new tab', sort: 'consultRecord', sortText: LINK, sortDirs: ASC, tabs: NONE, more: 'link' },
     ],
   };
   /* The page-only tab's own column (only when the page has the tab): who has the case for review. Its id, filter and sort

@@ -57,6 +57,10 @@ const TAB_WORDS = ['todoUi', 'tdot_list_cases_todo_who', 'To-do', 'view=todo', '
 const VIEWS_TODAY = "[{\"key\":\"assigning\",\"label\":\"Assigning\",\"hint\":\"Like Monday's Assigning view: open stages (not Application Submitted, Cancelled, Profile Created/Linked/Reviewed/Updated, Task Done, Ads posted, LMIA Submitted or empty), not in Leads, Cancel or TEST. Grouped by Case Stage.\",\"mondayViewId\":\"260858028\",\"by\":\"stage\",\"dir\":\"ASC\",\"groupOrder\":\"position\",\"sort\":null,\"stageStrip\":true,\"deadlineBox\":false},{\"key\":\"deadlines\",\"label\":\"Deadlines\",\"hint\":\"Like Monday's Deadlines view: Phase filled in, and the stage is not Application Submitted, ADR, Profile Created/Linked/Reviewed/Updated, Task Done or LMIA Submitted. So Cancelled, Ads posted and no-stage cases with a Phase show too, and so do rows in the Leads, Cancel or TEST groups, as on Monday. Grouped by Phase.\",\"mondayViewId\":\"260886949\",\"by\":\"phase\",\"dir\":\"ASC\",\"groupOrder\":\"position\",\"sort\":null,\"stageStrip\":false,\"deadlineBox\":true},{\"key\":\"eeita\",\"label\":\"EE after ITA\",\"hint\":\"Like Monday's EE after ITA view: case type Canadian Experience Class (EE after ITA), open stages (not Application Submitted, Cancelled, Profile Created/Linked/Reviewed/Updated, Task Done, Ads posted or LMIA Submitted), not in Leads, Cancel or TEST. Grouped by board group.\",\"mondayViewId\":\"287709906\",\"by\":\"board\",\"dir\":\"ASC\",\"groupOrder\":\"position\",\"sort\":null,\"stageStrip\":false,\"deadlineBox\":false}]";
 const TABCOLS_TODAY = "{\"\":[\"caseRef\",\"clientName\",\"caseType\",\"caseStage\",\"phase\",\"deadline\",\"promised\",\"health\",\"slaRisk\",\"officer\",\"manager\",\"overallReadiness\",\"daysElapsed\",\"status\",\"del\"],\"assigning\":[\"caseRef\",\"clientName\",\"dependents\",\"clientEmail\",\"clientPhone\",\"caseTypeV\",\"subType\",\"actualDeadline\",\"deadlineType\",\"internalDeadline\",\"phaseV\",\"retainedBy\",\"retainerStatus\",\"paymentStatus\",\"stageV\",\"portal\",\"officerV\",\"managerV\",\"qPct\",\"docPct\"],\"deadlines\":[\"caseRef\",\"clientName\",\"dependents\",\"clientEmail\",\"clientPhone\",\"caseTypeV\",\"subType\",\"actualDeadline\",\"deadlineType\",\"internalDeadline\",\"phaseV\",\"retainedBy\",\"retainerStatus\",\"paymentStatus\",\"stageV\",\"portal\",\"officerV\",\"managerV\",\"qPct\",\"docPct\"],\"eeita\":[\"caseRef\",\"clientName\",\"dependents\",\"clientEmail\",\"clientPhone\",\"caseTypeV\",\"subType\",\"actualDeadline\",\"deadlineType\",\"internalDeadline\",\"phaseV\",\"retainedBy\",\"retainerStatus\",\"paymentStatus\",\"stageV\",\"portal\",\"officerV\",\"managerV\",\"qPct\",\"docPct\"]}";
 const COLNAMES_TODAY = "{\"caseRef\":\"Case Ref\",\"clientName\":\"Client\",\"caseType\":\"Type\",\"caseStage\":\"Stage\",\"phase\":\"Phase\",\"deadline\":\"Deadline\",\"promised\":\"Promised\",\"health\":\"Health\",\"slaRisk\":\"SLA Risk\",\"officer\":\"Support Officer\",\"manager\":\"Manager\",\"overallReadiness\":\"Readiness\",\"daysElapsed\":\"Days\",\"status\":\"Status\",\"dependents\":\"Dependents\",\"clientEmail\":\"Client email\",\"clientPhone\":\"Contact number\",\"caseTypeV\":\"Case type\",\"subType\":\"Sub-type\",\"actualDeadline\":\"Actual deadline\",\"deadlineType\":\"Deadline type\",\"internalDeadline\":\"Internal deadline\",\"phaseV\":\"Phase\",\"retainedBy\":\"Retained by\",\"retainerStatus\":\"Retainer status\",\"paymentStatus\":\"Payment status\",\"stageV\":\"Stage\",\"portal\":\"Client portal\",\"officerV\":\"Support officer\",\"managerV\":\"Case manager\",\"qPct\":\"Questionnaire %\",\"docPct\":\"Documents uploaded %\"}";
+/* More from the Monday board (2026-11-20): nineteen optional columns, on no tab by default (CM_TABCOLS above is untouched). The Columns
+   panel needs their names, so CM_COLNAMES carries them after the names of before — a literal copy as well. */
+const COLNAMES_MORE = "\"stageStart\":\"Stage start date\",\"hardDeadlineSys\":\"Hard deadline (system)\",\"softDeadlineSys\":\"Soft deadline (system)\",\"prepDeadlineSys\":\"Submission prep deadline (system)\",\"reminderCount\":\"Reminder count\",\"paymentConfirmed\":\"Payment confirmation date\",\"retainerSigned\":\"Retainer signed date\",\"missingRequired\":\"Missing required documents\",\"qStatus\":\"Questionnaire completion status\",\"lastActivity\":\"Last client activity date\",\"supervisor\":\"Ops supervisor\",\"escalationReason\":\"Escalation reason\",\"folder\":\"OneDrive folder\",\"docsLocation\":\"Documents location\",\"consultant\":\"Consultant\",\"consultOutcome\":\"Consultation outcome\",\"consultFee\":\"Consultation fee\",\"sourceRef\":\"Source / Reference\",\"consultRecord\":\"Consultation record\"";
+const COLNAMES_NOW = COLNAMES_TODAY.slice(0, -1) + ',' + COLNAMES_MORE + '}';
 const QUICK_TODAY = ['assigning', 'deadlines', 'eeita'];
 const CTX_TODAY = '{ healthOrder: HEALTH_ORDER, views: CM_VIEWS, initial: cmInitial, onChange: cmOnChange, meta: function() { return (_data && _data.meta) || null; }, typeOf: CMW.typeOf }';
 const TWELVE = ['caseRef', 'clientName', 'todoWith', 'caseTypeV', 'subType', 'stageV', 'actualDeadline', 'deadlineType', 'internalDeadline', 'officerV', 'qPct', 'docPct'];
@@ -174,7 +178,7 @@ test('tab off: CM_VIEWS, CM_TABCOLS, CM_COLNAMES and the tab values are literal 
       const html = await renderRoute('/', req), f = pageFacts(html);
       assert.equal(f.views, VIEWS_TODAY, what);
       assert.equal(f.tabcols, TABCOLS_TODAY, what);
-      assert.equal(f.colnames, COLNAMES_TODAY, what);
+      assert.equal(f.colnames, COLNAMES_NOW, what + ': the names of before, then the optional columns\' names');
       assert.equal(f.scripts, 2, what + ': the page script and the list engine\'s, as before');
       for (const w of TAB_WORDS) assert.ok(!html.includes(w), what + ': the page holds "' + w + '"');
       assert.ok(!/to-do/i.test(html), what + ': not in any spelling');
@@ -227,7 +231,8 @@ test('tab on: To-do is the LAST tab; CM_TABCOLS.todo is the twelve in their orde
   const before = JSON.parse(TABCOLS_TODAY);
   assert.deepEqual(Object.keys(tabcols), ['', 'assigning', 'deadlines', 'eeita', 'todo']);
   for (const k of Object.keys(before)) assert.deepEqual(tabcols[k], before[k], 'the ' + (k || 'All') + ' tab\'s columns are as they were');
-  assert.deepEqual(names, { ...JSON.parse(COLNAMES_TODAY), todoWith: 'With' });
+  assert.deepEqual(names, { ...JSON.parse(COLNAMES_NOW), todoWith: 'With' });
+  assert.deepEqual(Object.keys(names), Object.keys(JSON.parse(COLNAMES_NOW)).concat(['todoWith']), '"With" is the last name');
   // the engine's own set for the tab is the same twelve (its order is the list's; the page's order is CM_TABCOLS)
   const opts = S.casesListOpts({ views });
   assert.deepEqual(listCore({}).colsOnTab(opts.cols, 'todo').map((c) => c.id).sort(), TWELVE.slice().sort());
@@ -1296,7 +1301,8 @@ test('caseRow by itself (the older row harness: its fixed helpers, none of the t
     const ctx = { window: { TDOT_IS_ADMIN: false }, document: { createElement: el, getElementById: () => null }, Date, isNaN, isFinite, String, Math,
       CM_FLASH: {}, CM_DL_FLASH: {}, TDOT_DEL_SVG: '[bin]', CM_PRE_ONBOARDING: cmv.PRE_ONBOARDING_INDEX, _data: null, CM_TABCOLS: JSON.parse(main.match(/var CM_TABCOLS = (.*);/)[1]), ...extra };
     vm.createContext(ctx);
-    const names = ['caseRow', 'cmColIds', 'cmTextCell', 'cmPctCell', 'cmPortalCell', 'escHtml', 'healthBadge', 'shortType', 'cmNoneDash', 'cmDay', 'cmFlashText', 'cmDlFlashText'];
+    // cmMoreCell (2026-11-20): caseRow asks it for a column id it has no cell for — with no CM_MORE on the page it answers nothing, as here
+    const names = ['caseRow', 'cmColIds', 'cmTextCell', 'cmPctCell', 'cmPortalCell', 'cmMoreCell', 'escHtml', 'healthBadge', 'shortType', 'cmNoneDash', 'cmDay', 'cmFlashText', 'cmDlFlashText'];
     vm.runInContext(main.match(/var CMW = \(function clientMasterWindows[\s\S]*?\)\(CMW\);/)[0] + '\n' + names.map((n) => fnSrc(main, n)).join('\n'), ctx);
     return (c, v) => ctx.caseRow(c, v, TODAY).innerHTML.split('</td>').slice(0, -1).map((x) => x + '</td>');
   };
@@ -1399,4 +1405,39 @@ test('"With" may be added on the other tabs through the Columns button (the same
   p.ctx.CasesTable.apply('columns');
   assert.equal(p.headerRow().length, 11);
   assert.ok(JSON.parse(p.local.m.get('tdot_view_cm_columns_v1')).tabs.todo.hidden.includes('qPct'));
+});
+
+test('the optional board columns (More from the Monday board, 2026-11-20) on the To-do tab: off by default — the twelve as they were; offered by the Columns button as on every tab; one switched on comes after the twelve; a system date changes neither the order nor any "Passed" mark', async () => {
+  const MORE_IDS = ['stageStart', 'hardDeadlineSys', 'softDeadlineSys', 'prepDeadlineSys', 'reminderCount', 'paymentConfirmed', 'retainerSigned', 'missingRequired', 'qStatus', 'lastActivity',
+    'supervisor', 'escalationReason', 'folder', 'docsLocation', 'consultant', 'consultOutcome', 'consultFee', 'sourceRef', 'consultRecord'];
+  const withMore = () => { const cs = CASES(); cs[1].more = { hardDeadlineSys: '2026-11-01', softDeadlineSys: '2026-10-20', prepDeadlineSys: '2026-10-10', reminderCount: 2 }; return cs; };   // case 2: Officer One's, promised 2026-12-01 — not passed
+  const p = await openPage({ search: '?view=todo&who=me' });
+  p.answer(withMore(), { todo: I });
+  assert.equal(p.onTab(), 'todo');
+  assert.deepEqual(p.cols('todo'), TWELVE, 'nothing chosen: the twelve');
+  assert.equal(p.headerRow().length, 12);
+  // the very same list as without the values on the rows: the order, the groups, the cells
+  const q = await openPage({ search: '?view=todo&who=me' });
+  q.answer(CASES(), { todo: I });
+  assert.deepEqual(p.look(), q.look());
+  assert.deepEqual(p.rows().map((r) => r.innerHTML), q.rows().map((r) => r.innerHTML));
+  // offered on this tab too: a group of its own, after the tab's own and the other tabs' columns
+  const plan = p.ctx.CMCOLS.plan('todo');
+  assert.deepEqual(Array.from(plan.own), TWELVE);
+  assert.deepEqual(Array.from(plan.more), MORE_IDS);
+  const panel = p.ctx.CMCOLS.panelHtml('todo');
+  assert.ok(panel.indexOf('<div class="qp-t">More columns</div>') < panel.indexOf('<div class="qp-t">More from the Monday board</div>'));
+  assert.deepEqual([...panel.slice(panel.indexOf('More from the Monday board')).matchAll(/data-colpick="([^"]+)"( checked)?/g)].map((m) => m[1] + (m[2] ? '+' : '-')), MORE_IDS.map((id) => id + '-'));
+  // switched on: after the twelve; the date as a plain date — no "Passed", no window — and the list's order is not touched
+  p.ctx.CMCOLS.toggle('todo', 'hardDeadlineSys', true);
+  p.ctx.CMCOLS.toggle('todo', 'reminderCount', true);
+  assert.deepEqual(p.cols('todo'), TWELVE.concat(['hardDeadlineSys', 'reminderCount']));
+  assert.deepEqual(p.headerRow().slice(12), ['Hard deadline (system)', 'Reminder count']);
+  assert.equal(p.cell(2, 'hardDeadlineSys'), '<td class="cm-c-more"><span class="cm-date">Nov 1, 2026</span></td>', 'a date that has passed, shown only');
+  assert.equal(p.cell(2, 'reminderCount'), '<td class="cm-c-more cm-num">2</td>');
+  assert.equal(plain(p.cell(1, 'hardDeadlineSys')), '—'); assert.equal(plain(p.cell(1, 'reminderCount')), '—');
+  assert.deepEqual(p.look(), q.look(), 'soonest deadline first, as before: the system date did not move case 2');
+  assert.ok(!p.rows().find((r) => r.innerHTML.includes('2026-EE-002')).innerHTML.includes('data-due="passed"'), 'case 2 is not marked Passed by its system dates');
+  assert.ok(p.cell(1, 'actualDeadline').includes('data-due="passed"'), 'case 1 keeps its own Passed mark (its Actual deadline)');
+  assert.deepEqual(JSON.parse(p.local.m.get('tdot_view_cm_columns_v1')).tabs.todo, { hidden: [], added: ['hardDeadlineSys', 'reminderCount'] });
 });

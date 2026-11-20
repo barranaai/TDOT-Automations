@@ -320,7 +320,10 @@ function clientMasterUi(W) {
      one. Two columns that show the same board fact in two looks are equivalents (COL_SAME): one tab never
      offers both. What is kept is the DIFFERENCE from the default, per tab ({ hidden: [ids], added: [ids] }),
      so a column added to a default later shows up by itself and an id that is gone is simply ignored.
-     tabCols: { '': [the All tab's column ids], viewKey: [ids], … } — the page's CM_TABCOLS. */
+     tabCols: { '': [the All tab's column ids], viewKey: [ids], … } — the page's CM_TABCOLS.
+     More from the Monday board (Faran 2026-11-20): columns that are on NO tab by default (the page's CM_MORECOLS). Every
+     tab offers them, in a group of their own after the others; one that is switched on is kept in the same added list
+     and drawn after the tab's other columns. With none given, everything here is as it was. */
   var COL_LOCKED = ['caseRef', 'clientName'];   // always shown (and pinned in the wide table)
   var COL_FIXED = ['del'];                      // not a choice: stays where the tab has it, last
   /* All's column, then the view tabs' column for the same thing (All's "Deadline" also carries the type and the window;
@@ -338,10 +341,11 @@ function clientMasterUi(W) {
   function colTabKey(tab) { var t = s(tab); return t === '' ? 'all' : t; }
   /**
    * What a tab offers: { tab, own: the tab's default columns that can be chosen (table order, the locked two first as the
-   * list has them), extra: the other tabs' columns with no equivalent here (their own order; All's first), locked, fixed:
-   * the tab's columns that are not a choice }. An unknown tab is read as All.
+   * list has them), extra: the other tabs' columns with no equivalent here (their own order; All's first), more: the
+   * columns that are on no tab by default (moreCols, in its order — the same on every tab), locked, fixed: the tab's
+   * columns that are not a choice }. An unknown tab is read as All.
    */
-  function colPlan(tabCols, tab) {
+  function colPlan(tabCols, tab, moreCols) {
     var tc = tabCols || {}, t = has(tc, s(tab)) ? s(tab) : '';
     var mine = colList(tc[t]), own = [], fixed = [], extra = [];
     mine.forEach(function (id) { (COL_FIXED.indexOf(id) >= 0 ? fixed : own).push(id); });
@@ -353,19 +357,23 @@ function clientMasterUi(W) {
         extra.push(id);
       });
     });
-    return { tab: t, own: own, extra: extra, fixed: fixed, locked: own.filter(function (id) { return COL_LOCKED.indexOf(id) >= 0; }) };
+    var more = colList(moreCols).filter(function (id) { return COL_FIXED.indexOf(id) < 0 && own.indexOf(id) < 0 && extra.indexOf(id) < 0 && !taken(id); });
+    return { tab: t, own: own, extra: extra, more: more, fixed: fixed, locked: own.filter(function (id) { return COL_LOCKED.indexOf(id) >= 0; }) };
   }
+  /* The ids a plan can add: the other tabs' columns, then the ones that are on no tab by default. */
+  function colCanAdd(plan) { return plan.extra.concat(plan.more || []); }
   /** A kept choice made safe for a plan: only ids the tab can hide (never the locked two) and ids it can add. */
   function colPref(plan, raw) {
     var r = raw && typeof raw === 'object' ? raw : {};
     return { hidden: colList(r.hidden).filter(function (id) { return plan.own.indexOf(id) >= 0 && plan.locked.indexOf(id) < 0; }),
-      added: colList(r.added).filter(function (id) { return plan.extra.indexOf(id) >= 0; }) };
+      added: colList(r.added).filter(function (id) { return colCanAdd(plan).indexOf(id) >= 0; }) };
   }
-  /** The columns to draw, in order: the tab's own (without the hidden), then the added in their own set's order, then the fixed (All's delete column). */
+  /** The columns to draw, in order: the tab's own (without the hidden), then the added in their own set's order (the other tabs' columns,
+      then the ones that are on no tab by default), then the fixed (All's delete column). */
   function colIds(plan, raw) {
     var p = colPref(plan, raw);
     return plan.own.filter(function (id) { return p.hidden.indexOf(id) < 0; })
-      .concat(plan.extra.filter(function (id) { return p.added.indexOf(id) >= 0; })).concat(plan.fixed);
+      .concat(colCanAdd(plan).filter(function (id) { return p.added.indexOf(id) >= 0; })).concat(plan.fixed);
   }
   /** The choice after one box is ticked or unticked. A locked column, a fixed one or an id the tab does not offer changes nothing. */
   function colToggle(plan, raw, id, on) {
@@ -373,7 +381,7 @@ function clientMasterUi(W) {
     function put(list, yes) { var at = list.indexOf(id); if (yes && at < 0) list.push(id); if (!yes && at >= 0) list.splice(at, 1); }
     if (plan.locked.indexOf(id) >= 0) return p;
     if (plan.own.indexOf(id) >= 0) put(p.hidden, !show);
-    else if (plan.extra.indexOf(id) >= 0) put(p.added, show);
+    else if (colCanAdd(plan).indexOf(id) >= 0) put(p.added, show);
     return p;
   }
   /** How far a tab is from its default: { hidden, added, custom, text: '' | '3 hidden' | '2 added' | '3 hidden, 2 added' }. */

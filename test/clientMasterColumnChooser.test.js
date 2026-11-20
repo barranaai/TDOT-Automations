@@ -32,6 +32,13 @@ const VIEW_LABELS = ['Case Ref', 'Client', 'Dependents', 'Client email', 'Contac
 const ALL_CAN_ADD = ['dependents', 'clientEmail', 'clientPhone', 'subType', 'deadlineType', 'retainedBy', 'retainerStatus', 'paymentStatus', 'portal', 'qPct', 'docPct'];
 const VIEW_CAN_ADD = ['health', 'slaRisk', 'overallReadiness', 'daysElapsed', 'status'];
 const TC = { '': ALL_IDS, assigning: VIEW_IDS, deadlines: VIEW_IDS, eeita: VIEW_IDS };
+// More from the Monday board (2026-11-20): nineteen optional columns, on no tab by default — every tab's panel lists them last, unticked
+// (the rules, the data and the cells of these columns are pinned in test/clientMasterMoreColumns.test.js).
+const MORE_IDS = ['stageStart', 'hardDeadlineSys', 'softDeadlineSys', 'prepDeadlineSys', 'reminderCount', 'paymentConfirmed', 'retainerSigned', 'missingRequired', 'qStatus', 'lastActivity',
+  'supervisor', 'escalationReason', 'folder', 'docsLocation', 'consultant', 'consultOutcome', 'consultFee', 'sourceRef', 'consultRecord'];
+const MORE_LABELS = ['Stage start date', 'Hard deadline (system)', 'Soft deadline (system)', 'Submission prep deadline (system)', 'Reminder count', 'Payment confirmation date', 'Retainer signed date',
+  'Missing required documents', 'Questionnaire completion status', 'Last client activity date', 'Ops supervisor', 'Escalation reason', 'OneDrive folder', 'Documents location', 'Consultant',
+  'Consultation outcome', 'Consultation fee', 'Source / Reference', 'Consultation record'];
 
 /* ── the rules (pure) ── */
 
@@ -58,7 +65,9 @@ test('what a tab offers: its own columns, plus the other set\'s columns that hav
   // an unknown tab reads as All; nothing given = nothing offered
   assert.deepEqual(U.colPlan(TC, 'no-such-tab'), all);
   assert.deepEqual(U.colPlan(TC, null), all);
-  assert.deepEqual(U.colPlan(null, ''), { tab: '', own: [], extra: [], fixed: [], locked: [] });
+  assert.deepEqual(U.colPlan(null, ''), { tab: '', own: [], extra: [], more: [], fixed: [], locked: [] });
+  // with no optional columns given (as in this test) a plan offers none: everything above is as it was before they existed
+  assert.deepEqual(all.more, []);
 });
 
 test('the equivalents are data, defined once: seven pairs, each All column with the view tabs\' column for the same thing — never both on one tab', () => {
@@ -460,7 +469,8 @@ test('the panel: named for the tab on view, the tab\'s columns as tick boxes in 
   assert.equal(pop.style.display, 'flex');
   assert.equal(p.btn.attrs['aria-expanded'], 'true'); assert.ok(p.btn.classList.contains('open'));
   assert.ok(pop.innerHTML.startsWith('<div class="qp-h"><span>Columns on All</span><button type="button" class="qp-x" data-act="close" aria-label="Close">×</button></div>'));
-  assert.deepEqual(p.boxes(), ['caseRef+!', 'clientName+!'].concat(ALL_IDS.slice(2, -1).map((id) => id + '+'), ALL_CAN_ADD.map((id) => id + '-')));
+  assert.deepEqual(p.boxes(), ['caseRef+!', 'clientName+!'].concat(ALL_IDS.slice(2, -1).map((id) => id + '+'), ALL_CAN_ADD.map((id) => id + '-'), MORE_IDS.map((id) => id + '-')),
+    'the tab\'s own, then the other tabs\' columns, then the nineteen optional board columns — all of those unticked');
   assert.ok(!pop.innerHTML.includes('data-colpick="del"'));
   assert.equal((pop.innerHTML.match(/<span class="qp-c">Always shown<\/span>/g) || []).length, 2);
   assert.match(pop.innerHTML, /<label class="qp-row cmc-lock"><input type="checkbox" data-colpick="caseRef" checked disabled> <span>Case Ref<\/span><span class="qp-c">Always shown<\/span><\/label>/);
@@ -468,7 +478,10 @@ test('the panel: named for the tab on view, the tab\'s columns as tick boxes in 
   assert.ok(pop.innerHTML.indexOf('data-colpick="status"') < pop.innerHTML.indexOf('<div class="qp-t">More columns</div>') && pop.innerHTML.indexOf('<div class="qp-t">More columns</div>') < pop.innerHTML.indexOf('data-colpick="dependents"'));
   const names = [...pop.innerHTML.matchAll(/data-colpick="[^"]+"[^>]*> <span>([^<]*)<\/span>/g)].map((m) => m[1]);
   assert.deepEqual(names, ['Case Ref', 'Client', 'Type', 'Stage', 'Phase', 'Deadline', 'Promised', 'Health', 'SLA Risk', 'Support Officer', 'Manager', 'Readiness', 'Days', 'Status',
-    'Dependents', 'Client email', 'Contact number', 'Sub-type', 'Deadline type', 'Retained by', 'Retainer status', 'Payment status', 'Client portal', 'Questionnaire %', 'Documents uploaded %']);
+    'Dependents', 'Client email', 'Contact number', 'Sub-type', 'Deadline type', 'Retained by', 'Retainer status', 'Payment status', 'Client portal', 'Questionnaire %', 'Documents uploaded %'].concat(MORE_LABELS));
+  // the optional board columns are a group of their own, last, under a plain heading
+  assert.ok(pop.innerHTML.indexOf('data-colpick="docPct"') < pop.innerHTML.indexOf('<div class="qp-t">More from the Monday board</div>')
+    && pop.innerHTML.indexOf('<div class="qp-t">More from the Monday board</div>') < pop.innerHTML.indexOf('data-colpick="stageStart"'));
   assert.ok(pop.innerHTML.endsWith('<div class="qp-f"><button type="button" class="qp-link" data-act="reset" disabled>Reset to default</button><button type="button" class="qp-done" data-act="close">Done</button></div>'), 'Reset is off at the default');
   // placed under the button, inside the window — also on a 520px screen
   assert.deepEqual([pop.style.width, pop.style.left, pop.style.top, pop.style.maxHeight], ['300px', '420px', '306px', '582px']);
@@ -481,7 +494,7 @@ test('the panel: named for the tab on view, the tab\'s columns as tick boxes in 
   p.cols().close(); p.tab('assigning'); p.cols().open();
   assert.equal(pop.attrs['aria-label'], 'Columns on Assigning');
   assert.ok(pop.innerHTML.includes('<span>Columns on Assigning</span>'));
-  assert.deepEqual(p.boxes(), ['caseRef+!', 'clientName+!'].concat(VIEW_IDS.slice(2).map((id) => id + '+'), VIEW_CAN_ADD.map((id) => id + '-')));
+  assert.deepEqual(p.boxes(), ['caseRef+!', 'clientName+!'].concat(VIEW_IDS.slice(2).map((id) => id + '+'), VIEW_CAN_ADD.map((id) => id + '-'), MORE_IDS.map((id) => id + '-')));
   p.cols().close(); p.tab('eeita'); p.cols().open();
   assert.ok(pop.innerHTML.includes('<span>Columns on EE after ITA</span>'));
 });

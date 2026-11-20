@@ -387,7 +387,16 @@ test('the read asks for the group and the new columns, every items(ids:) with an
   const src = require('fs').readFileSync(require.resolve('../src/services/dashboardService'), 'utf8');
   assert.match(src, /items\(ids: \$ids, limit: \$\{CASES_BATCH\}\) \{ id name created_at group \{ id title \} column_values/);
   for (const id of ['color_mm3tf1ys', 'color_mm6w7cdd', 'date_mm33sj6t', 'date_mm3t66pa', 'multiple_person_mm0xm710']) assert.ok(src.includes(`'${id}'`), id);
-  for (const id of ['date_mm0x26t4', 'date_mm0xfgbp']) assert.ok(!src.includes(id), `${id} (Soft / Prep Deadline, SLA outputs) is not read`);
+  // Soft / Prep Deadline (SLA outputs) were not read at all until 2026-11-20. They are read now for ONE thing only: the optional
+  // "(system)" columns behind the Columns button — each id is in the file once (its COLS line) and each is used once, inside the
+  // row's `more` (never a tab, a window, an order or a flag: test/clientMasterMoreColumns.test.js proves that on rows).
+  for (const [key, id] of [['softDeadline', 'date_mm0x26t4'], ['prepDeadline', 'date_mm0xfgbp']]) {
+    assert.equal(src.split(id).length - 1, 1, `${id} is named once`);
+    assert.equal(dash.COLS[key], id);
+    assert.equal(src.split('COLS.' + key + ')').length - 1, 1, `COLS.${key} is used once`);
+  }
+  const moreBlock = src.slice(src.indexOf('    more: {'), src.indexOf('    },', src.indexOf('    more: {')));
+  assert.ok(moreBlock.includes('softDeadlineSys:  dateOnly(col(COLS.softDeadline))') && moreBlock.includes('prepDeadlineSys:  dateOnly(col(COLS.prepDeadline))') && moreBlock.includes('hardDeadlineSys:  dateOnly(col(COLS.hardDeadline))'));
   assert.equal((src.match(/items\(ids:/g) || []).length, (src.match(/items\(ids: \$ids, limit:/g) || []).length, 'every items(ids:) has a limit');
   assert.deepEqual(dash.COLS.actualDeadline, 'date_mm33sj6t');
   assert.deepEqual(dash.COLS.promisedDate, 'date_mm3t66pa');

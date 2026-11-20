@@ -366,11 +366,21 @@ function cmColNames(views) {
   for (const c of casesListOpts({ views }).cols) if (c.label) out[c.id] = c.label;
   return out;
 }
+/** More from the Monday board (Faran 2026-11-20): the optional columns — on no tab by default (so they are in no list of
+    cmTabCols), offered on every tab by the Columns button. { id: how the page shows it (date | num | status | names | text |
+    clip | link) }, in the list's own order (listSpecs casesListOpts: a column with more: …). */
+function cmMoreCols(views) {
+  const out = {};
+  for (const c of casesListOpts({ views }).cols) if (c.more) out[c.id] = String(c.more);
+  return out;
+}
 /* The Columns button's code for the page (Client Master only). Built here, outside the page's template literal: the
    function is injected with toString and its options are plain page JavaScript in a normal string. */
 function cmColumnsBoot(views) {
   return 'var CM_COLNAMES = ' + JSON.stringify(cmColNames(views)) + ';\n'
-    + 'var CMCOLS = (' + clientMasterColumnsUi.toString() + ')(window, CMU, { key: ' + JSON.stringify(CM_COLUMNS_KEY) + ', tabCols: CM_TABCOLS, names: CM_COLNAMES, ids: { btn: "cm-cols-btn", pop: "cm-cols-pop" },\n'
+    + '// More from the Monday board: the optional columns (on no tab until a person switches one on) and how each is shown.\n'
+    + 'var CM_MORE = ' + JSON.stringify(cmMoreCols(views)) + ';\n'
+    + 'var CMCOLS = (' + clientMasterColumnsUi.toString() + ')(window, CMU, { key: ' + JSON.stringify(CM_COLUMNS_KEY) + ', tabCols: CM_TABCOLS, names: CM_COLNAMES, moreCols: Object.keys(CM_MORE), ids: { btn: "cm-cols-btn", pop: "cm-cols-pop" },\n'
     + '  tabName: function(t) { var v = cmViewDef(t); return v ? v.label : "All"; },\n'
     + '  tab: function() { var v = window.CasesTable ? cmView(window.CasesTable.state()) : null; return v ? v.key : ""; },\n'
     + '  onChange: function() { if (window.CasesTable) window.CasesTable.apply("columns"); } });';
@@ -524,6 +534,15 @@ const CM_CSS = `
     .cm-portal { display:inline-block; color:var(--st-blue-fg); font-weight:700; text-decoration:underline; padding:3px 4px; margin:-3px -4px; border-radius:5px; }
     .cm-portal:hover { background:var(--st-blue-bg); }
     .cm-portal:focus-visible { outline:2px solid var(--navy); outline-offset:1px; }
+    /* More from the Monday board (the optional columns, 2026-11-20): the same look as the view tabs' cells — a date, a status
+       or a number on one line; people and free text wrap; a long reason is cut to two lines (.cm-clip); a link like the Client portal's. */
+    #all-cases-table.cm-wide td.cm-c-more { min-width:96px; }
+    #all-cases-table.cm-wide td.cm-c-mnames, #all-cases-table.cm-wide td.cm-c-mtext { min-width:110px; max-width:220px; white-space:normal; overflow-wrap:anywhere; }
+    #all-cases-table.cm-wide td.cm-c-mclip { min-width:170px; max-width:260px; white-space:normal; }
+    .cm-num { font-variant-numeric:tabular-nums; font-weight:600; color:var(--navy); }
+    .cm-olink { display:inline-block; color:var(--st-blue-fg); font-weight:700; text-decoration:underline; padding:3px 4px; margin:-3px -4px; border-radius:5px; }
+    .cm-olink:hover { background:var(--st-blue-bg); }
+    .cm-olink:focus-visible { outline:2px solid var(--navy); outline-offset:1px; }
     @media (max-width: 640px) {   /* a phone: the two pinned columns are narrower, so more of the rest shows beside them */
       #all-cases-table.cm-wide #cs-headrow th:nth-child(1), #all-cases-table.cm-wide td.cm-pin1 { width:100px; min-width:100px; max-width:100px; padding-left:10px; padding-right:6px; }
       #all-cases-table.cm-wide #cs-headrow th:nth-child(2), #all-cases-table.cm-wide td.cm-pin2 { left:100px; width:112px; min-width:112px; max-width:112px; padding-left:8px; padding-right:8px; }
@@ -592,6 +611,7 @@ const CM_CSS = `
       #all-cases-table th .th-sortbtn { display:contents; }
       .cm-none-t { position:static !important; }
       .cm-portal { color:inherit; text-decoration:none; }
+      .cm-olink { color:inherit; text-decoration:none; }
     }
 `;
 
@@ -1276,7 +1296,7 @@ function loadData(fresh) {
   // Identity-aware endpoint: send the admin key if we have one (→ see all),
   // otherwise the Monday staff cookie is sent automatically (→ your cases).
   var headers = key ? { 'X-Api-Key': key } : {};
-  // contact=1 (the client's email, phone and portal link for the view tabs' columns) is asked for by the Client Master list only — never by the Summary
+  // contact=1 (the client's email, phone and portal link for the view tabs' columns, and the optional columns' values — c.more) is asked for by the Client Master list only — never by the Summary
   var qs = [];
   if (fresh === true) qs.push('fresh=1');
   if (VIEW !== 'summary') qs.push('contact=1');
@@ -2125,7 +2145,7 @@ function cmNoneDash() { return '<span style="color:var(--light)">—</span>'; }
 /* "Not checked yet" (2026-11-10): the client records were not in memory when the page loaded (just after a restart).
    ONCE, a little later, the labels are asked for again quietly and filled in on the rows already on screen —
    no spinner, the search, filters and tab stay; a failure leaves the page as it is (Refresh still works).
-   It asks WITHOUT contact=1 and copies only c.waiting onto the rows on screen, so their email, phone and portal link stay as loaded. */
+   It asks WITHOUT contact=1 and copies only c.waiting onto the rows on screen, so their email, phone, portal link and optional columns stay as loaded. */
 var _cmWaitAsked = false;
 function cmWaitLater() {
   if (_cmWaitAsked || !_data || _data.waitingAt) return;
@@ -2396,6 +2416,33 @@ function cmPortalCell(c) {
   if (!/^https?:[/][/]/i.test(u)) return '<td class="cm-c-portal">' + cmNoneDash() + '</td>';
   return '<td class="cm-c-portal"><a class="cm-portal" href="' + escHtml(u) + '" target="_blank" rel="noopener noreferrer" title="Open this client’s portal in a new tab" aria-label="Open the client portal of ' + escHtml(c.clientName || c.caseRef || 'this case') + ' in a new tab">Open</a></td>';
 }
+/* More from the Monday board (Faran 2026-11-20): the optional columns a person may switch on with the Columns button.
+   Their values sit together on the row (c.more, by column id) and CM_MORE says how each is shown. An empty board cell is
+   the dash — never a made-up 0 or date. A date is the plain day on the board, written like the Actual deadline's date, with
+   no window and no flag: the three system dates are the SLA engine's own and are only shown. */
+var CM_MORE_LINKS = {
+  folder: { text: 'Open folder', what: 'the OneDrive folder', tip: 'Open this case’s OneDrive folder in a new tab' },
+  consultRecord: { text: 'Open record', what: 'the consultation record', tip: 'Open this client’s consultation record in a new tab' }
+};
+function cmMoreVal(c, id) { var m = c && c.more; return m && m[id] != null ? m[id] : ''; }
+/* A link: a short word that opens the address in a new tab. Only an https address becomes a link — anything else shows "—".
+   The address is never shown as text, never logged and never asked for by this page: it is only the link's target, and the
+   new tab is told nothing about this page (noopener noreferrer). */
+function cmMoreLinkCell(c, id) {
+  var L = CM_MORE_LINKS[id], u = String(cmMoreVal(c, id)).trim();
+  if (!L || !/^https:[/][/]/i.test(u)) return '<td class="cm-c-more">' + cmNoneDash() + '</td>';
+  return '<td class="cm-c-more"><a class="cm-olink" href="' + escHtml(u) + '" target="_blank" rel="noopener noreferrer" title="' + escHtml(L.tip) + '" aria-label="Open ' + escHtml(L.what) + ' of ' + escHtml(c.clientName || c.caseRef || 'this case') + ' in a new tab">' + escHtml(L.text) + '</a></td>';
+}
+/* One optional column's cell ('' = the id is not one of them). */
+function cmMoreCell(c, id) {
+  var kind = (typeof CM_MORE !== 'undefined' && CM_MORE && Object.prototype.hasOwnProperty.call(CM_MORE, id)) ? CM_MORE[id] : '';
+  if (!kind) return '';
+  if (kind === 'link') return cmMoreLinkCell(c, id);
+  var v = cmMoreVal(c, id);
+  if (kind === 'date') { var d = cmDay(v); return '<td class="cm-c-more">' + (d ? '<span class="cm-date">' + escHtml(d) + '</span>' : cmNoneDash()) + '</td>'; }
+  if (kind === 'num') return '<td class="cm-c-more cm-num">' + (typeof v === 'number' && isFinite(v) ? escHtml(String(v)) : cmNoneDash()) + '</td>';
+  return cmTextCell('cm-c-more' + (kind === 'clip' ? ' cm-c-mclip' : kind === 'names' ? ' cm-c-mnames' : kind === 'text' ? ' cm-c-mtext' : ''), v, kind === 'clip');
+}
 
 /* One case row. v = the view tab (null on All): there an empty Case Stage and an empty Manager show "—",
    as Monday shows a blank, and the Deadlines tab shows the two flags with the Internal deadline.
@@ -2530,10 +2577,14 @@ function caseRow(c, v, today, wide) {
     if (!wn) wn = { lead: 'With', list: String(c.manager || '').split(',').map(function(x) { return x.trim(); }).filter(function(x) { return x && x !== 'Unassigned'; }) };
     cells[CM_TODO_COL] = '<td class="cm-c-with">' + (wn.list.length ? '<span class="cm-with">' + escHtml(wn.lead + ' ' + wn.list.join(', ')) + '</span>' : cmNoneDash()) + '</td>';
   }
-  tr.innerHTML = cmColIds(v).map(function(id) { return cells[id] || '<td></td>'; }).join('');
+  // an optional column (More from the Monday board) is made only when it is one of the columns to draw
+  var rowHtml = cmColIds(v).map(function(id) { return cells[id] || cmMoreCell(c, id) || '<td></td>'; }).join('');
+  tr.innerHTML = rowHtml;
   // the portal link never opens the case (the row's own click does that)
   var pl = tr.querySelector('.cm-portal');
   if (pl) pl.onclick = function(e) { e.stopPropagation(); };
+  // … and neither does the OneDrive folder link or the consultation record link (looked for only in a row that has one)
+  if (rowHtml.indexOf('class="cm-olink"') >= 0) Array.prototype.forEach.call(tr.querySelectorAll('.cm-olink'), function(a) { a.onclick = function(e) { e.stopPropagation(); }; });
   var ab = tr.querySelector('.cm-assign');
   // the button never opens the case (the row's own click does that)
   if (ab) ab.onclick = function(e) { e.stopPropagation(); cmAssignDlg(String(c.id)); };

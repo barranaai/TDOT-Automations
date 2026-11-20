@@ -51,6 +51,23 @@ const COLS = {
   retainedBy:         'multiple_person_mm334yp5',
   retainerStatus:     'color_mm2yh6jd',             // the board column titled "Retainer Staus"
   portalLink:         'link_mm2vta5',               // the client's own portal link — it carries the client's access token: never logged
+  // ── More from the Monday board (Faran 2026-11-20): read only, for the optional columns behind the page's Columns button ──
+  // (five of the nineteen are read above already: Hard Deadline, Reminder Count, Missing Required, Last Activity, Ops Supervisor).
+  // Never read here: the Case Access Token, the OneDrive Folder Id, the Client Account Id.
+  stageStart:         'date_mm0xjm1z',
+  softDeadline:       'date_mm0x26t4',              // an SLA output, like Hard Deadline: never the client's deadline
+  prepDeadline:       'date_mm0xfgbp',              // "Submission Prep Deadline" — an SLA output too
+  paymentConfirmed:   'date_mm0xgk76',
+  retainerSigned:     'date_mm34x2ga',
+  qStatus:            'color_mm0x9s08',             // "Questionnaire Completion Status"
+  escalationReason:   'text_mm0xvpr9',
+  folderLink:         'link_mm47dng8',              // the case's OneDrive folder — a link: never logged
+  docsLocation:       'color_mm6be76m',
+  consultant:         'text_mm8t8zhx',
+  consultOutcome:     'text_mm8tmcm7',
+  consultFee:         'text_mm8tsw2c',
+  sourceRef:          'text_mm8tqsa5',
+  consultRecord:      'link_mm8txy20',              // the consultation record — a link: never logged
 };
 
 // The row fields that are client contact details or carry the client's portal token. They leave this
@@ -60,6 +77,14 @@ const CONTACT_FIELDS = ['clientEmail', 'clientPhone', 'portalLink'];
 // contact details: they leave this service only when the caller asks ({ todo: true } — the Client Master page's own
 // route, and only for a viewer the tab is on for); /api/dashboard/stats and every other caller never get them.
 const TODO_FIELDS = ['managerIds'];
+// The optional columns' values ("More from the Monday board", 2026-11-20) sit together in ONE row field, `more`, keyed by
+// the page's column id (MORE_KEYS, in the Columns panel's order). The same rule and the same request as the contact
+// details: `more` leaves this service only when the caller asks ({ contact: true } — the Client Master page's own load,
+// after the access filter). The Summary page, the page's quiet re-fetch, /api/dashboard/stats and every other caller
+// never get it. Never logged.
+const MORE_FIELDS = ['more'];
+const MORE_KEYS = ['stageStart', 'hardDeadlineSys', 'softDeadlineSys', 'prepDeadlineSys', 'reminderCount', 'paymentConfirmed', 'retainerSigned', 'missingRequired',
+  'qStatus', 'lastActivity', 'supervisor', 'escalationReason', 'folder', 'docsLocation', 'consultant', 'consultOutcome', 'consultFee', 'sourceRef', 'consultRecord'];
 
 const caseAccess = require('./caseAccessService');
 const clientMasterViews = require('./clientMasterViews');
@@ -297,6 +322,17 @@ function linkUrl(cv) {
   return /^https?:\/\/[^\s"'<>]+$/i.test(url) ? url : '';
 }
 
+// A link cell for the optional columns (OneDrive folder, Consultation record) → its address, read as linkUrl reads it
+// (the url in the cell's value, else the cell text) but ONLY a whole https:// address: anything else — http, another
+// scheme, spaces, markup, a "label - url" text — is '' and the page shows its dash. The address is never logged.
+function httpsUrl(cv) {
+  let url = '';
+  try { const v = cv && cv.value ? JSON.parse(cv.value) : null; url = v && typeof v.url === 'string' ? v.url : ''; } catch (_) { url = ''; }
+  url = String(url || (cv && cv.text) || '').trim();
+  if (!/^https:\/\/[^\s"<>\\`]+$/i.test(url)) return '';
+  try { return new URL(url).protocol === 'https:' ? url : ''; } catch (_) { return ''; }
+}
+
 // One people cell → { personIds, teamIds } (strings). Parsed here, not through the RBAC
 // column list, so the officer never depends on which columns RBAC reads.
 function peopleIds(raw) {
@@ -397,6 +433,30 @@ function parseItem(item, boardIdx) {
     retainerStatus:     statusText(cvOf(COLS.retainerStatus)).trim(),  // the label as it is on the board
     portalLink:         linkUrl(cvOf(COLS.portalLink)),
     qReadinessPct:      numOrNull(col(COLS.qReadiness)),               // blank = null (qReadiness above reads it as 0)
+    // ── More from the Monday board (the optional columns): '' / null = an empty cell (the page shows "—", never a made-up 0 or date).
+    //    A date is the plain day on the board (no time, never shifted by a time zone); a status is its label, '' when empty.
+    //    The three "Sys" dates are the SLA engine's own outputs: shown only, they feed no tab, window, order or flag. ──
+    more: {
+      stageStart:       dateOnly(col(COLS.stageStart)),
+      hardDeadlineSys:  dateOnly(col(COLS.hardDeadline)),
+      softDeadlineSys:  dateOnly(col(COLS.softDeadline)),
+      prepDeadlineSys:  dateOnly(col(COLS.prepDeadline)),
+      reminderCount:    numOrNull(col(COLS.reminderCount)),            // blank = null (reminderCount above reads it as 0)
+      paymentConfirmed: dateOnly(col(COLS.paymentConfirmed)),
+      retainerSigned:   dateOnly(col(COLS.retainerSigned)),
+      missingRequired:  numOrNull(col(COLS.missingRequired)),          // blank = null (missingRequired above reads it as 0)
+      qStatus:          statusText(cvOf(COLS.qStatus)).trim(),
+      lastActivity:     dateOnly(col(COLS.lastActivityDate)),
+      supervisor:       col(COLS.opsSupervisor),                       // names, as the other people columns
+      escalationReason: col(COLS.escalationReason),
+      folder:           httpsUrl(cvOf(COLS.folderLink)),
+      docsLocation:     statusText(cvOf(COLS.docsLocation)).trim(),
+      consultant:       col(COLS.consultant),
+      consultOutcome:   col(COLS.consultOutcome),
+      consultFee:       col(COLS.consultFee),                          // as it is stored on the board
+      sourceRef:        col(COLS.sourceRef),
+      consultRecord:    httpsUrl(cvOf(COLS.consultRecord)),
+    },
     views:              [],   // filled just below
   };
 }
@@ -410,8 +470,9 @@ function parseRow(item, boardIdx) {
 // @param {Object} [viewer]  when supplied AND not an admin, only cases this
 //   viewer is assigned to (any people column) are counted/returned.
 // @param {{ fresh?: boolean, contact?: boolean, todo?: boolean }} [opts]  fresh = the page's Refresh (re-read only when the copy is > 30 s old);
-//   contact = keep the client contact details and the portal link on the rows (CONTACT_FIELDS) — only the Client
-//   Master page's own route asks for them; every other caller gets the rows without them.
+//   contact = keep the client contact details and the portal link on the rows (CONTACT_FIELDS), and the optional
+//   columns' values (MORE_FIELDS: `more`) — only the Client Master page's own route asks for them; every other caller
+//   gets the rows without them.
 //   todo = keep the To-do tab's fields on the rows (TODO_FIELDS: managerIds) — only `true` keeps them, and only the
 //   page's own route asks, for a viewer the tab is on for; every other caller gets the rows without them.
 async function getDashboardStats(viewer, { fresh = false, contact = false, todo = false } = {}) {
@@ -423,6 +484,7 @@ async function getDashboardStats(viewer, { fresh = false, contact = false, todo 
     cases = cases.filter((c) => caseAccess.viewerCanSee(c.assignees, viewer));
   }
   if (!contact) for (const c of cases) for (const f of CONTACT_FIELDS) delete c[f];
+  if (!contact) for (const c of cases) for (const f of MORE_FIELDS) delete c[f];
   if (todo !== true) for (const c of cases) for (const f of TODO_FIELDS) delete c[f];
 
   // Summary counters
@@ -588,4 +650,4 @@ async function getDashboardStats(viewer, { fresh = false, contact = false, todo 
 module.exports = {
   fetchAllItems, invalidateCases, patchCachedColumn, getCasesMeta,
   _casesIo: { refresh: _refreshCases, io: _io, overrides: _overrides, parseMeta: _parseMeta, FRESH_MIN_AGE_MS, OVERRIDE_MAX_MS, CASES_HARD_MS },
-  getDashboardStats, parseItem: parseRow, peopleIds, COLS, CONTACT_FIELDS, TODO_FIELDS };
+  getDashboardStats, parseItem: parseRow, peopleIds, COLS, CONTACT_FIELDS, TODO_FIELDS, MORE_FIELDS, MORE_KEYS };

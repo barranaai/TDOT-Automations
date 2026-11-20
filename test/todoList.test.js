@@ -239,7 +239,7 @@ const KEYS_TODAY_CONTACT = ['id', 'createdAt', 'clientName', 'caseRef', 'caseTyp
   'reminderCount', 'qReadiness', 'docReadiness', 'docReviewed', 'overallReadiness', 'expectedReadiness', 'behindSchedule', 'blockingQ', 'blockingDoc', 'missingRequired', 'delayLevel',
   'daysElapsed', 'manager', 'supervisor', 'lastActivity', 'hardDeadline', 'assignees', 'boardIdx', 'groupId', 'groupTitle', 'stageIdx', 'phase', 'phaseIdx', 'deadlineType',
   'actualDeadline', 'promisedDate', 'caseTypeIds', 'officer', 'officerIds', 'docUploadedPct', 'paymentStatus', 'dependents', 'clientEmail', 'clientPhone', 'caseSubType', 'retainedBy',
-  'retainerStatus', 'portalLink', 'qReadinessPct', 'views'];
+  'retainerStatus', 'portalLink', 'qReadinessPct', 'more', 'views'];   // `more` (2026-11-20): the optional columns' values — with the contact details only, never on the plain rows above
 const STATS_KEYS_TODAY = ['summary', 'byStage', 'byHealth', 'bySlaRisk', 'byType', 'byManager', 'byChasingStage', 'byDelayLevel', 'readinessByStage', 'cases', 'meta', 'dataAt', 'generatedAt'];
 /* The columns the board read asks for, on the clean tree, in its order (FETCH_IDS). Case Manager was already among them. */
 const FETCH_IDS_TODAY = ['text_mm142s49', 'dropdown_mm0xd1qn', 'color_mm0x8faa', 'color_mm0xszmm', 'color_mm0xf5ry', 'color_mm1a7vbn', 'color_mm0x7bje', 'numeric_mm0x9dea', 'numeric_mm0x5g9x',
@@ -247,6 +247,11 @@ const FETCH_IDS_TODAY = ['text_mm142s49', 'dropdown_mm0xd1qn', 'color_mm0x8faa',
   'numeric_mm0xbpn1', 'numeric_mm0xje6p', 'numeric_mm0x6qy4', 'color_mm1bq05h', 'numeric_mm0xrbk1', 'color_mm3tf1ys', 'color_mm6w7cdd', 'date_mm33sj6t', 'date_mm3t66pa',
   'multiple_person_mm0xm710', 'color_mm0x9fnn', 'text_mm0x1zdk', 'text_mm0xw6bp', 'phone_mm33zr0c', 'dropdown_mm0x4t91', 'multiple_person_mm334yp5', 'color_mm2yh6jd', 'link_mm2vta5',
   'multiple_person_mm0xgpt', 'multiple_person_mm2nhsx1', 'multiple_person_mm0xrzve'];
+/* Since 2026-11-20 the read also asks for fourteen more columns — the optional "More from the Monday board" columns (the other five of
+   the nineteen were already read). They come right after the portal link, before the access filter's people columns. Nothing of the To-do tab. */
+const FETCH_IDS_MORE = ['date_mm0xjm1z', 'date_mm0x26t4', 'date_mm0xfgbp', 'date_mm0xgk76', 'date_mm34x2ga', 'color_mm0x9s08', 'text_mm0xvpr9', 'link_mm47dng8', 'color_mm6be76m',
+  'text_mm8t8zhx', 'text_mm8tmcm7', 'text_mm8tsw2c', 'text_mm8tqsa5', 'link_mm8txy20'];
+const FETCH_IDS_NOW = FETCH_IDS_TODAY.slice(0, FETCH_IDS_TODAY.indexOf('link_mm2vta5') + 1).concat(FETCH_IDS_MORE, FETCH_IDS_TODAY.slice(FETCH_IDS_TODAY.indexOf('link_mm2vta5') + 1));
 
 function fakeBoard(items) {
   const calls = [];
@@ -318,10 +323,12 @@ test('the board read is unchanged: the same columns in the same order as before 
     const rowsQ = board.calls.filter((q) => /items\(ids: \$ids, limit: 100\)/.test(q));
     assert.equal(rowsQ.length, 1, 'one batch read for the six rows, served to both calls');
     const ids = /column_values\(ids: \[([^\]]*)\]\)/.exec(rowsQ[0])[1].split(',').map((x) => JSON.parse(x));
-    assert.deepEqual(ids, FETCH_IDS_TODAY);
+    assert.deepEqual(ids, FETCH_IDS_NOW);
+    assert.deepEqual(ids.filter((id) => !FETCH_IDS_MORE.includes(id)), FETCH_IDS_TODAY, 'without the optional columns of 2026-11-20: the read of before, to the letter');
+    assert.equal(FETCH_IDS_NOW.length, FETCH_IDS_TODAY.length + 14);
     assert.ok(ids.includes(dash.COLS.caseManager) && ids.includes(dash.COLS.caseSupportOfficer));
     assert.equal(board.calls.length, 3, 'the id listing, the board meta and the rows — as before');
-    assert.equal(rowsQ[0], 'query($ids: [ID!]) { items(ids: $ids, limit: 100) { id name created_at group { id title } column_values(ids: [' + FETCH_IDS_TODAY.map((id) => '"' + id + '"').join(',') + ']) { id text value } } }');
+    assert.equal(rowsQ[0], 'query($ids: [ID!]) { items(ids: $ids, limit: 100) { id name created_at group { id title } column_values(ids: [' + FETCH_IDS_NOW.map((id) => '"' + id + '"').join(',') + ']) { id text value } } }');
   });
 });
 
@@ -477,20 +484,30 @@ const SORTS_TODAY = ['createdAt', 'caseRef', 'clientName', 'caseType', 'caseStag
   'daysElapsed', 'dependents', 'clientEmail', 'clientPhone', 'caseTypeV', 'subType', 'deadlineType', 'phaseBoard', 'stageBoard', 'retainedBy', 'retainerStatus', 'paymentStatus', 'managerV', 'qPct', 'docPct'];
 const BLANKS_TODAY = ['actualDeadline', 'promisedDate', 'phase', 'officer', 'dependents', 'clientEmail', 'clientPhone', 'caseTypeV', 'subType', 'deadlineType', 'phaseBoard', 'stageBoard',
   'retainedBy', 'retainerStatus', 'paymentStatus', 'managerV', 'qPct', 'docPct'];
+/* More from the Monday board (2026-11-20): nineteen optional columns, on no tab by default, come AFTER every column of before; six of them
+   filter. They are pinned in test/clientMasterMoreColumns.test.js — here: the columns, filters and sorts of before are a literal prefix. */
+const MORE_IDS = ['stageStart', 'hardDeadlineSys', 'softDeadlineSys', 'prepDeadlineSys', 'reminderCount', 'paymentConfirmed', 'retainerSigned', 'missingRequired', 'qStatus', 'lastActivity',
+  'supervisor', 'escalationReason', 'folder', 'docsLocation', 'consultant', 'consultOutcome', 'consultFee', 'sourceRef', 'consultRecord'];
+const MORE_FACETS = ['qStatus', 'docsLocation', 'supervisor', 'consultant', 'consultOutcome', 'sourceRef'];
+const MORE_BLANKS = MORE_IDS.filter((id) => id !== 'folder' && id !== 'consultRecord');   // the two link columns sort by "has a link": no blank
+const before = (opts) => ({ cols: opts.cols.filter((c) => !c.more) });
 const shape = (opts) => opts.cols.map((c) => [c.id, c.label, !c.tabs ? null : c.tabs.length === 1 && c.tabs[0] === '' ? 'ALL' : c.tabs.join('|'), c.sort || null, (c.facets || []).join('|') || null]);
 
 test('NO to-do view in ctx.views (a page without the tab): the columns, tabs, filters, sorts and words are exactly as before — literal copies of the clean tree', () => {
   for (const [name, ctx] of [['the three Monday views', { views: VIEWS }], ['the same, with a hook that must never be asked', { views: VIEWS, todoHas: () => { throw new Error('asked'); } }]]) {
     const o = S.casesListOpts(ctx), sp = S.casesListSpec(ctx);
-    assert.deepEqual(shape(o), COLS_TODAY, name);
-    assert.equal(crypto.createHash('sha256').update(JSON.stringify(o.cols)).digest('hex'), COLS_SHA_TODAY, name + ': every column, to the letter');
+    assert.deepEqual(shape(before(o)), COLS_TODAY, name);
+    assert.equal(crypto.createHash('sha256').update(JSON.stringify(before(o).cols)).digest('hex'), COLS_SHA_TODAY, name + ': every column of before, to the letter');
+    // the optional columns: the last nineteen, on no tab
+    assert.deepEqual(o.cols.slice(COLS_TODAY.length).map((c) => c.id), MORE_IDS, name);
+    for (const c of o.cols.slice(COLS_TODAY.length)) assert.ok(c.more && Array.isArray(c.tabs) && c.tabs.length === 0, c.id);
     assert.deepEqual(Object.keys(o), ['key', 'ids', 'render', 'api', 'initial', 'onChange', 'pickCols', 'quick', 'sortReset', 'countText', 'cols']);
     assert.deepEqual(o.quick.values, ['assigning', 'deadlines', 'eeita']);
     assert.deepEqual(Object.keys(o.quick.hints), ['assigning', 'deadlines', 'eeita']);
     assert.deepEqual(Object.keys(sp), ['facets', 'sorts', 'sortBlanksLast', 'defaultSort', 'search']);
-    assert.deepEqual(Object.keys(sp.facets), FACETS_TODAY);
-    assert.deepEqual(Object.keys(sp.sorts), SORTS_TODAY);
-    assert.deepEqual(sp.sortBlanksLast, BLANKS_TODAY);
+    assert.deepEqual(Object.keys(sp.facets), FACETS_TODAY.concat(MORE_FACETS));
+    assert.deepEqual(Object.keys(sp.sorts), SORTS_TODAY.concat(MORE_IDS));
+    assert.deepEqual(sp.sortBlanksLast, BLANKS_TODAY.concat(MORE_BLANKS));
     assert.deepEqual(sp.facets.view.order, ['assigning', 'deadlines', 'eeita']);
     assert.deepEqual([sp.facets.view.label, sp.facets.view.quick, sp.facets.view.fixed, sp.facets.view.none], ['View', true, true, 'No view']);
     assert.equal(o.sortReset({ sel: {} }), 'newest case first');
@@ -504,8 +521,8 @@ test('NO to-do view in ctx.views (a page without the tab): the columns, tabs, fi
     assert.deepEqual(colsOn(o, 'todo'), ['caseRef', 'clientName'], 'no such tab: only the two columns every tab has');
   }
   // no views at all (a page that has none): as before too
-  assert.deepEqual(S.casesListOpts({}).cols.map((c) => c.id), COLS_TODAY.map((c) => c[0]));
-  assert.deepEqual(Object.keys(S.casesListSpec({}).facets), FACETS_TODAY);
+  assert.deepEqual(S.casesListOpts({}).cols.map((c) => c.id), COLS_TODAY.map((c) => c[0]).concat(MORE_IDS));
+  assert.deepEqual(Object.keys(S.casesListSpec({}).facets), FACETS_TODAY.concat(MORE_FACETS));
   // a kept or linked to-do tab on a page without it falls away by itself: the engine drops a tab it does not have
   const LT = listCore(S.casesListSpec({ views: VIEWS }));
   assert.deepEqual(LT.normalizeState({ sel: { view: ['todo'] } }).sel, {});
@@ -521,12 +538,14 @@ test('WITH the to-do view: the Monday view tabs keep their twenty columns and Al
   assert.deepEqual(colsOn(o, 'todo').slice().sort(), [...T.DEFAULT_COLS].sort());
   assert.equal(colsOn(o, 'todo').length, 12);
   // every column of before is still there, in its place and with its looks; the one new column comes last
-  assert.deepEqual(o.cols.slice(0, -1).map((c) => [c.id, c.label, c.sort || null, (c.facets || []).join('|') || null]), COLS_TODAY.map((c) => [c[0], c[1], c[3], c[4]]));
+  assert.deepEqual(before(o).cols.slice(0, -1).map((c) => [c.id, c.label, c.sort || null, (c.facets || []).join('|') || null]), COLS_TODAY.map((c) => [c[0], c[1], c[3], c[4]]));
+  assert.deepEqual(o.cols.slice(COLS_TODAY.length, -1).map((c) => c.id), MORE_IDS, 'the optional columns (2026-11-20) sit between the columns of before and "With": on no tab, the To-do tab included');
+  for (const c of o.cols.filter((x) => x.more)) assert.deepEqual(c.tabs, [], c.id);
   assert.deepEqual(o.cols.filter((c) => !c.tabs).map((c) => c.id), ['caseRef', 'clientName']);
   const onTodo = o.cols.filter((c) => c.tabs && c.tabs.includes('todo')).map((c) => c.id);
   assert.deepEqual(onTodo, ['caseTypeV', 'subType', 'actualDeadline', 'deadlineType', 'internalDeadline', 'stageV', 'officerV', 'qPct', 'docPct', 'todoWith']);
   for (const c of o.cols.filter((x) => x.tabs && x.tabs.includes('todo') && x.id !== 'todoWith')) assert.deepEqual(c.tabs, ['assigning', 'deadlines', 'eeita', 'todo'], c.id);
-  for (const c of o.cols.filter((x) => x.tabs && !x.tabs.includes('todo') && x.tabs[0] !== '')) assert.deepEqual(c.tabs, ['assigning', 'deadlines', 'eeita'], c.id);
+  for (const c of o.cols.filter((x) => x.tabs && !x.more && !x.tabs.includes('todo') && x.tabs[0] !== '')) assert.deepEqual(c.tabs, ['assigning', 'deadlines', 'eeita'], c.id);
   const w = o.cols[o.cols.length - 1];
   assert.deepEqual(w, { id: 'todoWith', label: 'With', title: 'Case Manager on Client Master: who has the case for review', menu: 'facet', facets: ['todoWith'], sort: 'todoWith',
     sortText: ['A → Z', 'Z → A'], sortDirs: ['asc', 'desc'], tabs: ['todo'] });
@@ -539,7 +558,7 @@ test('WITH the to-do view: the Monday view tabs keep their twenty columns and Al
   assert.equal(sp.facets.view.text('todo'), 'To-do');
   assert.deepEqual(listCore(sp).normalizeState({ sel: { view: ['todo'] } }).sel, { view: ['todo'] });
   // its own filter: the Case Manager names, the empty choice "Nobody" — the Manager filter is as it was
-  assert.deepEqual(Object.keys(sp.facets), FACETS_TODAY.concat(['todoWith']));
+  assert.deepEqual(Object.keys(sp.facets), FACETS_TODAY.concat(MORE_FACETS, ['todoWith']));
   assert.deepEqual([sp.facets.todoWith.label, sp.facets.todoWith.none], ['With', 'Nobody']);
   assert.deepEqual(sp.facets.todoWith.get({ manager: 'Reviewer One, Reviewer Two' }), ['Reviewer One', 'Reviewer Two']);
   assert.deepEqual(sp.facets.todoWith.get({ manager: 'Unassigned' }), []);
@@ -554,8 +573,8 @@ test('WITH the to-do view: the Monday view tabs keep their twenty columns and Al
   st.sel.todoWith = [LT.NONE];
   assert.deepEqual(LT.filterRows(rows, st).map((r) => r.id), ['b', 'd']);
   // its own sort: by the manager names A → Z, a case with nobody last BOTH ways
-  assert.deepEqual(Object.keys(sp.sorts), SORTS_TODAY.concat(['todoWith']));
-  assert.deepEqual(sp.sortBlanksLast, BLANKS_TODAY.concat(['todoWith']));
+  assert.deepEqual(Object.keys(sp.sorts), SORTS_TODAY.concat(MORE_IDS, ['todoWith']));
+  assert.deepEqual(sp.sortBlanksLast, BLANKS_TODAY.concat(MORE_BLANKS, ['todoWith']));
   const sorted = (dir) => LT.sortRows([{ id: 'u', manager: 'Unassigned' }, { id: 'z', manager: 'Zed Reviewer' }, { id: 'n', manager: '' }, { id: 'a', manager: 'abe reviewer' }], { key: 'todoWith', dir }).map((r) => r.id).join('');
   assert.equal(sorted('asc'), 'azun');
   assert.equal(sorted('desc'), 'zaun');
