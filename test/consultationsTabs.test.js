@@ -135,7 +135,11 @@ test('getConsultationsBoard: the two tabs from one snapshot — consultation row
     const b = await portal.getConsultationsBoard({ now: new Date('2026-10-15T16:00:00Z') });   // noon in Toronto, the day before row 2's time
     assert.deepEqual(b.consultations.map((r) => r.id), ['2', '1', '3'], 'earliest first, no date last');
     const r1 = b.consultations[1];
-    assert.deepEqual(r1, { id: '1', name: 'Lead 1', service: 'Study permit', consultant: 'Shafoli Kapur', bookedSlot: '2026-10-20 11:00', meetingType: 'In-person', preConsultSubmitted: true, agreementSent: '2026-10-14', agreementSigned: '2026-10-15', paid: 'app', paidCents: 22600, paidBy: '', paidOn: '', paidVerified: true, outcome: '', followUpDate: '', consultationHeld: '', hasMeeting: false, tier: '', createdAt: '2026-10-01T12:00:00Z', recCode: 'TD-00001' });   // + the recording code (2026-11-14): made from the id, display only
+    assert.deepEqual(r1, { id: '1', name: 'Lead 1', service: 'Study permit', consultant: 'Shafoli Kapur', bookedSlot: '2026-10-20 11:00', meetingType: 'In-person', preConsultSubmitted: true, agreementSent: '2026-10-14', agreementSigned: '2026-10-15', paid: 'app', paidCents: 22600, paidBy: '', paidOn: '', paidVerified: true, outcome: '', followUpDate: '', consultationHeld: '', hasMeeting: false, tier: '', createdAt: '2026-10-01T12:00:00Z', recCode: 'TD-00001', ready: 'ready' });   // + the recording code (2026-11-14): made from the id, display only; + the Ready word (2026-11-20): signed + form in
+    // the Ready column (2026-11-20): one fixed word on every Consultations row — never a reason, a note or a link
+    assert.deepEqual(b.consultations.map((r) => [r.id, r.ready]), [['2', 'notsent'], ['1', 'ready'], ['3', 'notsent']]);
+    for (const r of b.consultations) assert.ok(require('../src/utils/consultReady').WORDS.includes(r.ready), 'one of the six words: ' + r.ready);
+    for (const r of b.retainers) assert.equal('ready' in r, false, 'a Retainers row has no Ready word');
     assert.ok(!JSON.stringify(b).includes('x@y.co') && !JSON.stringify(b).includes('555-0142'), 'a list, not a record');   // (not just '416': the clock's own digits made that fail for 17 minutes on 2026-11-11)
     assert.deepEqual(b.retainers.map((r) => [r.id, r.stage, r.kind]), [['6', 'Paid', 'direct'], ['4', 'Sent', 'direct'], ['5', 'Retain', 'booked']], 'by stage, then oldest first; the retained client is gone');
     assert.equal(b.retainers[1].caseOpen, true);
@@ -247,7 +251,7 @@ test('pages (2026-11-05): Consultations shows consultations only; Retainers & fo
   const q = ac.buildQueueHTML(), r = ac.buildRetainersHTML();
   for (const html of [q, r]) for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) new vm.Script(m[1]);
   for (const s of [
-    'id="cq-tabs"', 'id="cq-month"', 'id="cq-table"', '<th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th>Now</th>',
+    'id="cq-tabs"', 'id="cq-month"', 'id="cq-table"', '<th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Ready</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th>Now</th><th></th></tr>', 'colspan="13"',
     'id="cq-headrow"', 'id="cq-search"', 'id="cq-chips"', 'id="cq-count"', "api: 'ConsultTable'",
     "consultant: { label: 'Consultant', get: function (r) { return s(r.consultant); }, none: 'Unassigned' },",
     "fetch('/api/consultations-board?completed=1'+(force?'&fresh=1':'')", 'id="cq-tabs"', '<a href="/admin/retainers">Retainers &amp; follow-ups</a>', 'id="snap-age"']) assert.ok(q.includes(s), 'consultations: ' + s);
@@ -674,7 +678,15 @@ test('page: four tabs over one table — each consultation under exactly one tab
   const { listCore } = require('../src/routes/listFilters'), S = require('../src/routes/listSpecs');
   const q = require('../src/routes/adminConsultation').buildQueueHTML();
   for (const s of ["bindRowClicks(tb, (tab==='done'||tab==='all')?'?from=consultations':'')", "rows=latestFirst(rows);", "if(st&&st.sort&&st.sort.key&&window.ConsultTable) rows=ConsultTable.core.sortRows(rows,st.sort);", 'id="cq-tabs"', 'id="cq-month"', 'function renderMonthBar(', "MONTH_KEY={ done:'tdot_list_consult_month', all:'tdot_list_consult_month_all' }", "ALLROWS=(d.consultations||[]).concat(d.completed||[]);", '<th>Now</th>',
-    '#cq-table:not(.tab-done):not(.tab-all) th:nth-child(11), #cq-table:not(.tab-done):not(.tab-all) td.c-now { display:none; }', '#cq-table.tab-done th:nth-child(12), #cq-table.tab-done td.c-del { display:none; }']) assert.ok(q.includes(s), s);
+    // 13 columns since the Ready column (2026-11-20): Now is the 12th, the delete button the 13th; Ready (the 7th) is hidden on the two past tabs
+    '#cq-table:not(.tab-done):not(.tab-all) th:nth-child(12), #cq-table:not(.tab-done):not(.tab-all) td.c-now { display:none; }', '#cq-table.tab-done th:nth-child(13), #cq-table.tab-done td.c-del { display:none; }',
+    '#cq-table.tab-needs th:nth-child(7), #cq-table.tab-needs td.c-ready, #cq-table.tab-done th:nth-child(7), #cq-table.tab-done td.c-ready { display:none; }']) assert.ok(q.includes(s), s);
+  for (const gone of ['th:nth-child(11)', 'colspan="12"']) assert.ok(!q.includes(gone), 'gone: ' + gone);
+  // the positions in the CSS are the positions of the columns the engine draws, and of the header the page starts with
+  const colIds = S.consultListOpts({}).cols.map((c) => c.id);
+  assert.deepEqual([colIds.indexOf('ready') + 1, colIds.indexOf('now') + 1, colIds.indexOf('del') + 1, colIds.length], [7, 12, 13, 13]);
+  const staticHead = (q.match(/<tr id="cq-headrow">([\s\S]*?)<\/tr>/)[1].match(/<th>[^<]*<\/th>/g) || []).map((x) => x.replace(/<\/?th>/g, ''));
+  assert.deepEqual(staticHead, S.consultListOpts({}).cols.map((c) => c.label), 'the header before the script runs = the columns the engine draws');
   for (const gone of ['function renderDone(', 'id="done-groups"', 'show / hide', 'function consultBucket(']) assert.ok(!q.includes(gone), 'gone: ' + gone);
   const spec = S.consultListSpec({ today: () => '2026-11-11' }), LT = listCore(spec), o = S.consultListOpts({});
   const rows = [
@@ -735,26 +747,48 @@ test('listTableUi, Consultations tabs: a new browser tab opens on Booked; All is
 });
 
 // 2026-11-12: the row markup, run for real — a doubled quote once broke the delete button's lead id without any test noticing.
-test('page row: 12 cells; the delete button carries the lead id; a completed row has the Now cell and no delete button', () => {
+test('page row: 13 cells (Ready is the seventh); the delete button carries the lead id; a completed row has the Now cell and no delete button', () => {
   const html = require('../src/routes/adminConsultation').buildQueueHTML();
   const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
   const pick = (name) => { const i = js.indexOf(`function ${name}(`); assert.ok(i >= 0, name); let depth = 0, j = js.indexOf('{', i); for (; j < js.length; j++) { if (js[j] === '{') depth++; else if (js[j] === '}' && --depth === 0) break; } return js.slice(i, j + 1); };
   const ctx = { escHtml: (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'), todayStr: () => '2026-11-12', TDOT_DEL_SVG: '<svg/>', Intl };
   vm.createContext(ctx);
-  vm.runInContext(['qpill', 'paidPill', 'outcomeCell', 'dParts', 'dAdd', 'dLabel', 'dateCell', 'timeCell', 'directPill', 'nowCell', 'rowHtml'].map(pick).join('\n'), ctx);
+  vm.runInContext(['qpill', 'paidPill', 'outcomeCell', 'dParts', 'dAdd', 'dLabel', 'dateCell', 'timeCell', 'directPill', 'nowCell', 'readyPill', 'rowHtml'].map(pick).join('\n'), ctx);
   const up = ctx.rowHtml({ id: '77', name: 'A "B"', bookedSlot: '2026-11-12 10:00', adminDelete: true });
-  assert.equal((up.match(/<td/g) || []).length, 12);
+  assert.equal((up.match(/<td/g) || []).length, 13);
+  const cellsOf = (h) => h.split('<td').slice(1).map((x) => '<td' + x.replace(/<\/tr>$/, ''));
+  assert.equal(cellsOf(up)[6], '<td class="c-ready"><span class="pill grey">—</span></td>', 'the seventh cell; a row with no Ready word: a dash, no error');
+  assert.equal(cellsOf(up)[5], '<td>—</td>', 'Mode is still the sixth');
+  assert.ok(cellsOf(up)[7].startsWith('<td><span class="pill grey">—</span></td>'), 'Agreement is now the eighth');
   assert.match(up, /<td class="c-now"><\/td><td class="c-del"><button class="del-btn" type="button" data-del-lead="77" data-del-admin-only="1" title="/);
   const done = ctx.rowHtml({ id: '78', name: 'C', bookedSlot: '2026-10-02 10:00', outcome: 'Retain', done: true, now: 'Retained', nowTone: 'green', caseRef: '2026-EE-004' });
-  assert.equal((done.match(/<td/g) || []).length, 12);
+  assert.equal((done.match(/<td/g) || []).length, 13);
   assert.match(done, /<td class="c-now"><span class="pill green">Retained<\/span> <a class="case-lnk" href="\/admin\/case\/2026-EE-004"/);
   assert.match(done, /<td class="c-del"><\/td><\/tr>$/);
   assert.ok(!done.includes('data-del-lead'));
+  // The Ready pill (2026-11-20): the six words, each with its colour and its hover line; the second argument is the row's
+  // Ready filter value from the list engine — 'over' (the consultation day has passed) is always a dash.
+  const cell = (row, v) => cellsOf(ctx.rowHtml({ id: '1', name: 'N', bookedSlot: '2026-11-13 10:00', ...row }, v))[6];
+  const pill = (cls, tip, word) => `<td class="c-ready"><span class="pill ${cls}" title="${tip}">${word}</span></td>`;
+  assert.equal(cell({ ready: 'ready', agreementSent: '2026-11-01', agreementSigned: '2026-11-02', preConsultSubmitted: true }, 'ready'), pill('green', 'Agreement signed 2026-11-02. Pre-consultation form submitted.', 'Ready'));
+  assert.equal(cell({ ready: 'agreement', agreementSent: '2026-11-01', preConsultSubmitted: true }, 'notready'), pill('amber', 'The agreement was sent 2026-11-01 and is not signed yet. The form is in.', 'Missing agreement'));
+  assert.equal(cell({ ready: 'form', agreementSent: '2026-11-01', agreementSigned: '2026-11-02' }, 'notready'), pill('amber', 'The agreement is signed (2026-11-02). The pre-consultation form is not filled in yet.', 'Missing form'));
+  assert.equal(cell({ ready: 'both', agreementSent: '2026-11-01' }, 'notready'), pill('red', 'Sent 2026-11-01. The agreement is not signed and the form is not filled in.', 'Missing both'));
+  assert.equal(cell({ ready: 'notsent' }, 'notready'), pill('amber', 'The consultation agreement has not been sent to this client. Open the record — it says why.', 'Not sent yet'));
+  assert.equal(cell({ ready: 'notasked' }, 'notasked'), pill('grey', 'The agreement and form were not sent — staff chose not to, or it is a direct consultation.', 'Not asked'));
+  const dash = '<td class="c-ready"><span class="pill grey">—</span></td>';
+  for (const w of ['ready', 'agreement', 'form', 'both', 'notsent', 'notasked']) assert.equal(cell({ ready: w, agreementSent: '2026-11-01' }, 'over'), dash, 'a past consultation: a dash whatever the word — ' + w);
+  for (const w of [undefined, null, '', 'constructor', '__proto__', 'READY', 7, {}]) assert.equal(cell({ ready: w }, '__none__'), dash, 'a word the page does not know: a dash, no error — ' + String(w));
+  assert.equal(cell({ ready: 'both', agreementSent: '"><b>x' }, 'notready'), pill('red', 'Sent &quot;&gt;&lt;b&gt;x. The agreement is not signed and the form is not filled in.', 'Missing both'), 'a date typed by hand in Monday is escaped');
+  // the other pills did not move or change: Agreement, Pre-consult, Paid, Outcome follow, as before
+  const full = cellsOf(ctx.rowHtml({ id: '1', name: 'N', bookedSlot: '2026-11-13 10:00', meetingType: 'Virtual', ready: 'form', agreementSent: '2026-11-01', agreementSigned: '2026-11-02', paid: 'app', paidCents: 22600, outcome: 'Retain' }, 'notready'));
+  assert.deepEqual(full.slice(5, 11), ['<td>Virtual</td>', pill('amber', 'The agreement is signed (2026-11-02). The pre-consultation form is not filled in yet.', 'Missing form'),
+    '<td><span class="pill green">Signed 2026-11-02</span></td>', '<td><span class="pill amber">Pending</span></td>', '<td><span class="pill green">Paid (app) $226</span></td>', '<td><span class="pill green">Retain</span></td>']);
 });
 
 // review 2026-11-12: Now belongs to Completed / All — off those tabs the column is not on view, so it must not act unseen.
 // (The Date filter needs no such care since each tab has its own range: the old put-back, KEPT_DATE, is gone.)
-test('page: leaving Completed takes a Now choice (and a Now sort) off; the Date put-back and its CSS are gone', () => {
+test('page: leaving Completed takes a Now choice (and a Now sort) off; opening Needs outcome or Completed takes a Ready choice (and a Ready sort) off; the Date put-back and its CSS are gone', () => {
   const html = require('../src/routes/adminConsultation').buildQueueHTML();
   const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
   const pick = (name) => { const i = js.indexOf(`function ${name}(`); assert.ok(i >= 0, name); let depth = 0, j = js.indexOf('{', i); for (; j < js.length; j++) { if (js[j] === '{') depth++; else if (js[j] === '}' && --depth === 0) break; } return js.slice(i, j + 1); };
@@ -774,6 +808,21 @@ test('page: leaving Completed takes a Now choice (and a Now sort) off; the Date 
   assert.deepEqual([st.sel.now.join(), st.sort.key, applied.length], ['Closed', 'now', 1]);
   st.sel.tab = ['booked']; delete st.sel.now; st.sort = { key: 'paid', dir: 'asc' }; ctx.consultOnChange(st);
   assert.deepEqual([st.sort.key, applied.length], ['paid', 1], 'any other sort is shared by every tab');
+  // Ready (2026-11-20) is the column of the tabs still to happen: opening Needs outcome or Completed takes its filter and its sort off
+  for (const [tab, kept] of [['booked', true], ['nodate', true], [null, true], ['needs', false], ['done', false]]) {
+    const n = applied.length, s2 = { sel: { ready: ['notready'], consultant: ['S'] }, sort: { key: 'ready', dir: 'asc' } };
+    if (tab) s2.sel.tab = [tab];
+    ctx.consultOnChange(s2);
+    assert.deepEqual([s2.sel.ready, s2.sort, applied.length - n], kept ? [['notready'], { key: 'ready', dir: 'asc' }, 0] : [undefined, null, 1], 'Ready on ' + (tab || 'All'));
+    assert.deepEqual(s2.sel.consultant, ['S'], 'no other filter is touched');
+  }
+  // …the filter alone, or the sort alone; and Now is still handled as before beside it
+  const s3 = { sel: { tab: ['needs'], ready: ['notready'] }, sort: { key: 'paid', dir: 'asc' } }; ctx.consultOnChange(s3);
+  assert.deepEqual([s3.sel.ready, s3.sort.key], [undefined, 'paid']);
+  const s4 = { sel: { tab: ['done'], now: ['Retained'] }, sort: { key: 'ready', dir: 'desc' } }; ctx.consultOnChange(s4);
+  assert.deepEqual([s4.sel.now, s4.sort], [['Retained'], null], 'Completed: Now stays, the Ready sort goes');
+  const s5 = { sel: { tab: ['needs'], now: ['Retained'], ready: ['ready'] }, sort: { key: 'now', dir: 'desc' } }, n5 = applied.length; ctx.consultOnChange(s5);
+  assert.deepEqual([s5.sel.now, s5.sel.ready, s5.sort, applied.length - n5], [undefined, undefined, null, 1], 'Needs outcome: both go, one redraw');
   assert.ok(html.includes("listCore((") && html.includes("{ onChange: consultOnChange }"));
   for (const gone of ['KEPT_DATE', ':has([data-chip="date"])', '#cq-headrow th:first-child .th-f { display:none; }']) assert.ok(!html.includes(gone), 'gone: ' + gone);
 });
@@ -832,7 +881,8 @@ test('filter panel counts: only the month the table is showing — the tabs abov
 // Faran 2026-11-12: filters and sorting on every column, on every tab — and the Date filter kept per tab.
 // The REAL page code: the emitted list functions and the emitted engine script, run together in one sandbox with a
 // stand-in document. What is read back is what a person would see: the rows, the numbers on the tabs, the words.
-function consultPage(rows, store, nowIso) {
+// realRows (2026-11-20): draw the rows with the page's own rowHtml and pills in place of the '[id]' stand-in.
+function consultPage(rows, store, nowIso, realRows) {
   const html = require('../src/routes/adminConsultation').buildQueueHTML();
   const js = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/i)[1];
   const pick = (name) => { const i = js.indexOf(`function ${name}(`); assert.ok(i >= 0, name); let depth = 0, j = js.indexOf('{', i); for (; j < js.length; j++) { if (js[j] === '{') depth++; else if (js[j] === '}' && --depth === 0) break; } return js.slice(i, j + 1); };
@@ -852,7 +902,7 @@ function consultPage(rows, store, nowIso) {
     function escHtml(s){ return String(s==null?'':s); }
     function todayStr(){ return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto'}).format(new Date()); }
     function ssGet(k){ return sessionStorage.getItem(k)||''; } function ssSet(k,v){ sessionStorage.setItem(k,v); }
-    function rowHtml(c){ return '['+c.id+']'; } function bindRowClicks(){}
+    ${realRows ? "var TDOT_DEL_SVG='<svg/>';\n" + ['qpill', 'paidPill', 'outcomeCell', 'dAdd', 'dLabel', 'dateCell', 'timeCell', 'directPill', 'nowCell', 'readyPill', 'rowHtml'].map(pick).join('\n') : "function rowHtml(c){ return '['+c.id+']'; }"} function bindRowClicks(){}
     var MONTH_PICK={ done:'', all:'' }, MONTH_KEY={ done:'tdot_list_consult_month', all:'tdot_list_consult_month_all' };
     ${pickVar('TAB_TEXT')}
     ${['dParts', 'consultTab', 'monthOf', 'monthLabel', 'tabMonths', 'pickMonth', 'setMonth', 'consultPanelRow', 'renderMonthBar', 'consultOnChange', 'latestFirst', 'consultEmptyMsg', 'renderConsultList'].map(pick).join('\n')}`, ctx);
@@ -871,6 +921,9 @@ function consultPage(rows, store, nowIso) {
     count: () => els['cq-count'].textContent, title: () => els['cq-title'].textContent, chips: () => (els['cq-chips'].innerHTML.match(/<span class="q-chip[^"]*">([^<]*)</g) || []).map((x) => x.replace(/^.*>/, '').replace(/<$/, '')).join(' | '),
     months: () => (els['cq-month'].innerHTML.match(/<option [^>]*>[^<]*</g) || []).map((x) => (/ selected/.test(x) ? '*' : '') + x.replace(/^.*>/, '').replace(/<$/, '')).join(' | '),
     panel: (facet) => run(`JSON.stringify(ConsultTable.core.facetCounts(ALLROWS.filter(consultPanelRow), ConsultTable.state(), '${facet}').filter(function(x){ return x.count; }).map(function(x){ return x.label+' '+x.count; }))`),
+    // with realRows: each row as "id:the words of cell n" (n counted from 1), and the table's tab class (the CSS hides columns by it)
+    cells: (n) => els.qbody.innerHTML.split('</tr>').filter(Boolean).map((tr) => (tr.match(/data-id="([^"]*)"/) || [])[1] + ':' + ('<td' + tr.split('<td')[n]).replace(/<[^>]+>/g, '')).join(' | '),
+    tabClass: () => els['cq-table'].className,
   };
   return api;
 }
@@ -1008,4 +1061,60 @@ test('page, run for real: a column sort on a tab that looks back keeps equal row
   assert.equal(p.go('nodate').ids(), '', 'No date: the other columns filter there too');
   p.set("st.sel.time=['none'];");
   assert.equal(p.ids(), 'z1');
+});
+
+// 2026-11-20: the Ready column, on the page as emitted — the engine's filter value and the cell are one rule.
+const READY_SAMPLE = [
+  { id: 'b1', name: 'Asha', bookedSlot: '2026-11-12 09:00', ready: 'ready', agreementSent: '2026-11-01', agreementSigned: '2026-11-02', preConsultSubmitted: true, paid: 'app' },
+  { id: 'b2', name: 'Bo', bookedSlot: '2026-11-13 14:00', ready: 'both', agreementSent: '2026-11-10' }, { id: 'b3', name: 'Chen', bookedSlot: '2026-11-13 16:00', ready: 'agreement', agreementSent: '2026-11-10', preConsultSubmitted: true },
+  { id: 'b4', name: 'Dev', bookedSlot: '2026-11-13 17:00', ready: 'notasked', direct: 'New' }, { id: 'b5', name: 'Eli', bookedSlot: '2026-11-20 10:00', ready: 'form', agreementSigned: '2026-11-11' },
+  { id: 'b6', name: 'Fay', bookedSlot: '2026-11-13 09:00', ready: 'notsent' }, { id: 'b7', name: 'Gus', bookedSlot: '2026-11-14 09:00' },
+  { id: 'n1', name: 'Hal', bookedSlot: '2026-11-03 10:00', ready: 'both', agreementSent: '2026-11-01' }, { id: 'n2', name: 'Ida', bookedSlot: '2026-11-10 11:00', ready: 'ready', agreementSigned: '2026-11-08', preConsultSubmitted: true },
+  { id: 'd1', name: 'Jo', bookedSlot: '2026-11-05 10:00', done: true, outcome: 'Retain', now: 'Retained', ready: 'notsent' }, { id: 'd2', name: 'Kai', bookedSlot: '2026-11-06 13:00', done: true, outcome: 'Follow-Up', now: 'Following up', ready: 'ready' },
+  { id: 'z1', name: 'Lea', bookedSlot: '', ready: 'notsent' }, { id: 'z2', name: 'Max', bookedSlot: '', ready: 'notasked' },
+];
+
+test('page, run for real — Ready: the pill on Booked / No date / All, a dash for a past row on All; "Not ready" narrows Booked, No date and All and never the two past tabs; opening a past tab takes the choice and the sort off', () => {
+  const p = consultPage(READY_SAMPLE, {}, '2026-11-12T17:00:00Z', true);
+  p.go('booked').run("ConsultTable.core.setDates(ConsultTable.state(),'',''); ConsultTable.apply('filter');");   // every date
+  assert.equal(p.tabClass(), 'tab-booked');
+  assert.equal(p.cells(7), 'b1:Ready | b2:Missing both | b3:Missing agreement | b4:Not asked | b5:Missing form | b6:Not sent yet | b7:—', 'the seventh cell, in the order the server sent; a row with no word: a dash');
+  assert.equal(p.cells(6), 'b1:— | b2:— | b3:— | b4:— | b5:— | b6:— | b7:—', 'Mode is still the sixth');
+  assert.equal(p.cells(8), 'b1:Signed 2026-11-02 | b2:Sent 2026-11-10 | b3:Sent 2026-11-10 | b4:— | b5:Signed 2026-11-11 | b6:— | b7:—', 'Agreement, now the eighth, says what it said');
+  assert.deepEqual(p.nums(), { booked: 7, needs: 2, done: 2, nodate: 2, all: 13 });
+  assert.equal(p.panel('ready'), '["Not ready 4","Ready 1","Not asked 1","Not known 1"]');
+  // one tick on "Not ready"
+  p.set("st.sel.ready=['notready'];");
+  assert.deepEqual([p.cells(7), p.chips(), p.count()], ['b2:Missing both | b3:Missing agreement | b5:Missing form | b6:Not sent yet', 'Ready: Not ready', '(4 of 7)']);
+  assert.deepEqual(p.nums(), { booked: 4, needs: 2, done: 2, nodate: 1, all: 5 }, 'Needs outcome and Completed keep their numbers');
+  // the day-before check: Date "Tomorrow" on top
+  p.dates('2026-11-13', '2026-11-13');
+  assert.deepEqual([p.cells(7), p.chips()], ['b2:Missing both | b3:Missing agreement | b6:Not sent yet', 'Date Nov 13 | Ready: Not ready']);
+  // No date and All keep the choice; All shows only consultations still to happen
+  assert.deepEqual([p.go('nodate').cells(7), p.chips(), p.tabClass()], ['z1:Not sent yet', 'Ready: Not ready', 'tab-nodate']);
+  assert.deepEqual([p.go('all').cells(7), p.chips(), p.tabClass()], ['b5:Missing form | b3:Missing agreement | b2:Missing both | b6:Not sent yet | z1:Not sent yet', 'Ready: Not ready', 'tab-all']);
+  // opening Needs outcome: the choice comes off (the column is not on view there) — the tab shows what its number said
+  assert.deepEqual([p.go('needs').cells(3), p.chips(), p.tabClass(), p.count()], ['n2:Ida | n1:Hal', '', 'tab-needs', '(2)']);
+  assert.equal(JSON.parse(p.store.tdot_list_consultations).sel.ready, undefined, 'and it is not kept');
+  assert.deepEqual(p.nums(), { booked: 4, needs: 2, done: 2, nodate: 2, all: 13 });
+  assert.equal(p.go('booked').chips(), 'Date Nov 13', 'back on Booked it must be ticked again; the date stayed');
+  // …and Completed, with the Ready sort
+  p.set("st.sel.ready=['ready']; st.sort={ key:'ready', dir:'asc' };");
+  assert.match(p.chips(), /Sorted: Ready \(Not ready first\).*Ready: Ready/);
+  assert.deepEqual([p.go('done').cells(3), p.chips(), p.tabClass()], ['d2:Kai | d1:Jo', '', 'tab-done']);
+  assert.equal(p.run('JSON.stringify(ConsultTable.state().sort)'), 'null');
+  // All with no filter: every row; a past consultation (Needs outcome, Completed) has a dash whatever its word
+  p.go('all');
+  assert.equal(p.cells(7), 'b5:Missing form | b7:— | b4:Not asked | b3:Missing agreement | b2:Missing both | b6:Not sent yet | b1:Ready | n2:— | d2:— | d1:— | n1:— | z1:Not sent yet | z2:Not asked');
+  assert.equal(p.panel('ready'), '["Not ready 5","Ready 1","Not asked 2","Consultation over 4","Not known 1"]');
+  p.set("st.sel.ready=['over'];");
+  assert.deepEqual([p.cells(7), p.chips()], ['n2:— | d2:— | d1:— | n1:—', 'Ready: Consultation over']);
+  // sorted on All: Not ready first; the dashes last — and last the other way too
+  p.set("delete st.sel.ready; st.sort={ key:'ready', dir:'asc' };");
+  assert.equal(p.cells(7).replace(/\w+:/g, ''), 'Missing form | Missing agreement | Missing both | Not sent yet | Not sent yet | Ready | Not asked | Not asked | — | — | — | — | —');
+  p.set("st.sort={ key:'ready', dir:'desc' };");
+  assert.equal(p.cells(7).replace(/\w+:/g, ''), 'Not asked | Not asked | Ready | Missing form | Missing agreement | Missing both | Not sent yet | Not sent yet | — | — | — | — | —');
+  // an empty list still spans the whole table
+  p.go('booked').set("st.sort=null; st.sel.consultant=['Nobody'];");
+  assert.match(p.els.qbody.innerHTML, /^<tr><td colspan="13" class="empty">/);
 });

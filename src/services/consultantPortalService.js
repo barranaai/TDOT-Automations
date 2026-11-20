@@ -3285,6 +3285,8 @@ function consultRow(l, consultPayment) {
     consultationHeld: s(l.consultationHeld), hasMeeting: !!s(l.meetingLink),
     tier: s(l.tier), createdAt: l.createdAt || '',
     recCode: require('../utils/recordingCode').recordingCode(l.id),   // typed as the Otter recording title (2026-11-14); staff pages only
+    // The "Ready" column (2026-11-20): one fixed word — signed agreement + filled form. Display only; no reason text, no link.
+    ready: require('../utils/consultReady').consultReady(l),
     ...adminOnlyDelete(l),
     // A direct consultation (step 2): its kind for the "direct" pill and who booked it — only on such a row.
     ...(isDirectConsult(l) ? { direct: require('../utils/directConsult').kindOf(l) || '?', bookedBy: s(l.bookedBy) } : {}),

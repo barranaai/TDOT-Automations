@@ -38,10 +38,20 @@ function consultListSpec(ctx) {
   var MODES = ['In-person', 'Virtual', 'Phone Call'], AGREEMENTS = ['signed', 'sent', 'none'], PRECONSULTS = ['submitted', 'pending'],
     PAIDS = ['app', 'staff', 'waived', 'none'], OUTCOMES = ['Retain', 'Follow-Up', 'Newsletter', 'Not Wanted'],
     NOWS = ['Retained', 'Retainer paid', 'Retainer signed', 'Retainer sent', 'Retainer to send', 'Following up', 'Newsletter list', 'Closed', 'Existing client', 'upcoming'],
-    TIMES = ['morning', 'afternoon', 'evening', 'none'];
+    TIMES = ['morning', 'afternoon', 'evening', 'none'], READYS = ['notready', 'ready', 'notasked'];
   function agreementOf(r) { return r.agreementSigned ? 'signed' : r.agreementSent ? 'sent' : 'none'; }
   function preconsultOf(r) { return r.preConsultSubmitted ? 'submitted' : 'pending'; }
   function paidOf(r) { return !s(r.paid) ? 'none' : r.paid === 'waived' ? 'waived' : r.paid === 'app' ? 'app' : 'staff'; }
+  /* The "Ready" column (2026-11-20): has the client signed the consultation agreement and filled in the pre-consultation form?
+     The server sends one word per row (utils/consultReady.js); here it is one filter value: ready, notasked (staff chose not
+     to send them), or notready (agreement / form / both missing, or never sent). The mark is for consultations still to
+     happen (Faran 2026-11-20): a row under Needs outcome or Completed is 'over' whatever its word. No word, or one this
+     page does not know = '' (the "Not known" choice). */
+  function readyOf(r) {
+    var b = bucket(r); if (b === 'needs' || b === 'done') return 'over';
+    var v = s(r.ready);
+    return (v === 'ready' || v === 'notasked') ? v : (v === 'agreement' || v === 'form' || v === 'both' || v === 'notsent') ? 'notready' : '';
+  }
   /* The part of the day, from the Toronto wall-clock time kept in bookedSlot ('YYYY-MM-DD HH:MM'):
      morning before 12:00, afternoon 12:00 to before 17:00, evening 17:00 and later; no slot or no time part = none. */
   function timeOf(r) {
@@ -60,6 +70,11 @@ function consultListSpec(ctx) {
         text: function (v) { return ({ signed: 'Signed', sent: 'Sent, not signed', none: 'Not sent' })[v] || v; }, order: AGREEMENTS, fixed: true },
       paid: { label: 'Paid', get: paidOf,
         text: function (v) { return ({ app: 'Paid (app)', staff: 'Paid — recorded by staff', waived: 'Waived', none: 'Not paid' })[v] || v; }, order: PAIDS, fixed: true },
+      // Ready (2026-11-20): one tick on "Not ready" is the day-before check (Booked tab, Date "Tomorrow"). Its column shows on
+      // Booked, No date and All only — so, like "Now", the numbers on the two past tabs are counted without it.
+      ready: { label: 'Ready', get: readyOf, none: 'Not known',
+        text: function (v) { return ({ notready: 'Not ready', ready: 'Ready', notasked: 'Not asked', over: 'Consultation over' })[v] || v; }, order: READYS, fixed: true,
+        onlyOn: ['booked', 'nodate'] },
       // Every column filters, like the Leads list (Faran 2026-11-11).
       service: { label: 'Service', get: function (r) { return s(r.service); }, none: 'Not set' },
       preconsult: { label: 'Pre-consult', get: preconsultOf,
@@ -85,13 +100,14 @@ function consultListSpec(ctx) {
       consultant: function (r) { return s(r.consultant).toLowerCase(); },
       // The status columns sort in the order their filter lists them (Signed, Sent, Not sent …), never A → Z.
       mode: function (r) { return ranked(MODES, r.meetingType); },
+      ready: function (r) { var v = readyOf(r); return v === 'over' ? '' : ranked(READYS, v); },   // a consultation that is over has a dash in the cell — last both ways
       agreement: function (r) { return ranked(AGREEMENTS, agreementOf(r)); },
       preconsult: function (r) { return ranked(PRECONSULTS, preconsultOf(r)); },
       paid: function (r) { return ranked(PAIDS, paidOf(r)); },
       outcome: function (r) { return ranked(OUTCOMES, r.outcome); },
       now: function (r) { return r.done ? ranked(NOWS, r.now) : ''; },   // not completed yet: an empty cell — last both ways
     },
-    sortBlanksLast: ['service', 'consultant', 'mode', 'outcome', 'now'],
+    sortBlanksLast: ['service', 'consultant', 'mode', 'ready', 'outcome', 'now'],
     defaultSort: null,   // the server order: earliest consultation first
     // The Date column's filter (Faran 2026-11-11 — it replaced the Today / This week / This month / All buttons): the
     // consultation's Toronto day, with choices that look ahead. Since 2026-11-12 every tab has its OWN date range
@@ -118,7 +134,7 @@ function consultListOpts(ctx) {
     serverSearch: '/api/leads/search',   // name, phone or email (step 3, 2026-11-09)
     render: 'renderConsultList', api: 'ConsultTable',
     sortReset: 'earliest consultation first',   // a column sort shows as a chip; its × goes back to the normal order
-    onChange: ctx && ctx.onChange,   // the page keeps "Now" (filter and sort) to the tabs that show the column
+    onChange: ctx && ctx.onChange,   // the page keeps "Now" and "Ready" (filter and sort) to the tabs that show the column
     panelCountable: 'consultPanelRow',   // the numbers inside a filter panel count the month on view (Completed / All), like the table
     // A new browser tab opens the Booked tab on today's consultations (Faran 2026-11-11); the chip's × shows every date.
     // The other tabs open on every date; each keeps its own range (2026-11-12).
@@ -136,6 +152,8 @@ function consultListOpts(ctx) {
       { id: 'service', label: 'Service', menu: 'facet', facets: ['service'], sort: 'service', sortText: AZ, sortDirs: ASC },
       { id: 'consultant', label: 'Consultant', menu: 'facet', facets: ['consultant'], sort: 'consultant', sortText: AZ, sortDirs: ASC },
       { id: 'mode', label: 'Mode', menu: 'facet', facets: ['mode'], sort: 'mode', sortText: ['In-person first', 'Phone call first'], sortDirs: ASC },
+      // Ready (2026-11-20): hidden on the Needs outcome and Completed tabs (the page's CSS, by position — like "Now")
+      { id: 'ready', label: 'Ready', title: 'Signed agreement and filled pre-consultation form — both are needed before the consultation', menu: 'facet', facets: ['ready'], sort: 'ready', sortText: ['Not ready first', 'Not ready last'], sortDirs: ASC },
       { id: 'agreement', label: 'Agreement', menu: 'facet', facets: ['agreement'], sort: 'agreement', sortText: ['Signed first', 'Not sent first'], sortDirs: ASC },
       { id: 'preconsult', label: 'Pre-consult', menu: 'facet', facets: ['preconsult'], sort: 'preconsult', sortText: ['Submitted first', 'Pending first'], sortDirs: ASC },
       { id: 'paid', label: 'Paid', title: 'The consultation fee', menu: 'facet', facets: ['paid'], sort: 'paid', sortText: ['Paid first', 'Not paid first'], sortDirs: ASC },

@@ -118,9 +118,11 @@ const LIST_PAGE_CSS = `
 `;
 
 const CONSULT_PAGE_CSS = `
-  /* One table, five tabs: the Now column only on Completed and All; Completed has no delete button (deleting stays on the other tabs). */
-  #cq-table:not(.tab-done):not(.tab-all) th:nth-child(11), #cq-table:not(.tab-done):not(.tab-all) td.c-now { display:none; }
-  #cq-table.tab-done th:nth-child(12), #cq-table.tab-done td.c-del { display:none; }
+  /* One table, five tabs: the Now column only on Completed and All; Completed has no delete button (deleting stays on the other tabs). By position: 13 columns. */
+  #cq-table:not(.tab-done):not(.tab-all) th:nth-child(12), #cq-table:not(.tab-done):not(.tab-all) td.c-now { display:none; }
+  #cq-table.tab-done th:nth-child(13), #cq-table.tab-done td.c-del { display:none; }
+  /* The Ready column (2026-11-20) is for consultations still to happen: not on Needs outcome and Completed. */
+  #cq-table.tab-needs th:nth-child(7), #cq-table.tab-needs td.c-ready, #cq-table.tab-done th:nth-child(7), #cq-table.tab-done td.c-ready { display:none; }
   /* The Completed tab's month chooser */
   .cq-month { align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 10px; }
   .cq-month .cm-l { font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:#64748b; margin-right:2px; }
@@ -272,7 +274,24 @@ function directPill(c){
   var tip=(c.bookedBy?'Booked by '+c.bookedBy+' · ':'')+(c.direct==='?'?'Direct consultation':c.direct);
   return ' <span class="pill grey dq-pill" title="'+escHtml(tip)+'" aria-label="Direct consultation: '+escHtml(tip)+'">direct</span>';
 }
-function rowHtml(c){
+/* The "Ready" cell (2026-11-20): has the client signed the consultation agreement and filled in the pre-consultation form?
+   c.ready is the server's one word (utils/consultReady.js); v is the row's Ready FILTER value from the list engine, so the
+   cell and the filter can never disagree: 'over' (the consultation day has passed) is a dash. A phone has no hover, so the
+   pill's own words must say it all; the title only adds the dates. Display only — nothing is blocked or emailed. */
+function readyPill(c,v){
+  var P={ ready:['green','Ready'], agreement:['amber','Missing agreement'], form:['amber','Missing form'], both:['red','Missing both'], notsent:['amber','Not sent yet'], notasked:['grey','Not asked'] };
+  var w=String(c.ready==null?'':c.ready);
+  if(v==='over'||!Object.prototype.hasOwnProperty.call(P,w)) return '<span class="pill grey">—</span>';
+  var sent=String(c.agreementSent||''), signed=String(c.agreementSigned||'');
+  var tip=w==='ready'?'Agreement signed '+signed+'. Pre-consultation form submitted.'
+    :w==='agreement'?'The agreement was sent '+sent+' and is not signed yet. The form is in.'
+    :w==='form'?'The agreement is signed ('+signed+'). The pre-consultation form is not filled in yet.'
+    :w==='both'?'Sent '+sent+'. The agreement is not signed and the form is not filled in.'
+    :w==='notsent'?'The consultation agreement has not been sent to this client. Open the record — it says why.'
+    :'The agreement and form were not sent — staff chose not to, or it is a direct consultation.';
+  return '<span class="pill '+P[w][0]+'" title="'+escHtml(tip)+'">'+P[w][1]+'</span>';
+}
+function rowHtml(c,ready){
   var pc=c.preConsultSubmitted?qpill('green','Submitted'):qpill('amber','Pending');
   var oc=outcomeCell(c);   // the outcome, and a follow-up date amber once it is due (today or earlier)
   var ag=c.agreementSigned?qpill('green','Signed '+c.agreementSigned):c.agreementSent?qpill('blue','Sent '+c.agreementSent):'<span class="pill grey">—</span>';
@@ -283,6 +302,7 @@ function rowHtml(c){
     '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
     '<td>'+escHtml(c.consultant||'—')+'</td>'+
     '<td>'+(c.meetingType?escHtml(c.meetingType):'—')+'</td>'+
+    '<td class="c-ready">'+readyPill(c,ready)+'</td>'+
     '<td>'+ag+'</td><td>'+pc+'</td><td>'+pd+'</td><td>'+oc+'</td><td class="c-now">'+(c.done?nowCell(c):'')+'</td>'+
     /* a completed consultation has no delete button here (the All tab too): a client with a case is deleted from the Retainers page */
     '<td class="c-del">'+(c.done?'':'<button class="del-btn" type="button" data-del-lead="'+escHtml(c.id)+'"'+(c.adminDelete?' data-del-admin-only="1"':'')+' title="Delete this record (careful — removes Monday rows and the OneDrive folder; if there is a case, the case and its folder go too)">'+TDOT_DEL_SVG+'</button>')+'</td></tr>';
@@ -353,6 +373,11 @@ function consultOnChange(st){
     if(st.sel&&st.sel.now){ delete st.sel.now; again=true; }
     if(st.sort&&st.sort.key==='now'){ st.sort=null; again=true; }
   }
+  /* "Ready" (2026-11-20) is the column of the tabs still to happen: hidden on Needs outcome and Completed — the same care. */
+  if(tab==='needs'||tab==='done'){
+    if(st.sel&&st.sel.ready){ delete st.sel.ready; again=true; }
+    if(st.sort&&st.sort.key==='ready'){ st.sort=null; again=true; }
+  }
   if(again&&window.ConsultTable) ConsultTable.apply('data');   /* 'data': redraw and keep, without coming back here */
 }
 /* The latest consultation first; the ones with no time last. */
@@ -402,9 +427,10 @@ function renderConsultList(keep,why,st,h){
     var core=window.ConsultTable?ConsultTable.core:null, rg=core?core.range(st):['',''], dated=!!(rg[0]||rg[1]);
     var msg=consultEmptyMsg({ tab:tab, T:T, inTab:inTab.length, byMonth:(tab==='done'||(tab==='all'&&month!=='all'))&&months.length>0, month:month,
       dated:dated, onlyToday:dated&&rg[0]===t&&rg[1]===t, others:core?core.chips(st).some(function(c){ return c.key!=='date'; }):false });
-    tb.innerHTML='<tr><td colspan="12" class="empty">'+escHtml(msg)+'</td></tr>';
+    tb.innerHTML='<tr><td colspan="13" class="empty">'+escHtml(msg)+'</td></tr>';
   }
-  else tb.innerHTML=rows.map(rowHtml).join('');
+  /* each row with its Ready filter value from the engine (an explicit function: map would hand rowHtml the row's position) */
+  else tb.innerHTML=rows.map(function(r){ return rowHtml(r, window.ConsultTable?ConsultTable.core.valuesOf('ready',r)[0]:''); }).join('');
   bindRowClicks(tb, (tab==='done'||tab==='all')?'?from=consultations':'');   /* a completed record's back link returns here */
   return { shown: rows.length, total: inTab.length };
 }
@@ -839,7 +865,7 @@ ${buildNavHeader('consultations')}
     <div id="cq-chips" class="q-chips" style="display:none" aria-live="polite"></div>
     <div class="card"><div class="tbl-wrap">
       <table id="cq-table" class="tab-booked">
-        <thead><tr id="cq-headrow"><th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th>Now</th><th></th></tr></thead>
+        <thead><tr id="cq-headrow"><th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Consultant</th><th>Mode</th><th>Ready</th><th>Agreement</th><th>Pre-consult</th><th>Paid</th><th>Outcome</th><th>Now</th><th></th></tr></thead>
         <tbody id="qbody"></tbody>
       </table>
     </div></div>

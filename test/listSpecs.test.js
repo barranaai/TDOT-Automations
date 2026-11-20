@@ -651,7 +651,7 @@ test('Consultations: Mode, Agreement, Pre-consult, Paid, Outcome and Now sort in
     assert.ok(spec.sorts[c.sort], c.id + ' sorts');
     assert.deepEqual([c.sortDirs.join(), c.sortText.length, c.sortText.every((t) => t && t[0] === t[0].toUpperCase())], ['asc,desc', 2, true], c.id);
   }
-  assert.deepEqual(o.cols.filter((c) => c.sort).map((c) => c.sortText[0]), ['Earliest first', 'Earliest in the day first', 'A → Z', 'A → Z', 'A → Z', 'In-person first', 'Signed first', 'Submitted first', 'Paid first', 'Retain first', 'Retained first']);
+  assert.deepEqual(o.cols.filter((c) => c.sort).map((c) => c.sortText[0]), ['Earliest first', 'Earliest in the day first', 'A → Z', 'A → Z', 'A → Z', 'In-person first', 'Not ready first', 'Signed first', 'Submitted first', 'Paid first', 'Retain first', 'Retained first']);
   // every column but Client and the delete button has a filter; Client points to the search box (like the Leads "Lead" column)
   for (const c of o.cols) if (c.id !== 'del' && c.id !== 'client') assert.ok(c.date || (c.facets && c.facets.length), c.id + ' filters');
   const client = o.cols.find((c) => c.id === 'client');
@@ -876,4 +876,127 @@ test('consultations: a Now choice does not zero the numbers on Booked / Needs ou
   assert.ok(!P.needs.some((p) => p[0] === 'tomorrow' || p[0] === 'nextweek'));
   const src = require('fs').readFileSync(require('path').join(__dirname, '../src/routes/listFilters.js'), 'utf8');
   assert.ok(src.includes('(LT.DATE.presetsBy && LT.scopeOf && LT.DATE.presetsBy[LT.scopeOf(state)]) || LT.DATE.presets ||'));
+});
+
+/* ── Consultations: the "Ready" column (2026-11-20) ── */
+
+// Today is 2026-11-12. Each row carries the server's Ready word (utils/consultReady.js).
+function readySample() {
+  return [
+    { id: 'b1', name: 'Asha', bookedSlot: '2026-11-12 09:00', ready: 'ready' }, { id: 'b2', name: 'Bo', bookedSlot: '2026-11-13 14:00', ready: 'both' },
+    { id: 'b3', name: 'Chen', bookedSlot: '2026-11-13 16:00', ready: 'agreement' }, { id: 'b4', name: 'Dev', bookedSlot: '2026-11-13 17:00', ready: 'notasked' },
+    { id: 'b5', name: 'Eli', bookedSlot: '2026-11-13 18:00', ready: 'ready' }, { id: 'b6', name: 'Fay', bookedSlot: '2026-11-20 10:00', ready: 'form' },
+    { id: 'b7', name: 'Gia', bookedSlot: '2026-11-21 10:00', ready: 'notsent' }, { id: 'b8', name: 'Hal', bookedSlot: '2026-11-13 09:00', ready: 'notsent' },
+    { id: 'n1', name: 'Ida', bookedSlot: '2026-11-03 10:00', ready: 'both' }, { id: 'n2', name: 'Jo', bookedSlot: '2026-11-10 11:00', ready: 'ready' },
+    { id: 'd1', name: 'Kai', bookedSlot: '2026-11-05 10:00', done: true, outcome: 'Retain', now: 'Retained', ready: 'notsent' }, { id: 'd2', name: 'Lea', bookedSlot: '2026-10-15 13:00', done: true, outcome: 'Follow-Up', now: 'Following up', ready: 'ready' },
+    { id: 'd3', name: 'Max', bookedSlot: '2026-11-25 13:00', done: true, outcome: 'Retain', now: 'Retainer to send', ready: 'both' },   // completed at once (outcome Retain) though its day is ahead
+    { id: 'z1', name: 'Nia', bookedSlot: '', ready: 'notsent' }, { id: 'z2', name: 'Oz', bookedSlot: '', ready: 'notasked' },
+    { id: 'x1', name: 'Pia', bookedSlot: '2026-11-03 10:00', direct: 'Existing client', ready: 'notasked' },   // an existing client's direct row is never under Needs outcome
+  ];
+}
+
+test('Consultations, Ready: one value per row — Not ready / Ready / Not asked for a consultation still to happen, "Consultation over" on the two past tabs, "Not known" without a word', () => {
+  const spec = S.consultListSpec({ today: () => '2026-11-12' }), LT = listCore(spec), rows = readySample();
+  const v = (r) => LT.valuesOf('ready', r)[0];
+  assert.deepEqual(Object.fromEntries(rows.map((r) => [r.id, v(r)])), { b1: 'ready', b2: 'notready', b3: 'notready', b4: 'notasked', b5: 'ready', b6: 'notready', b7: 'notready', b8: 'notready',
+    n1: 'over', n2: 'over', d1: 'over', d2: 'over', d3: 'over', z1: 'notready', z2: 'notasked', x1: 'notasked' });
+  // the four words that are "not ready", and nothing else
+  for (const w of ['agreement', 'form', 'both', 'notsent']) assert.equal(v({ bookedSlot: '2026-11-13 10:00', ready: w }), 'notready', w);
+  for (const w of [undefined, null, '', 'READY', 'over', 'notready', 'constructor', 7]) assert.equal(v({ bookedSlot: '2026-11-13 10:00', ready: w }), LT.NONE, 'not a word the server sends: ' + String(w));
+  assert.equal(LT.labelOf('ready', LT.NONE), 'Not known');
+  // 'over' follows the row's TAB (the one bucket rule), whatever the word
+  for (const r of rows) assert.equal(v(r) === 'over', ['needs', 'done'].includes(LT.valuesOf('tab', r)[0]), r.id);
+  const f = spec.facets.ready;
+  assert.deepEqual([f.label, f.none, f.order, f.fixed, f.onlyOn, f.quick], ['Ready', 'Not known', ['notready', 'ready', 'notasked'], true, ['booked', 'nodate'], undefined]);
+  assert.deepEqual(['notready', 'ready', 'notasked', 'over'].map(f.text), ['Not ready', 'Ready', 'Not asked', 'Consultation over']);
+  // the panel on the Booked tab: always the three, in this order, with their numbers; never "Consultation over"
+  const on = (tab) => { const st = LT.emptyState(); if (tab !== 'all') st.sel.tab = [tab]; return st; };
+  assert.deepEqual(LT.facetCounts(rows, on('booked'), 'ready').map((x) => [x.label, x.count]), [['Not ready', 5], ['Ready', 2], ['Not asked', 2]]);
+  assert.deepEqual(LT.facetCounts(rows, on('nodate'), 'ready').map((x) => [x.label, x.count]), [['Not ready', 1], ['Ready', 0], ['Not asked', 1]]);
+  assert.deepEqual(LT.facetCounts([rows[0]], on('booked'), 'ready').map((x) => [x.label, x.count]), [['Not ready', 0], ['Ready', 1], ['Not asked', 0]], 'a fixed list: every choice shows');
+  // the All tab also lists the past rows, under "Consultation over" — never under "Not ready"
+  assert.deepEqual(LT.facetCounts(rows, on('all'), 'ready').map((x) => [x.label, x.count]), [['Not ready', 6], ['Ready', 2], ['Not asked', 3], ['Consultation over', 5]]);
+  const col = S.consultListOpts({}).cols;
+  assert.deepEqual(col.map((c) => c.id), ['date', 'time', 'client', 'service', 'consultant', 'mode', 'ready', 'agreement', 'preconsult', 'paid', 'outcome', 'now', 'del'], 'after Mode, before Agreement');
+  const c = col.find((x) => x.id === 'ready');
+  assert.deepEqual(c, { id: 'ready', label: 'Ready', title: 'Signed agreement and filled pre-consultation form — both are needed before the consultation', menu: 'facet', facets: ['ready'], sort: 'ready', sortText: ['Not ready first', 'Not ready last'], sortDirs: ['asc', 'desc'] });
+  assert.equal(c.tabs, undefined, 'hidden by the page\'s CSS on the two past tabs, like Now — not by the engine');
+});
+
+test('Consultations, Ready: "Not ready" ticked — the Needs outcome and Completed numbers do not change (the column is not theirs), Booked, No date and All narrow; with Date "Tomorrow" it is the day-before list', () => {
+  const LT = listCore(S.consultListSpec({ today: () => '2026-11-12' })), rows = readySample();
+  const TABS = ['booked', 'needs', 'done', 'nodate'];
+  const numbers = (st) => { const c = Object.fromEntries(LT.facetCounts(rows, st, 'tab').map((x) => [x.value, x.count])); return [...TABS.map((t) => c[t] || 0), rows.filter((r) => LT.passesAll(r, st, 'tab')).length]; };
+  const on = (tab, sel) => { const st = LT.emptyState(); if (tab !== 'all') st.sel.tab = [tab]; Object.assign(st.sel, sel || {}); return st; };
+  assert.deepEqual(numbers(on('booked')), [9, 2, 3, 2, 16], 'no filter: Booked 9, Needs outcome 2, Completed 3, No date 2, All 16');
+  for (const view of ['booked', 'nodate', 'all']) {
+    assert.deepEqual(numbers(on(view, { ready: ['notready'] })), [5, 2, 3, 1, 6], 'Not ready, seen from ' + view + ': the two past tabs keep their numbers');
+    assert.deepEqual(numbers(on(view, { ready: ['ready'] })), [2, 2, 3, 0, 2], 'Ready, seen from ' + view);
+    assert.deepEqual(numbers(on(view, { ready: ['notasked'] })), [2, 2, 3, 1, 3], 'Not asked, seen from ' + view);
+  }
+  // each tab's number is the number of rows it shows when opened (the page takes the Ready choice off when a past tab is opened)
+  const st = on('booked', { ready: ['notready'] });
+  assert.equal(ids(LT.filterRows(rows, st)), 'b2,b3,b6,b7,b8');
+  assert.equal(ids(LT.filterRows(rows, on('nodate', { ready: ['notready'] }))), 'z1');
+  assert.equal(ids(LT.filterRows(rows, on('all', { ready: ['notready'] }))), 'b2,b3,b6,b7,b8,z1', 'All: only consultations still to happen — a past "Missing both" is not a to-do');
+  assert.equal(ids(LT.filterRows(rows, on('all', { ready: ['over'] }))), 'n1,n2,d1,d2,d3');
+  assert.equal(ids(LT.filterRows(rows, on('needs'))), 'n1,n2'); assert.equal(ids(LT.filterRows(rows, on('done'))), 'd1,d2,d3');
+  // without onlyOn the two past tabs would read 0 — the trap this rule is for
+  const bare = S.consultListSpec({ today: () => '2026-11-12' }); delete bare.facets.ready.onlyOn;
+  const B = listCore(bare), c0 = Object.fromEntries(B.facetCounts(rows, st, 'tab').map((x) => [x.value, x.count]));
+  assert.deepEqual([c0.needs || 0, c0.done || 0], [0, 0]);
+  // the chip, its × and "Clear filters"
+  assert.deepEqual(LT.chips(st).map((c) => [c.key, c.text]), [['ready', 'Ready: Not ready']]);
+  assert.deepEqual(LT.clearKey(on('booked', { ready: ['notready'] }), 'ready').sel, { tab: ['booked'] });
+  assert.deepEqual(LT.clearAll(st).sel, { tab: ['booked'] });
+  // Melanie's day-before check: Booked, Date "Tomorrow", Ready "Not ready"
+  const tomorrow = LT.presetRange('tomorrow', Date.parse('2026-11-12T17:00:00Z'));
+  assert.deepEqual(tomorrow, { from: '2026-11-13', to: '2026-11-13' });
+  LT.setDates(st, tomorrow.from, tomorrow.to);
+  assert.equal(ids(LT.filterRows(rows, st)), 'b2,b3,b8', 'tomorrow\'s consultations that are not ready — not the ready one, not the one staff chose not to ask');
+  assert.deepEqual(LT.chips(st).map((c) => c.text), ['Date Nov 13', 'Ready: Not ready']);
+  assert.deepEqual(numbers(st), [3, 2, 3, 1, 6], 'Booked narrows to its own range; the others keep theirs');
+  assert.deepEqual(LT.facetCounts(rows, st, 'ready').map((x) => [x.label, x.count]), [['Not ready', 3], ['Ready', 1], ['Not asked', 1]], 'the panel counts tomorrow');
+  // with another filter on top, and the search
+  const st2 = on('booked', { ready: ['notready', 'notasked'], agreement: ['none'] });
+  assert.equal(ids(LT.filterRows(rows, st2)), ids(rows.filter((r) => ['b2', 'b3', 'b4', 'b6', 'b7', 'b8', 'x1'].includes(r.id) && !r.agreementSent && !r.agreementSigned)));
+  // a kept state: a Ready choice is kept like any other; an old kept state (no Ready) is still valid
+  assert.deepEqual(LT.normalizeState(JSON.parse(JSON.stringify(on('booked', { ready: ['notready'] })))).sel, { tab: ['booked'], ready: ['notready'] });
+  assert.deepEqual(LT.normalizeState({ sel: { tab: ['booked'], paid: ['none'] }, sort: { key: 'paid', dir: 'asc' } }).sel, { tab: ['booked'], paid: ['none'] });
+  assert.deepEqual(LT.normalizeState({ sel: {}, sort: { key: 'ready', dir: 'desc' } }).sort, { key: 'ready', dir: 'desc' });
+});
+
+test('Consultations, Ready: the sort follows the filter list (Not ready, Ready, Not asked); a consultation that is over, or has no word, goes last both ways; ties keep the order given', () => {
+  const LT = listCore(S.consultListSpec({ today: () => '2026-11-12' })), rows = readySample().concat([{ id: 'u1', name: 'Quin', bookedSlot: '2026-11-14 10:00' }]);
+  const by = (dir) => ids(LT.sortRows(rows, { key: 'ready', dir }));
+  assert.equal(by('asc'), 'b2,b3,b6,b7,b8,z1,b1,b5,b4,z2,x1,n1,n2,d1,d2,d3,u1', 'Not ready first');
+  assert.equal(by('desc'), 'b4,z2,x1,b1,b5,b2,b3,b6,b7,b8,z1,n1,n2,d1,d2,d3,u1', 'Not ready last — the dashes still last');
+  // the sort order IS the filter list's order (the file's rule for a status column)
+  const up = rows.filter((r) => LT.valuesOf('tab', r)[0] === 'booked');
+  const listed = LT.facetCounts(up, LT.emptyState(), 'ready').filter((x) => x.count && x.value !== LT.NONE).map((x) => x.value);
+  const sorted = LT.sortRows(up, { key: 'ready', dir: 'asc' }).map((r) => LT.valuesOf('ready', r)[0]).filter((x, i, a) => x !== LT.NONE && a.indexOf(x) === i);
+  assert.deepEqual(sorted, listed);
+  assert.deepEqual(listed, ['notready', 'ready', 'notasked']);
+});
+
+test('Consultations, Ready: every OLD filter still gives the same rows as its frozen copy — on rows that carry a Ready word, with no Ready choice on', () => {
+  const LT = listCore(S.consultListSpec({}));
+  const r = rng(11), WORDS = ['ready', 'form', 'agreement', 'both', 'notsent', 'notasked', ''];
+  const rows = consultRows(400).map((row) => ({ ...row, ready: pick(r, WORDS) }));
+  const combos = product([['', 'asha'], ['', 'Shafoli Kapur', '__none'], ['', 'In-person', 'Virtual', 'Phone Call'], Object.keys(PAID_TICKS), ['', 'signed', 'sent']]);
+  for (const [q, con, mode, paid, ag] of combos) {
+    const f = { q, con, mode, paid, ag };
+    assert.equal(ids(LT.filterRows(rows, consultState(LT, f))), ids(oldConsultKeep(rows, f)), JSON.stringify(f));
+  }
+  // the other columns' choices and numbers are the same with and without the word on the rows
+  const plain = consultRows(400);
+  for (const f of ['consultant', 'mode', 'agreement', 'paid', 'service', 'preconsult', 'outcome', 'now', 'time', 'tab'])
+    assert.deepEqual(LT.facetCounts(rows, LT.emptyState(), f), LT.facetCounts(plain, LT.emptyState(), f), f);
+  for (const k of ['date', 'time', 'client', 'service', 'consultant', 'mode', 'agreement', 'preconsult', 'paid', 'outcome', 'now'])
+    assert.equal(ids(LT.sortRows(rows, { key: k, dir: 'asc' })), ids(LT.sortRows(plain, { key: k, dir: 'asc' })), 'sort ' + k);
+  // the Retainers and Client Master lists have no Ready filter, column or sort
+  const ret = S.retainerListSpec({ outcomes: OUTCOME_LABELS, today: () => '' });
+  assert.equal(ret.facets.ready, undefined); assert.equal((ret.sorts || {}).ready, undefined);
+  assert.ok(!S.retainerListOpts({ outcomes: OUTCOME_LABELS }).cols.some((c) => c.id === 'ready'));
+  assert.equal(S.casesListSpec({}).facets.ready, undefined);
 });
