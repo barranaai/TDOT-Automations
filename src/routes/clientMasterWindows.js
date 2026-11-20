@@ -18,6 +18,9 @@
  *     SLIDE_DOCS_BELOW (a blank % is not 0 and never flags). "May slide" when the
  *     promise is 0–SLIDE_DAYS days away; "Promise passed" when it was 1–SLIDE_DAYS days
  *     ago; older promises show nothing. Nothing is ever written, moved or emailed.
+ *   - The limit (Gauri, 2026-11-19): WINDOW_LIMIT open cases per half-month for the whole firm. firmLoad counts every
+ *     OPEN case (a row on the Assigning view) by the same date rule; the page shows "Whole firm: N of <the limit>" and
+ *     the word "Full". It is a separate count from the windows box, which follows the rows on screen. Display only.
  */
 
 /* eslint-disable no-var */
@@ -32,6 +35,10 @@ function clientMasterWindows() {
   if (BUILT_MODES.indexOf(SPRINT_MODE) < 0) throw new Error('clientMasterWindows: SPRINT_MODE "' + SPRINT_MODE + '" is not built');
   var SLIDE_DAYS = 15;          // how near (or how lately passed) a promise must be to show a flag
   var SLIDE_DOCS_BELOW = 50;    // Documents Uploaded % below this = "documents not yet in"
+  /* How many open cases the WHOLE FIRM takes in one half-month window (Gauri, 2026-11-19: 20). The ONE place the number
+     lives: another number is a change of this line and a deploy. A guide only — nothing is blocked, moved or emailed. */
+  var WINDOW_LIMIT = 20;
+  var OPEN_VIEW = 'assigning';  // an "open" case = a row on the Assigning view: the app's one meaning of open (the staff lists use the same view)
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   var TYPE_REAL = 'Deadline', TYPE_IMAGINARY = 'Imaginary';   // the Deadline Type labels (deadlineService TYPE_REAL / TYPE_IMAGINARY)
 
@@ -111,6 +118,17 @@ function clientMasterWindows() {
     return { windows: box, later: later, earlier: earlier, noDate: noDate };
   }
   /**
+   * The whole firm's load per window: the same four windows as the box, counted over the OPEN cases only (rows whose
+   * views list has 'assigning'), by the same date rule. rows: every case the page holds, NOT the rows on screen.
+   * Returns [{ key, n, limit, full }] (full = n has reached the limit), or null when today is not a day.
+   */
+  function firmLoad(rows, today) {
+    var open = (Array.isArray(rows) ? rows : []).filter(function (r) { return !!r && Array.isArray(r.views) && r.views.indexOf(OPEN_VIEW) >= 0; });
+    var box = windowsBox(open, today);
+    if (!box) return null;
+    return box.windows.map(function (w) { return { key: w.key, n: w.total, limit: WINDOW_LIMIT, full: w.total >= WINDOW_LIMIT }; });
+  }
+  /**
    * The flag on a row, or null: { kind: 'slide', label: 'May slide → Dec 1–15', tip } or { kind: 'passed', label: 'Promise passed Nov 3', tip }.
    * Display only: nothing is written, moved or emailed.
    */
@@ -131,8 +149,8 @@ function clientMasterWindows() {
     return null;   // older promises (and ones further off) show nothing — old rows never nag
   }
 
-  return { SPRINT_MODE: SPRINT_MODE, SLIDE_DAYS: SLIDE_DAYS, SLIDE_DOCS_BELOW: SLIDE_DOCS_BELOW, windowOf: windowOf, nextWindow: nextWindow,
-    torontoToday: torontoToday, daysBetween: daysBetween, shortDay: shortDay, typeOf: typeOf, bucketDate: bucketDate, windowsBox: windowsBox, flagOf: flagOf };
+  return { SPRINT_MODE: SPRINT_MODE, SLIDE_DAYS: SLIDE_DAYS, SLIDE_DOCS_BELOW: SLIDE_DOCS_BELOW, WINDOW_LIMIT: WINDOW_LIMIT, windowOf: windowOf, nextWindow: nextWindow,
+    torontoToday: torontoToday, daysBetween: daysBetween, shortDay: shortDay, typeOf: typeOf, bucketDate: bucketDate, windowsBox: windowsBox, firmLoad: firmLoad, flagOf: flagOf };
 }
 
 module.exports = Object.assign({ clientMasterWindows: clientMasterWindows }, clientMasterWindows());

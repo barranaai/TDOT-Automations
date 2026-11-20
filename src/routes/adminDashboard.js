@@ -447,6 +447,8 @@ const CM_CSS = `
     .cm-win-l { font-weight:700; color:var(--navy); }
     .cm-win-l b, .cm-win-n b { font-variant-numeric:tabular-nums; }
     .cm-win-n { font-size:11.5px; color:#64748b; }
+    /* "Full" on a window's whole-firm line: the word says it, never the colour alone; the border keeps it on paper, where the background is dropped */
+    .cm-win-full { display:inline-block; border-radius:6px; padding:0 6px; margin-left:2px; font-size:10px; font-weight:700; background:var(--st-red-bg); color:var(--st-red-fg); border:1px solid var(--st-red-solid); }
     /* A group heading carries a coloured bar at its start, the way Monday colours its groups: the stage's status colour on a view grouped by stage, navy where the group is not a status. */
     .data-table tr.cm-grp td { background:#f8fafc; padding:7px 14px; font-size:12px; color:#334155; border-top:1px solid #e2e8f0; border-bottom:1px solid #e2e8f0; box-shadow:inset 4px 0 0 var(--grp, var(--navy)); cursor:pointer; }
     .cm-grp.tone-green, .cm-in.tone-green, .cm-st.tone-green { --grp:var(--st-green-solid); } .cm-grp.tone-amber, .cm-in.tone-amber, .cm-st.tone-amber { --grp:var(--st-amber-solid); }
@@ -2350,7 +2352,8 @@ function cmScrollBox(plain) {
 }
 
 /* Above the table, on a view tab only: the tab name + the data time + Print, the Filtered line,
-   then Assigning's stage counts (buttons that go to the stage's group) and no-officer line, or the half-month windows (Deadlines). */
+   then Assigning's stage counts (buttons that go to the stage's group) and no-officer line, or the half-month windows (Deadlines):
+   each window counts the rows on screen and, on a third line, the whole firm's open cases against the limit (CMW.WINDOW_LIMIT; the word "Full" when reached). */
 function renderCmHead(v, rows, st, groups, inView) {
   var el = document.getElementById('cm-head');
   if (!el) return;
@@ -2385,11 +2388,19 @@ function renderCmHead(v, rows, st, groups, inView) {
     }
   }
   if (v.deadlineBox) {
-    var box = CMW.windowsBox(rows, cmToday());
+    var winDay = cmToday(), box = CMW.windowsBox(rows, winDay);
     if (box) {
+      // The whole firm against the limit (2026-11-20), a third line in each window: counted from EVERY case the page holds, not the rows
+      // on screen — a search, a filter or a closed group never moves it, and a deadline changed on the page moves it at once.
+      // No line when the page holds no cases list, and none for a viewer cut to their own cases: the page then does not hold the
+      // firm's cases, and a too-small number would be wrong (the "Showing only your cases" line above already says why).
+      var firm = (_data && Array.isArray(_data.cases) && !(_data.viewer && _data.viewer.scope === 'assigned')) ? CMW.firmLoad(_data.cases, winDay) : null;
       h += '<div class="cm-wins" id="cm-wins" role="group" aria-label="Half-month windows">' + box.windows.map(function(w, i) {
+        var f = firm && firm[i] && firm[i].key === w.key ? firm[i] : null;
         return '<div class="cm-win-box' + (i === 0 ? ' now' : '') + '" data-win="' + escHtml(w.key) + '"><div class="cm-win-l">' + (i === 0 ? 'Now · ' : '') + escHtml(w.label) + ' · <b>' + w.total + '</b></div>' +
-          '<div class="cm-win-n">Real ' + w.real + ' · Imaginary ' + w.imaginary + ' · Not recorded ' + w.none + '</div></div>';
+          '<div class="cm-win-n">Real ' + w.real + ' · Imaginary ' + w.imaginary + ' · Not recorded ' + w.none + '</div>' +
+          (f ? '<div class="cm-win-n cm-win-f" title="' + escHtml('Every open case in the firm with a real deadline or a promised date in this half-month, not only the rows listed below. The limit is ' + f.limit + ' per half-month. A guide only: nothing is blocked.') + '">' +
+            'Whole firm: <b>' + f.n + '</b> of ' + f.limit + (f.full ? ' <span class="cm-win-full">Full</span>' : '') + '</div>' : '') + '</div>';
       }).join('') +
       '<div class="cm-win-box rest"><div class="cm-win-n">Later <b data-n="later">' + box.later + '</b> · Earlier dates <b data-n="earlier">' + box.earlier + '</b> · No date <b data-n="nodate">' + box.noDate + '</b></div></div>' +
       '</div>';
