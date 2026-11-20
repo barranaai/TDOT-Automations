@@ -452,6 +452,10 @@ test('the three system dates are shown only: they do not put a case in a view, i
   assert.equal(cols.softDeadlineSys.title, 'Soft Deadline. ' + SYS_WORDS);
   assert.equal(cols.prepDeadlineSys.title, 'Submission Prep Deadline. ' + SYS_WORDS);
   for (const id of MORE_IDS.filter((x) => !SYS_IDS.includes(x))) assert.ok(!cols[id].title.includes('Set by the system'), id);
+  // the same words are the column's note: the header's tooltip does not show when the pointer is on the column name (the sort button has
+  // its own), on a phone or with the keyboard — the note is in the panel behind the header's funnel, which all three can reach
+  for (const id of SYS_IDS) assert.equal(cols[id].note, SYS_WORDS, id + ': the note');
+  for (const id of MORE_IDS.filter((x) => !SYS_IDS.includes(x))) assert.equal(cols[id].note, undefined, id + ': no note');
   // two cases that differ ONLY in the system dates: the same views, the same window, the same flag, the same counts
   const base = { id: '1', caseStage: 'Internal Review', stageIdx: 1, phase: 'Phase 8', phaseIdx: 4, deadlineType: 'Imaginary', actualDeadline: '2026-12-02', promisedDate: '2026-11-22', docUploadedPct: 10,
     groupId: 'g_nov', groupTitle: 'November 2026', caseTypeIds: [1], officerIds: { personIds: [], teamIds: [] } };
@@ -753,16 +757,39 @@ test('link safety (the page): only an https address becomes a link — a short w
   assert.ok(print.includes('.cm-olink { color:inherit; text-decoration:none; }'));
 });
 
-test('the header of a switched-on column: its name sorts, the six with a filter have the funnel, and the three system dates say in their tooltip that they are not the client\'s deadline', async () => {
+test('the header of a switched-on column: its name sorts, the six with a filter have the funnel, and the three system dates say that they are not the client\'s deadline — in the header\'s tooltip AND in a panel of their own behind the funnel (mouse, keyboard and touch)', async () => {
   const p = await cmPage({ view: 'deadlines' });
+  // the header's funnel buttons, as the list engine finds them: one stand-in per button in the header's html, so the test can press them
+  let funnels = [];
+  p.els['cs-headrow'].querySelectorAll = (sel) => {
+    if (sel !== '.th-f') return [];
+    funnels = [...p.headHtml().matchAll(/<button type="button" class="th-f[^"]*" data-col="([^"]+)"/g)].map((m) => ({ col: m[1], onclick: null, getAttribute: (k) => (k === 'data-col' ? m[1] : null) }));
+    return funnels;
+  };
+  const press = (id) => funnels.find((b) => b.col === id).onclick({ stopPropagation() {} });
   p.setRows(rowsCopy());
   for (const id of MORE_IDS) p.cols().toggle('deadlines', id, true);
-  for (const [label, name] of [['Hard deadline (system)', 'Hard Deadline'], ['Soft deadline (system)', 'Soft Deadline'], ['Submission prep deadline (system)', 'Submission Prep Deadline']]) {
+  const SYS_HEADS = [['hardDeadlineSys', 'Hard deadline (system)', 'Hard Deadline'], ['softDeadlineSys', 'Soft deadline (system)', 'Soft Deadline'], ['prepDeadlineSys', 'Submission prep deadline (system)', 'Submission Prep Deadline']];
+  for (const [id, label, name] of SYS_HEADS) {
     const th = p.th(label);
-    assert.ok(th.includes(' title="' + name + '. ' + SYS_WORDS + '"'), label + ': the tooltip');
-    assert.ok(th.includes('class="th-l th-sortbtn"') && !th.includes('class="th-f'), label + ': sorts, no filter');
+    assert.ok(th.includes(' title="' + name + '. ' + SYS_WORDS + '"'), label + ': the tooltip on the header cell');
+    assert.ok(th.includes('class="th-l th-sortbtn"'), label + ': the name sorts');
+    // the funnel: a panel with the sort and the words — it is not a filter, and its spoken name says so
+    assert.ok(th.includes('<button type="button" class="th-f" data-col="' + id + '" aria-haspopup="dialog" aria-expanded="false" aria-label="Sort: ' + label + '">'), label + ': the funnel');
+    press(id);
+    const pop = p.els['cs-pop'].innerHTML;
+    assert.equal(pop, '<div class="qp-h"><span>' + label + '</span><button type="button" class="qp-x" data-act="close" aria-label="Close">×</button></div><div class="qp-b">'
+      + '<div class="qp-sec"><div class="qp-t">Sort</div><div class="qp-sort"><button type="button" class="qp-btn" aria-pressed="false" data-sort="asc">Soonest first</button>'
+      + '<button type="button" class="qp-btn" aria-pressed="false" data-sort="desc">Latest first</button></div></div>'
+      + '<div class="qp-sec"><div class="qp-note">Set by the system from the stage timings. Not the client’s deadline (see Actual deadline).</div></div>'
+      + '</div><div class="qp-f"><span></span><button type="button" class="qp-done" data-act="close">Done</button></div>', label + ': the panel — the sort both ways and the words, nothing to clear');
+    assert.ok(p.th(label).includes('aria-expanded="true"'), label + ': the funnel says the panel is open');
+    p.ctx.CasesTable.close();
   }
-  assert.ok(!p.th('Stage start date').includes('Set by the system'));
+  // the other dates and numbers have no note and no panel: the name sorts, that is all
+  for (const label of ['Stage start date', 'Payment confirmation date', 'Retainer signed date', 'Last client activity date', 'Reminder count']) {
+    assert.ok(!p.th(label).includes('Set by the system') && !p.th(label).includes('class="th-f') && p.th(label).includes('class="th-l th-sortbtn"'), label);
+  }
   for (const label of ['Questionnaire completion status', 'Documents location', 'Ops supervisor', 'Consultant', 'Consultation outcome', 'Source / Reference']) assert.ok(p.th(label).includes('class="th-f'), label + ': the filter funnel');
   for (const label of ['Reminder count', 'Escalation reason', 'OneDrive folder', 'Consultation record', 'Consultation fee', 'Last client activity date']) assert.ok(!p.th(label).includes('class="th-f'), label + ': no filter');
   // a sort on one of them: the chip says so; hiding the column leaves the chip (never an invisible sort)
@@ -776,6 +803,64 @@ test('the header of a switched-on column: its name sorts, the six with a filter 
   st.sort = null; st.sel.qStatus = ['In Progress']; p.ctx.CasesTable.apply('filter');
   assert.deepEqual(p.rows().map((r) => p.cells(r)[0].replace(/<[^>]*>/g, '')), ['2026-XX-001']);
   assert.deepEqual(p.chips(), ['Questionnaire status: In Progress']);
+});
+
+test('paper with many optional columns: up to thirty columns print as before; past thirty the table says so and paper gets one line above it (never on screen); the long reason keeps a width of its own on paper', async () => {
+  // the rule (pure): more than thirty columns on paper
+  assert.equal(U.COL_PRINT_MAX, 30);
+  for (const n of [0, 1, 20, 21, 24, 29, 30]) assert.equal(U.colPrintOver(n), false, String(n));
+  for (const n of [31, 32, 33, 34, 39, 44]) assert.equal(U.colPrintOver(n), true, String(n));
+  for (const junk of [null, undefined, '', 'x', NaN, Infinity, -Infinity]) assert.equal(U.colPrintOver(junk), false);
+  assert.ok(!/[`\\]|\$\{/.test(U.clientMasterUi.toString()), 'the injected rules');
+  // the page: a view tab's twenty and ten of the nineteen = thirty — no mark; the eleventh marks the table; unticked, the mark is gone
+  const p = await cmPage({ view: 'deadlines' });
+  p.setRows(rowsCopy());
+  const at = () => [p.table.attrs['data-ncols'], p.table.attrs['data-pfit'], p.table.attrs['data-pover']];
+  assert.deepEqual(at(), ['20', undefined, undefined], 'the default: as it always printed');
+  for (const id of MORE_IDS.slice(0, 10)) p.cols().toggle('deadlines', id, true);
+  p.agree(30, 'Deadlines with ten optional columns');
+  assert.deepEqual(at(), ['30', '2', undefined], 'thirty: the smallest step, no line');
+  p.cols().toggle('deadlines', MORE_IDS[10], true);
+  assert.deepEqual(at(), ['31', '2', '1'], 'thirty-one: the table says there are too many for one sheet');
+  for (const id of MORE_IDS.slice(11)) p.cols().toggle('deadlines', id, true);
+  p.agree(39, 'Deadlines with all nineteen');
+  assert.deepEqual(at(), ['39', '2', '1']);
+  // the empty list keeps the mark (the header still prints)
+  p.ctx.CasesTable.state().q = 'zzzz'; p.ctx.CasesTable.apply('filter');
+  assert.deepEqual(at(), ['39', '2', '1']);
+  p.ctx.CasesTable.state().q = ''; p.ctx.CasesTable.apply('filter');
+  p.cols().toggle('deadlines', MORE_IDS[10], false);
+  for (const id of MORE_IDS.slice(11)) p.cols().toggle('deadlines', id, false);
+  assert.deepEqual(at(), ['30', '2', undefined], 'back at thirty: the mark is gone');
+  // All: the delete column is not printed, so thirty-one on paper is thirty-two in the table; the plain table never has the mark
+  p.tab('');
+  assert.deepEqual(at(), [undefined, undefined, undefined]);
+  for (const id of ALL_CAN_ADD) p.cols().toggle('', id, true);
+  for (const id of MORE_IDS.slice(0, 5)) p.cols().toggle('', id, true);
+  p.agree(31, 'All with sixteen added (and the delete column)');
+  assert.deepEqual(at(), ['30', '2', undefined]);
+  p.cols().toggle('', MORE_IDS[5], true);
+  assert.deepEqual(at(), ['31', '2', '1']);
+  p.cols().reset('');
+  assert.deepEqual(at(), [undefined, undefined, undefined], 'All at its default: the plain table, no mark');
+  p.tab('deadlines'); p.cols().reset('deadlines');
+  assert.deepEqual(at(), ['20', undefined, undefined]);
+  // the page: the line is in the table (its caption), hidden on screen, shown on paper only when the table has the mark
+  const html = PAGE_HTML, cut = html.indexOf('@page { size: landscape'), screen = html.slice(0, cut), print = html.slice(html.indexOf('@media print {', cut));
+  assert.match(html, /<table class="data-table" id="all-cases-table">\s*<!--[^>]*-->\s*<caption class="cm-pover">Too many columns for one sheet: the last ones may be left off\. Switch some off with the Columns button, then print again\.<\/caption>\s*<thead>/);
+  assert.ok(screen.includes('.cm-pover { display:none; }'), 'never on screen');
+  assert.ok(!screen.includes('data-pover'), 'the mark changes nothing on screen');
+  assert.ok(print.includes('#all-cases-table.cm-wide[data-pover] .cm-pover { display:table-caption; caption-side:top; text-align:left; font-size:11pt; font-weight:700; color:#000; padding:0 0 4px; }'));
+  assert.equal((html.match(/\.cm-pover \{/g) || []).length, 2, 'the two rules, no other');
+  assert.ok(!/data-pfit="3"/.test(html), 'no third size step: the letters would be too small to read');
+  assert.ok(!html.includes('however many there are'), 'the print rules no longer promise every column');
+  // the long reason on paper: printed whole (paper has no hover), with a floor so one long reason is not a column two words wide
+  assert.ok(print.includes('#all-cases-table.cm-wide td.cm-c-mclip { min-width:30mm !important; }'));
+  assert.ok(print.indexOf('td.cm-c-mclip { min-width:30mm !important; }') > print.indexOf('min-width:0 !important; max-width:none !important; }'), 'after the rule that takes every width off, so it wins');
+  assert.ok(print.includes('.cm-clip, .cm-ell { display:block; overflow:visible; white-space:normal; }'), 'no line limit on paper');
+  // the page sets the mark where it sets the other two, from the pure rule
+  const main = inlineScripts(html)[0];
+  assert.ok(main.includes("if (wide && CMU.colPrintOver(onPaper)) tbl.setAttribute('data-pover', '1'); else tbl.removeAttribute('data-pover');"));
 });
 
 test('the page code: every emitted script parses with and without the To-do tab and on the Summary page; the new code has no backtick, dollar-brace or backslash; the page without the To-do tab still has not a word of it; the look is in the page\'s own style', async () => {

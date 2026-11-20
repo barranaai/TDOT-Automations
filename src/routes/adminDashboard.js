@@ -333,6 +333,8 @@ const ALL_CASES_BODY_HTML = `
       <div id="cs-chips" class="q-chips cs-chips" style="display:none" aria-live="polite"></div>
       <div class="tbl-wrap">
       <table class="data-table" id="all-cases-table">
+        <!-- Paper only, and only when the table has more columns than one sheet can hold (data-pover, set with the columns). -->
+        <caption class="cm-pover">Too many columns for one sheet: the last ones may be left off. Switch some off with the Columns button, then print again.</caption>
         <thead>
           <tr id="cs-headrow"><th>Case Ref</th><th>Client</th><th>Type</th><th>Stage</th><th>Phase</th><th>Deadline</th><th>Promised</th><th>Health</th><th>SLA Risk</th><th>Support Officer</th><th>Manager</th><th>Readiness</th><th>Days</th><th>Status</th><th></th></tr>
         </thead>
@@ -543,6 +545,8 @@ const CM_CSS = `
     .cm-olink { display:inline-block; color:var(--st-blue-fg); font-weight:700; text-decoration:underline; padding:3px 4px; margin:-3px -4px; border-radius:5px; }
     .cm-olink:hover { background:var(--st-blue-bg); }
     .cm-olink:focus-visible { outline:2px solid var(--navy); outline-offset:1px; }
+    /* the "too many columns for one sheet" line is for paper only (the print rules show it) */
+    .cm-pover { display:none; }
     @media (max-width: 640px) {   /* a phone: the two pinned columns are narrower, so more of the rest shows beside them */
       #all-cases-table.cm-wide #cs-headrow th:nth-child(1), #all-cases-table.cm-wide td.cm-pin1 { width:100px; min-width:100px; max-width:100px; padding-left:10px; padding-right:6px; }
       #all-cases-table.cm-wide #cs-headrow th:nth-child(2), #all-cases-table.cm-wide td.cm-pin2 { left:100px; width:112px; min-width:112px; max-width:112px; padding-left:8px; padding-right:8px; }
@@ -591,7 +595,10 @@ const CM_CSS = `
       #all-cases-table.cm-wide .cm-clip { overflow-wrap:break-word; }
       #all-cases-table.cm-wide td.cm-c-email .cm-clip { overflow-wrap:anywhere; }
       #all-cases-table.cm-wide td.cm-c-email { min-width:26mm !important; }
-      /* a chosen set of columns (the Columns button) prints whole, however many there are. The cells that come from the All tab lose
+      /* the long reason (an optional board column) prints whole — paper has no hover — so it keeps a width of its own too: without it
+         the column is two words wide and one long reason makes its row some thirty lines tall */
+      #all-cases-table.cm-wide td.cm-c-mclip { min-width:30mm !important; }
+      /* a chosen set of columns (the Columns button) prints whole up to about thirty (past that: .cm-pover, below). The cells that come from the All tab lose
          what keeps them wide: their own letter size, their one-line rule, the readiness bar's track (the percentage stays) … */
       #all-cases-table.cm-wide td { font-size:7pt !important; white-space:normal !important; }
       #all-cases-table.cm-wide .readiness-bar { display:block; }
@@ -607,6 +614,9 @@ const CM_CSS = `
       #all-cases-table.cm-wide[data-pfit="2"] td, #all-cases-table.cm-wide[data-pfit="2"] tr.cm-grp td { font-size:5.5pt !important; }
       #all-cases-table.cm-wide[data-pfit="2"] th { font-size:5pt; }
       #all-cases-table.cm-wide[data-pfit="2"] td.cm-c-email { min-width:20mm !important; }
+      /* … and there is no third step: past thirty columns the letters would be too small to read and the last columns can run off the
+         sheet (data-pover, set with the columns). Paper then says so in one line above the table, instead of leaving them off silently. */
+      #all-cases-table.cm-wide[data-pover] .cm-pover { display:table-caption; caption-side:top; text-align:left; font-size:11pt; font-weight:700; color:#000; padding:0 0 4px; }
       /* the header row repeated on pages 2+ prints its column names (Chrome leaves a button out of a repeated header; as plain text it prints) */
       #all-cases-table th .th-sortbtn { display:contents; }
       .cm-none-t { position:static !important; }
@@ -2267,6 +2277,8 @@ function renderViewTable(v, rows, st, mondayOrder, total) {
     var onPaper = span - (isAll ? 1 : 0), fit = wide ? CMU.colPrintFit(onPaper) : 0;
     if (wide) tbl.setAttribute('data-ncols', String(onPaper)); else tbl.removeAttribute('data-ncols');
     if (fit) tbl.setAttribute('data-pfit', String(fit)); else tbl.removeAttribute('data-pfit');
+    // … and with more columns than one sheet can hold, the table says so: paper gets one line above it (the print rules), nothing changes on screen
+    if (wide && CMU.colPrintOver(onPaper)) tbl.setAttribute('data-pover', '1'); else tbl.removeAttribute('data-pover');
   }
   if (typeof CMCOLS !== 'undefined' && CMCOLS) CMCOLS.sync(isAll ? '' : v.key);   // the Columns button says how far this tab is from its default
   // a redraw must not take the focus off a heading someone is on (open / close with the keyboard, new data)

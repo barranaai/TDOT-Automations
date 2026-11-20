@@ -375,7 +375,10 @@ function casesListOpts(ctx) {
      (a column with more: … is what the page offers there, in this order, on every tab). The same word says how the page shows
      the value: date | num | status | names | text | clip (long text, cut to two lines) | link. Read-only, like every column here. */
   var NONE = [], LATE = ['Latest first', 'Earliest first'], MOST = ['Most first', 'Fewest first'], LINK = ['With a link first', 'Without a link first'];
-  var SYS = ' Set by the system from the stage timings. Not the client’s deadline (see Actual deadline).';
+  /* The three system dates are never the client's deadline. The header cell's tooltip says so, but a pointer on the column name
+     shows the sort button's own tooltip instead, and a phone or the keyboard shows none — so the same words are also the column's
+     note: the header gets the funnel, and its panel has the sort both ways and the words (like the Consultations "Client" column). */
+  var SYS = ' Set by the system from the stage timings. Not the client’s deadline (see Actual deadline).', SYS_NOTE = SYS.slice(1);
   var opts = {
     key: 'tdot_list_cases',
     ids: { head: 'cs-headrow', chips: 'cs-chips', count: 'table-count', search: 'search-box', pop: 'cs-pop' },
@@ -432,9 +435,9 @@ function casesListOpts(ctx) {
       { id: 'docPct', label: 'Documents uploaded %', title: 'Documents Uploaded %', sort: 'docPct', sortText: PCT, sortDirs: DESC, tabs: TD },
       // ── more from the Monday board: optional, on no tab until a person switches one on (the Columns button) ──
       { id: 'stageStart', label: 'Stage start date', title: 'Stage Start Date: the day the case entered its stage', sort: 'stageStart', sortText: LATE, sortDirs: DESC, tabs: NONE, more: 'date' },
-      { id: 'hardDeadlineSys', label: 'Hard deadline (system)', title: 'Hard Deadline.' + SYS, sort: 'hardDeadlineSys', sortText: SOON, sortDirs: ASC, tabs: NONE, more: 'date' },
-      { id: 'softDeadlineSys', label: 'Soft deadline (system)', title: 'Soft Deadline.' + SYS, sort: 'softDeadlineSys', sortText: SOON, sortDirs: ASC, tabs: NONE, more: 'date' },
-      { id: 'prepDeadlineSys', label: 'Submission prep deadline (system)', title: 'Submission Prep Deadline.' + SYS, sort: 'prepDeadlineSys', sortText: SOON, sortDirs: ASC, tabs: NONE, more: 'date' },
+      { id: 'hardDeadlineSys', label: 'Hard deadline (system)', title: 'Hard Deadline.' + SYS, note: SYS_NOTE, sort: 'hardDeadlineSys', sortText: SOON, sortDirs: ASC, tabs: NONE, more: 'date' },
+      { id: 'softDeadlineSys', label: 'Soft deadline (system)', title: 'Soft Deadline.' + SYS, note: SYS_NOTE, sort: 'softDeadlineSys', sortText: SOON, sortDirs: ASC, tabs: NONE, more: 'date' },
+      { id: 'prepDeadlineSys', label: 'Submission prep deadline (system)', title: 'Submission Prep Deadline.' + SYS, note: SYS_NOTE, sort: 'prepDeadlineSys', sortText: SOON, sortDirs: ASC, tabs: NONE, more: 'date' },
       { id: 'reminderCount', label: 'Reminder count', title: 'Reminder Count: how many reminders the board has counted for this case', sort: 'reminderCount', sortText: MOST, sortDirs: DESC, tabs: NONE, more: 'num' },
       { id: 'paymentConfirmed', label: 'Payment confirmation date', title: 'Payment Confirmation Date', sort: 'paymentConfirmed', sortText: LATE, sortDirs: DESC, tabs: NONE, more: 'date' },
       { id: 'retainerSigned', label: 'Retainer signed date', title: 'Retainer Signed Date', sort: 'retainerSigned', sortText: LATE, sortDirs: DESC, tabs: NONE, more: 'date' },

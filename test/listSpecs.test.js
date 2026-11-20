@@ -660,8 +660,11 @@ test('Consultations: Mode, Agreement, Pre-consult, Paid, Outcome and Now sort in
   const ui = require('../src/routes/listFilters').listTableUi.toString();
   assert.ok(ui.includes('function hasPanel(c) { return hasFilter(c) || !!(c.sort && c.note); }'));
   assert.ok(ui.includes("(hasFilter(c) ? '<button type=\"button\" class=\"qp-link\" data-act=\"clear\">Clear</button>' : '<span></span>')"));
-  const others = [require('../src/routes/leadsTableFilters').leadsTableOpts(), S.retainerListOpts({ outcomes: OUTCOME_LABELS }), S.casesListOpts({})];
-  for (const op of others) for (const c of op.cols) if (c.note) assert.ok((c.flags && c.flags.length) || (c.facets && c.facets.length) || c.date, 'a note-only column exists on Consultations only');
+  const hasFilter = (c) => !!((c.flags && c.flags.length) || (c.facets && c.facets.length) || c.date);
+  const others = [require('../src/routes/leadsTableFilters').leadsTableOpts(), S.retainerListOpts({ outcomes: OUTCOME_LABELS })];
+  for (const op of others) for (const c of op.cols) if (c.note) assert.ok(hasFilter(c), 'a note-only column exists on Consultations and Client Master only');
+  // Client Master (2026-11-20): the three optional system dates are note-only too (the note says they are not the client's deadline) — and no other column there
+  assert.deepEqual(S.casesListOpts({}).cols.filter((c) => c.note && !hasFilter(c)).map((c) => c.id), ['hardDeadlineSys', 'softDeadlineSys', 'prepDeadlineSys']);
 });
 
 test('Consultations: the Time filter — Morning before 12:00, Afternoon 12:00 to before 17:00, Evening from 17:00, No time; always the four, in that order', () => {

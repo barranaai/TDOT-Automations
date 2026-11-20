@@ -321,7 +321,7 @@ function clientMasterUi(W) {
      offers both. What is kept is the DIFFERENCE from the default, per tab ({ hidden: [ids], added: [ids] }),
      so a column added to a default later shows up by itself and an id that is gone is simply ignored.
      tabCols: { '': [the All tab's column ids], viewKey: [ids], … } — the page's CM_TABCOLS.
-     More from the Monday board (Faran 2026-11-20): columns that are on NO tab by default (the page's CM_MORECOLS). Every
+     More from the Monday board (Faran 2026-11-20): columns that are on NO tab by default (the page's CM_MORE, handed over as moreCols). Every
      tab offers them, in a group of their own after the others; one that is switched on is kept in the same added list
      and drawn after the tab's other columns. With none given, everything here is as it was. */
   var COL_LOCKED = ['caseRef', 'clientName'];   // always shown (and pinned in the wide table)
@@ -421,11 +421,21 @@ function clientMasterUi(W) {
     return Math.round(1260 * Math.max(1, Math.floor(k)) / 15) + 'px';
   }
   /** How small the wide table prints, by the number of columns that go on paper: 0 = up to twenty (as it always printed),
-      1 = 21 to 23, 2 = 24 and more. The print rules step the letters and the padding down by this, so every chosen column is on the sheet. */
+      1 = 21 to 23, 2 = 24 and more. The print rules step the letters and the padding down by this, so the chosen columns fit the sheet
+      up to about thirty. There is no third step: past that the letters would be too small to read (see colPrintOver). */
   function colPrintFit(n) {
     var k = Number(n);
     if (!isFinite(k) || k <= 20) return 0;
     return k <= 23 ? 1 : 2;
+  }
+  /** Too many columns for one sheet (2026-11-20, once the optional board columns could take a tab past thirty): with more than
+      COL_PRINT_MAX columns on paper the smallest step no longer holds them all, and the last ones can be left off the sheet.
+      The page then prints one line above the table that says so. Measured in a real browser's print: 33 columns still fit,
+      34 do not; a long reason column keeps a width of its own on paper, which costs about one column — so the line starts past 30. */
+  var COL_PRINT_MAX = 30;
+  function colPrintOver(n) {
+    var k = Number(n);
+    return isFinite(k) && k > COL_PRINT_MAX;
   }
 
 
@@ -434,7 +444,7 @@ function clientMasterUi(W) {
     ALL_VIEW: ALL_VIEW, allGroupOrder: allGroupOrder, groupId: groupId, monthOf: monthOf, newestMonthId: newestMonthId, defaultOpenIds: defaultOpenIds, openMap: openMap, setOpen: setOpen,
     normalizeKept: normalizeKept, filterSig: filterSig, groupLabel: groupLabel,
     COL_LOCKED: COL_LOCKED, COL_FIXED: COL_FIXED, COL_SAME: COL_SAME, colSame: colSame, colTabKey: colTabKey, colPlan: colPlan, colPref: colPref, colIds: colIds,
-    colToggle: colToggle, colSummary: colSummary, colStore: colStore, colStoreOut: colStoreOut, colWide: colWide, colMinWidth: colMinWidth, colPrintFit: colPrintFit };
+    colToggle: colToggle, colSummary: colSummary, colStore: colStore, colStoreOut: colStoreOut, colWide: colWide, colMinWidth: colMinWidth, colPrintFit: colPrintFit, COL_PRINT_MAX: COL_PRINT_MAX, colPrintOver: colPrintOver };
 }
 
 module.exports = Object.assign({ clientMasterUi: clientMasterUi }, clientMasterUi(require('./clientMasterWindows')));
