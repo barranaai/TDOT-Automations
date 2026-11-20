@@ -16,7 +16,9 @@
  *
  * "Staff chose not to send" (Faran 2026-11-20) is one of:
  *   - a direct consultation whose pop-up did not ask for the package (the box
- *     was left unticked — existing clients too);
+ *     was left unticked — existing clients too). One corner: the box was ticked
+ *     (the fee record says "send") and the booking save failed, so the tick itself
+ *     was lost — staff did ask, so that row reads "not sent";
  *   - a fee record that says "No" (package 'skip') on a lead with NO online
  *     payment. A later payment through the booking link makes the app owe the
  *     package again (consultationService.recordedPackageWanted), so that row
@@ -36,14 +38,14 @@ const s = (v) => { try { return String(v == null ? '' : v).trim(); } catch (_) {
 
 /** Did staff choose not to send the agreement and form? (see the header) */
 function staffChoseNotToSend(lead) {
+  let rec = null;
+  try { rec = require('../services/consultPaymentService').parseConsultPayment(lead); } catch (_) { /* unreadable: no record */ }
   try {
     const dc = require('./directConsult');
-    if (dc.isDirectConsult(lead) && !dc.packageAsked(lead)) return true;
+    // A "send" on a direct row's fee record can only be its own pop-up's tick: not a choice to skip.
+    if (dc.isDirectConsult(lead) && !dc.packageAsked(lead) && !(rec && rec.package === 'send')) return true;
   } catch (_) { /* unreadable: not a choice we can see */ }
-  try {
-    const rec = require('../services/consultPaymentService').parseConsultPayment(lead);
-    if (rec && rec.package === 'skip' && !s(lead && lead.squareConsultTxnId)) return true;
-  } catch (_) { /* unreadable: no record */ }
+  if (rec && rec.package === 'skip' && !s(lead && lead.squareConsultTxnId)) return true;
   return false;
 }
 

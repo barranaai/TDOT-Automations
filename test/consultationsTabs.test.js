@@ -680,7 +680,10 @@ test('page: four tabs over one table — each consultation under exactly one tab
   for (const s of ["bindRowClicks(tb, (tab==='done'||tab==='all')?'?from=consultations':'')", "rows=latestFirst(rows);", "if(st&&st.sort&&st.sort.key&&window.ConsultTable) rows=ConsultTable.core.sortRows(rows,st.sort);", 'id="cq-tabs"', 'id="cq-month"', 'function renderMonthBar(', "MONTH_KEY={ done:'tdot_list_consult_month', all:'tdot_list_consult_month_all' }", "ALLROWS=(d.consultations||[]).concat(d.completed||[]);", '<th>Now</th>',
     // 13 columns since the Ready column (2026-11-20): Now is the 12th, the delete button the 13th; Ready (the 7th) is hidden on the two past tabs
     '#cq-table:not(.tab-done):not(.tab-all) th:nth-child(12), #cq-table:not(.tab-done):not(.tab-all) td.c-now { display:none; }', '#cq-table.tab-done th:nth-child(13), #cq-table.tab-done td.c-del { display:none; }',
-    '#cq-table.tab-needs th:nth-child(7), #cq-table.tab-needs td.c-ready, #cq-table.tab-done th:nth-child(7), #cq-table.tab-done td.c-ready { display:none; }']) assert.ok(q.includes(s), s);
+    '#cq-table.tab-needs th:nth-child(7), #cq-table.tab-needs td.c-ready, #cq-table.tab-done th:nth-child(7), #cq-table.tab-done td.c-ready { display:none; }',
+    // a little less side space, so the 13-column All tab still fits a 1280px-wide window (measured in a real browser, 2026-11-20)
+    '#cq-table th, #cq-table td { padding-left:10px; padding-right:10px; }']) assert.ok(q.includes(s), s);
+  assert.ok(!require('../src/routes/adminConsultation').buildRetainersHTML().includes('#cq-table'), 'the Retainers page has none of the Consultations table rules');
   for (const gone of ['th:nth-child(11)', 'colspan="12"']) assert.ok(!q.includes(gone), 'gone: ' + gone);
   // the positions in the CSS are the positions of the columns the engine draws, and of the header the page starts with
   const colIds = S.consultListOpts({}).cols.map((c) => c.id);
@@ -775,7 +778,9 @@ test('page row: 13 cells (Ready is the seventh); the delete button carries the l
   assert.equal(cell({ ready: 'form', agreementSent: '2026-11-01', agreementSigned: '2026-11-02' }, 'notready'), pill('amber', 'The agreement is signed (2026-11-02). The pre-consultation form is not filled in yet.', 'Missing form'));
   assert.equal(cell({ ready: 'both', agreementSent: '2026-11-01' }, 'notready'), pill('red', 'Sent 2026-11-01. The agreement is not signed and the form is not filled in.', 'Missing both'));
   assert.equal(cell({ ready: 'notsent' }, 'notready'), pill('amber', 'The consultation agreement has not been sent to this client. Open the record — it says why.', 'Not sent yet'));
-  assert.equal(cell({ ready: 'notasked' }, 'notasked'), pill('grey', 'The agreement and form were not sent — staff chose not to, or it is a direct consultation.', 'Not asked'));
+  assert.equal(cell({ ready: 'notasked' }, 'notasked'), pill('grey', 'The consultation agreement was not sent — staff chose not to, or it is a direct consultation added without it.', 'Not asked'));
+  // neither "never sent" hover says the form was not sent: the form reminder and "Re-send links" email the form link by themselves
+  for (const w of ['notsent', 'notasked']) assert.ok(!/form/i.test(cell({ ready: w, preConsultSubmitted: true }, w === 'notsent' ? 'notready' : 'notasked')), 'no word about the form — ' + w);
   const dash = '<td class="c-ready"><span class="pill grey">—</span></td>';
   for (const w of ['ready', 'agreement', 'form', 'both', 'notsent', 'notasked']) assert.equal(cell({ ready: w, agreementSent: '2026-11-01' }, 'over'), dash, 'a past consultation: a dash whatever the word — ' + w);
   for (const w of [undefined, null, '', 'constructor', '__proto__', 'READY', 7, {}]) assert.equal(cell({ ready: w }, '__none__'), dash, 'a word the page does not know: a dash, no error — ' + String(w));

@@ -123,6 +123,8 @@ const CONSULT_PAGE_CSS = `
   #cq-table.tab-done th:nth-child(13), #cq-table.tab-done td.c-del { display:none; }
   /* The Ready column (2026-11-20) is for consultations still to happen: not on Needs outcome and Completed. */
   #cq-table.tab-needs th:nth-child(7), #cq-table.tab-needs td.c-ready, #cq-table.tab-done th:nth-child(7), #cq-table.tab-done td.c-ready { display:none; }
+  /* 13 columns: a little less side space in each cell, so the All tab still fits a 1280px-wide window. */
+  #cq-table th, #cq-table td { padding-left:10px; padding-right:10px; }
   /* The Completed tab's month chooser */
   .cq-month { align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 10px; }
   .cq-month .cm-l { font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:#64748b; margin-right:2px; }
@@ -277,7 +279,8 @@ function directPill(c){
 /* The "Ready" cell (2026-11-20): has the client signed the consultation agreement and filled in the pre-consultation form?
    c.ready is the server's one word (utils/consultReady.js); v is the row's Ready FILTER value from the list engine, so the
    cell and the filter can never disagree: 'over' (the consultation day has passed) is a dash. A phone has no hover, so the
-   pill's own words must say it all; the title only adds the dates. Display only — nothing is blocked or emailed. */
+   pill's own words must say it all; the title only adds the dates. The two "never sent" hovers speak of the agreement
+   only: the form link can reach a client by itself (the form reminder, "Re-send links"). Display only — nothing is blocked or emailed. */
 function readyPill(c,v){
   var P={ ready:['green','Ready'], agreement:['amber','Missing agreement'], form:['amber','Missing form'], both:['red','Missing both'], notsent:['amber','Not sent yet'], notasked:['grey','Not asked'] };
   var w=String(c.ready==null?'':c.ready);
@@ -288,7 +291,7 @@ function readyPill(c,v){
     :w==='form'?'The agreement is signed ('+signed+'). The pre-consultation form is not filled in yet.'
     :w==='both'?'Sent '+sent+'. The agreement is not signed and the form is not filled in.'
     :w==='notsent'?'The consultation agreement has not been sent to this client. Open the record — it says why.'
-    :'The agreement and form were not sent — staff chose not to, or it is a direct consultation.';
+    :'The consultation agreement was not sent — staff chose not to, or it is a direct consultation added without it.';
   return '<span class="pill '+P[w][0]+'" title="'+escHtml(tip)+'">'+P[w][1]+'</span>';
 }
 function rowHtml(c,ready){

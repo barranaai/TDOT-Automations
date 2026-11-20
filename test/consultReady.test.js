@@ -48,6 +48,15 @@ test('consultReady: never sent — "notasked" only where staff chose not to send
   assert.equal(consultReady({ ...direct('New', { package: true }), consultPayment: fee({ kind: 'square', package: 'send' }), consultAgreementSent: '2026-11-19' }), 'both', 'direct with the tick, sent');
   assert.equal(consultReady({ ...direct('New'), consultPayment: fee({ kind: 'square', package: 'skip' }) }), 'notasked', 'direct with a fee and no tick');
   assert.equal(consultReady({ directConsult: 'New' }), 'notasked', 'only the column marker (no detail readable): not asked');
+  // The box was ticked, the fee record says "send", and the booking save failed after it: the tick itself never reached
+  // the row (the marker is written with the booking). Staff did ask for the package, so the row is "not sent", not "not asked".
+  assert.equal(consultReady({ directConsult: 'New', consultOption: '', consultPayment: fee({ kind: 'square', package: 'send' }) }), 'notsent', 'direct, the tick lost with the failed booking save');
+  assert.equal(consultReady({ ...direct('New'), consultPayment: fee({ package: 'send' }) }), 'notsent', 'the same with a marker that carries no tick');
+  assert.equal(consultReady({ directConsult: 'New', consultOption: '', consultPayment: fee({ package: 'send' }), consultAgreementSent: '2026-11-19' }), 'both', 'and once it is sent, the usual words');
+  assert.equal(consultReady({ directConsult: 'New', consultOption: '', consultPayment: fee({ package: 'skip' }) }), 'notasked', 'the same row with a "No" record stays not asked');
+  assert.equal(consultReady({ directConsult: 'New', consultOption: '', consultPayment: fee() }), 'notasked', 'and with a record that carries no choice');
+  assert.equal(consultReady({ directConsult: 'New', consultOption: '' }), 'notasked', 'and with no record at all');
+  assert.equal(consultReady({ directConsult: 'New', consultOption: '', consultPayment: '{"kind":"cash","package":"SEND"}' }), 'notasked', 'a choice that cannot be read is not a tick');
   assert.equal(consultReady({ consultOption: JSON.stringify({ directConsult: { kind: 'Follow-up', inSquare: false } }) }), 'notasked', 'only the consultOption marker');
   // signed or sent always wins over "not asked"
   assert.equal(consultReady({ ...direct('Existing client'), consultAgreementSigned: '2026-11-11', preConsultSubmitted: 'Yes' }), 'ready');
