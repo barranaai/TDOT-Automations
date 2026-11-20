@@ -302,6 +302,9 @@ async function getConsultationDetail(leadId, { actor } = {}) {
         reference: ps.reference, note: ps.note, at: ps.at, feeCents: ps.feeCents,
         alsoRecorded: ps.paid === 'app' && ps.record ? cp.describe(ps.record) : '',
         onRecord: recordPackageView(lead, ps),
+        // Money first (switch CONSULT_MONEY_FIRST): the record box asks for "The invoice has been paid". Beside
+        // onRecord, not inside it — onRecord is empty while the package switch is off.
+        moneyFirst: cp.moneyFirstEnabled(),
       };
     })(),
 
@@ -1044,8 +1047,11 @@ function validateAction(action, value) {
       return { ok: true, normalized: n };
     }
     // Gauri point 4 part 2: a consultation fee settled outside the booking link (or waived).
-    case 'recordConsultPayment':
-      return require('./consultPaymentService').validateRecord(value);
+    case 'recordConsultPayment': {
+      // Money first (switch CONSULT_MONEY_FIRST): handed in, so the validator stays pure. Off = exactly as before.
+      const cp = require('./consultPaymentService');
+      return cp.validateRecord(value, { moneyFirst: cp.moneyFirstEnabled() });
+    }
     case 'webinarEmail': {
       // The Webinar email's body (2026-11-12): text, or empty = the standard text.
       // …or { text, again: true } when the page showed "already sent" and the person chose to send it again.
@@ -3061,6 +3067,8 @@ async function findClientMatches({ email, phone, withLeads = false, strict = fal
         outcome: String(l.outcome || '').trim(),
         bookingStatus: String(l.bookingStatus || '').trim(),
         bookedSlot: String(l.bookedSlot || '').trim(),
+        // the day a consultation was held ('' = none): the pop-up uses the server's own follow-up rule (money first)
+        consultationHeld: String(l.consultationHeld || '').trim(),
         consultant: String(l.assignedConsultant || '').trim(),
         directConsult: isDirectConsult(l) ? (require('../utils/directConsult').kindOf(l) || '?') : '',
       });

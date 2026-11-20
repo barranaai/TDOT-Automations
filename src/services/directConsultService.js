@@ -22,7 +22,8 @@
  *
  * Order of the checks (plan §4): validate (pure, the whole entry) → re-submit guard
  * (15-minute memory + the board) → Not Wanted → match (live booking default,
- * follow-up, existing case) → "Use this lead" guard → clash. Then the writes: create
+ * follow-up, existing case; and, with the CONSULT_MONEY_FIRST switch on, who may be
+ * saved "Not paid yet") → "Use this lead" guard → clash. Then the writes: create
  * (or the reused lead), the follow-up update, the fee record, the booking (no
  * meeting), the package if ticked, the notes. A later step that fails undoes
  * nothing: the reply lists what is left.
@@ -49,6 +50,9 @@ const CHOICES = ['new', 'existing'];
 const PAY_KINDS = ['square', 'cash', 'e-transfer', 'waived', 'none'];
 const PAY_LABELS = { square: 'Paid in Square', cash: 'Cash', 'e-transfer': 'E-transfer', waived: 'Free', none: 'Not paid yet' };
 const EXISTING_SOURCE = 'Existing Client';
+// Money first (Gauri B4, Faran 2026-11-20; switch CONSULT_MONEY_FIRST — off = these are never used).
+const PAY_FIRST_ERROR = 'A new client pays first — nothing was saved. Choose how the fee was paid, or “Free” with the reason. “Not paid yet” is only for an existing client (about their current file) or a follow-up.';
+const NO_FILE_ERROR = 'The app finds no file for this email or phone, so “Not paid yet” cannot be used — nothing was saved. Type the email or phone that is on the client’s case, or choose how the fee was paid (or “Free” with the reason).';
 // A case at one of these stages is finished: the person is a PREVIOUS client. (A submitted
 // application still waits for a decision — that is an active one.)
 const CLOSED_STAGES = ['Approved', 'Refused', 'Closed', 'Withdrawn', 'Cancelled', 'Archived', 'Task Done'];
@@ -298,6 +302,8 @@ async function getOptions({ actor = null } = {}) {
     sources: require('../../config/leadSources').LEAD_SOURCES,
     caseTypes: opts.caseTypes || [],
     backDays: BACK_DAYS,
+    // Money first (switch CONSULT_MONEY_FIRST): the pop-up greys "Not paid yet" where the save would be refused.
+    moneyFirst: require('./consultPaymentService').moneyFirstEnabled(),
   };
 }
 
@@ -399,6 +405,17 @@ async function createLocked(n, actor) {
       .sort((x, y) => s(y.consultationHeld).localeCompare(s(x.consultationHeld)));
     if (held.length && !hasFile) { kind = 'Follow-up'; relationship = R[0]; followUpOf = String(held[0].id); }
     else { kind = 'New'; relationship = hasFile ? caseLabel : R[0]; }
+  }
+
+  // 4b) Money first (switch CONSULT_MONEY_FIRST; off = this step does not exist). Part of the match step: before
+  // "Use this lead", the clash check and every write — so "nothing was saved" is true.
+  // "Not paid yet" for a time still AHEAD is only for a follow-up, or for "Existing client: about their current
+  // file" when the app itself finds that person's file by email or phone (the button alone is nobody's proof).
+  // A new matter pays first, even for someone who has a file. A consultation that has already happened and is
+  // entered late may still be saved unpaid (it then shows the red "Not paid"). "Free" with a reason always works.
+  if (!n.payment && !b.past && require('./consultPaymentService').moneyFirstEnabled()) {
+    if (kind === DC.EXISTING) { if (!hasFile) throw badRequest(NO_FILE_ERROR); }
+    else if (kind !== 'Follow-up') throw badRequest(PAY_FIRST_ERROR);
   }
 
   // 5) "Use this lead" (a new matter): its own guard.
@@ -683,6 +700,6 @@ function _resetForTests() { _recent.length = 0; _locks.clear(); }
 module.exports = {
   gate, enabledFor, assertUsable, consultantList, validateBooking, validateDirectConsult,
   getOptions, createDirectConsult, changeTime, directView, reuseRefusal,
-  PAY_KINDS, PAY_LABELS, BACK_DAYS, CLOSED_STAGES,
+  PAY_KINDS, PAY_LABELS, BACK_DAYS, CLOSED_STAGES, PAY_FIRST_ERROR, NO_FILE_ERROR,
   _resetForTests,
 };

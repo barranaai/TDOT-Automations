@@ -312,72 +312,8 @@ test('the "Consultation fee" card: a waived record shows "Reason" (or "Reason �
 
 /* ── the record box ("Record the consultation payment"), run from the emitted page script against a small fake page ── */
 
-/**
- * A tiny stand-in for the pop-up's box: setting innerHTML reads the ids, the typed values and the chosen option out of
- * the markup the page built, so the test sees what staff would see when the box opens.
- */
-function recordBox({ detail, viewer = { signedIn: true, name: 'Staff One' } } = {}) {
-  const js = scriptsOf(C.buildDetailHTML('555')).pop();
-  const unesc = (s) => String(s).replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-  const els = {};
-  const mk = (id) => ({ id, value: '', textContent: '', innerHTML: '', style: {}, checked: false, disabled: false, focus() { box.focused = id; } });
-  const box = {
-    focused: '', _html: '',
-    set innerHTML(v) {
-      this._html = v;
-      for (const k of Object.keys(els)) delete els[k];
-      for (const m of v.matchAll(/<(input|select|label|div|span|button|textarea)\b([^>]*)>/g)) {
-        const id = (m[2].match(/\bid="([^"]+)"/) || [])[1];
-        if (!id) continue;
-        const e = (els['#' + id] = mk(id));
-        const val = m[2].match(/\bvalue="([^"]*)"/);
-        if (m[1] === 'input' && val) e.value = unesc(val[1]);
-        if (m[1] === 'select') {
-          const inner = v.slice(m.index + m[0].length, v.indexOf('</select>', m.index));
-          const opts = [...inner.matchAll(/<option value="([^"]*)"( selected)?>([^<]*)/g)];
-          e.options = opts.map((o) => ({ value: unesc(o[1]), text: unesc(o[3]) }));
-          const sel = opts.find((o) => o[2]) || opts[0];
-          e.value = sel ? unesc(sel[1]) : '';
-        }
-        if (m[1] === 'label') {
-          e.innerHTML = v.slice(m.index + m[0].length, v.indexOf('</label>', m.index));
-        }
-      }
-      els['[data-x]'] = mk('x'); els['[data-go]'] = mk('go'); els['.paym-err'] = mk('err');
-      const go = v.match(/data-go>([^<]*)</); els['[data-go]'].textContent = go ? go[1] : '';
-    },
-    get innerHTML() { return this._html; },
-    querySelector(sel) { return els[sel] || null; },
-  };
-  const sent = [];
-  const dlg = { box, closed: false, close() { dlg.closed = true; } };
-  const ctx = {
-    escHtml, Number, String, isNaN, JSON, Intl, Date, Math,
-    setTimeout: () => 0,
-    tdotPayViewer: (cb) => cb(viewer),
-    payOverlay: () => dlg,
-    payTitle: (t) => '<h3 id="paym-title">' + escHtml(t) + '</h3>',
-    payEsc: escHtml,
-    payParseCents: (v) => { const s = String(v == null ? '' : v).replace(/[^0-9.]/g, ''); if (!s) return NaN; const n = Number(s); return isFinite(n) ? Math.round(n * 100) : NaN; },
-    payTypedName: () => '',
-    paySaveName() {},
-    doAction: (action, value, confirmMsg, by) => { sent.push({ action, value: JSON.parse(value), by }); },
-    LAST_DETAIL: detail,
-  };
-  vm.createContext(ctx);
-  vm.runInContext([js.match(/var CP_LABELS=\{[^}]*\};/)[0], js.match(/var CP_WHY=\{[^}]*\};/)[0]].join('\n') + '\n'
-    + ['cpMoney', 'cpTodayStr', 'cpDirectWhy', 'cpRecOn', 'cpLooksTaxed', 'cpPackageSection', 'cpPackageBind', 'openConsultPaymentModal'].map((n) => pickFn(js, n)).join('\n'), ctx);
-  const open = (clear = false) => { ctx.openConsultPaymentModal(detail, clear); return api; };
-  const q = (sel) => box.querySelector(sel);
-  const api = {
-    box, dlg, sent, q, open,
-    kind(v) { q('#cp-kind').value = v; q('#cp-kind').onchange(); },
-    label: (id) => q('#' + id).innerHTML.replace(/<[^>]+>/g, ''),
-    go() { q('[data-go]').onclick(); },
-    err: () => q('.paym-err').textContent,
-  };
-  return api;
-}
+// The box itself is the page's own emitted code, run against a small fake page (test/helpers/consultRecordBox.js).
+const { recordBox } = require('./helpers/consultRecordBox');
 const NEW_DETAIL = { name: 'Test Client', consultPayment: { paid: '', feeCents: 20000, onRecord: { enabled: false } } };
 
 test('record box: "Waived — no fee" turns the one note box into "Reason the fee is waived *"; any other kind reads "Note (optional)"; the box keeps its id', () => {

@@ -51,6 +51,7 @@ const DQ_CSS = `
   .dq .dq-seg label { display:inline-flex; align-items:center; gap:6px; border:1px solid #e2e8f0; border-radius:8px; padding:8px 11px; font-size:14px; cursor:pointer; background:#fff; margin:0; min-height:40px; box-sizing:border-box; }
   .dq .dq-seg label:has(input:checked) { border-color:var(--navy, #1a3558); background:#eef2f8; font-weight:600; }
   .dq .dq-seg input { margin:0; width:auto; flex:none; }
+  .dq .dq-seg label:has(input:disabled) { opacity:.5; cursor:not-allowed; }   /* a choice that is not offered (money first: "Not paid yet") */
   .dq .dq-choice { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px; }
   .dq .dq-choice label { display:flex; gap:8px; align-items:flex-start; border:1px solid #e2e8f0; border-radius:10px; padding:10px 11px; font-size:14px; line-height:1.35; cursor:pointer; margin:0; }
   .dq .dq-choice label:has(input:checked) { border-color:var(--navy, #1a3558); background:#eef2f8; }
@@ -101,6 +102,9 @@ function dqFormHtml() {
     '<div><label class="dq-l" for="dq-len">Length *</label><select id="dq-len"></select></div></div>',
     '<div class="dq-hint" id="dq-when-hint"></div>',
     '<div class="dq-l" id="dq-pay-l">Payment *</div><div class="dq-seg" role="radiogroup" aria-labelledby="dq-pay-l" id="dq-pay"></div>',
+    // Money first (switch CONSULT_MONEY_FIRST): why "Not paid yet" is greyed — in words, a greyed button shows no
+    // tooltip on a phone. Empty and hidden while the switch is off.
+    '<div class="dq-hint" id="dq-pay-hint" style="display:none" aria-live="polite"></div>',
     '<div id="dq-fee-w" style="display:none">',
     '<label class="dq-l" for="dq-fee">Fee before HST *</label><div class="dq-fees" id="dq-fees"></div>',
     '<input id="dq-fee" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 300.00">',
@@ -159,6 +163,9 @@ function dqCents(v){ var s=String(v==null?'':v).replace(/[^0-9.]/g,''); if(!s) r
 function dqNorm(n){ return String(n||'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/ +/g,' ').trim(); }
 /* "Free" for an existing client about their current file: the reason box opens with these words (Faran 2026-11-20); staff can keep or change them. */
 var DQ_REASON_EXISTING='Existing client — about their current file';
+/* Money first (the server's switch, told to this page as DQ_OPTS.moneyFirst): the line under "Payment" while "Not paid yet" is not offered. */
+var DQ_PAY_FIRST='A new client pays first. “Not paid yet” is only for an existing client (about their current file) or a follow-up.';
+var DQ_NO_FILE='The app finds no file for this email or phone, so “Not paid yet” is not offered.';
 
 /* The button: shown only when the server says this person may use it. */
 function dqInitButton(){
@@ -251,6 +258,37 @@ function openDirectConsult(){
     if(free && existing){ if(!st.reasonTouched && !String(el.value||'').trim()){ el.value=DQ_REASON_EXISTING; st.reasonAuto=true; } }
     else if(st.reasonAuto){ el.value=''; st.reasonAuto=false; }
   }
+  /* Money first (only when the server says the switch is on): "Not paid yet" stays in its place but is greyed and
+     unticked while the server would refuse it. It is offered for: a time that has already passed (entered late);
+     "Existing client: about their current file" when the look-up found a case; a new matter after an earlier held
+     consultation when the person has no file (a follow-up). The server is the judge — this only shows its rule. */
+  function dqHasFile(){ var m=st.match; return !!(m && ((m.cases&&m.cases.length) || (m.leads||[]).some(function(l){ return !!l.hasCase; }))); }
+  function dqFollowUp(){
+    var m=st.match, s=slot(); if(!m || !s) return false;
+    var day=s.slice(0,10), now=dqNowWall().slice(0,10), use=radio('dq-use')||'';
+    return (m.leads||[]).some(function(l){ var h=String(l.consultationHeld||''); return String(l.id)!==use && l.bookingStatus==='Booked' && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(h) && h<day && h<=now; });
+  }
+  function notPaidOffered(){
+    if(!o.moneyFirst) return true;
+    if(slot() && !future()) return true;
+    var choice=radio('dq-choice');
+    if(choice==='existing') return dqHasFile();
+    if(choice==='new') return dqFollowUp() && !dqHasFile();
+    return false;
+  }
+  function syncNotPaid(){
+    if(!o.moneyFirst) return;
+    var ok=notPaidOffered(), unticked=false;
+    Array.prototype.forEach.call(box.querySelectorAll('input[name="dq-pay"]'),function(r){
+      if(r.value!=='none') return;
+      r.disabled=!ok;
+      if(!ok && r.checked){ r.checked=false; unticked=true; }
+    });
+    var h=q('dq-pay-hint');
+    h.textContent=ok?'':((radio('dq-choice')==='existing' && !dqHasFile())?DQ_NO_FILE:DQ_PAY_FIRST);
+    h.style.display=ok?'none':'';
+    if(unticked){ syncFees(); syncPackage(); }
+  }
   function syncTotal(){
     var kind=radio('dq-pay'), t=q('dq-total');
     var paid=!!kind && kind!=='waived' && kind!=='none';
@@ -320,7 +358,7 @@ function openDirectConsult(){
     var any=m && ((m.leads&&m.leads.length)||(m.cases&&m.cases.length)||(m.clients&&m.clients.length));
     var bl=(m&&typeof tdotBlacklistHtml==='function')?tdotBlacklistHtml(m.blacklist,{leadLinks:true}):'';
     st.blHit=!!(m&&m.blacklist&&m.blacklist.hit);
-    if(!any && !bl){ el.innerHTML=''; return; }
+    if(!any && !bl){ el.innerHTML=''; syncNotPaid(); return; }
     var keepUse=radio('dq-use'), keepDiff=!!(q('dq-diff')&&q('dq-diff').checked), keepAck=!!(q('dq-bl-ack')&&q('dq-bl-ack').checked);
     var people={}, order=[];
     function person(name){ var k=dqNorm(name)||'?'; if(!people[k]){ people[k]={ name:name||'(no name)', lines:[] }; order.push(k); } return people[k]; }
@@ -349,6 +387,9 @@ function openDirectConsult(){
     }
     if(bl) h+=bl+(st.blHit?'<label class="dq-tick" style="color:#991b1b"><input type="checkbox" id="dq-bl-ack"'+(keepAck?' checked':'')+'><span>I have read the warning — add the consultation anyway</span></label>':'');
     el.innerHTML=h;
+    /* Money first: the lead picked in "Use this lead" is left out of the follow-up rule — check again when it changes. */
+    if(o.moneyFirst) Array.prototype.forEach.call(box.querySelectorAll('input[name="dq-use"]'),function(r){ r.onchange=syncNotPaid; });
+    syncNotPaid();
   }
 
   /* ── Wiring ── */

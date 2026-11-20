@@ -34,6 +34,14 @@ const MAX_NOTE = 200, MAX_REF = 120;
 // is on what a page SENDS (validateRecord) only: a stored record with no reason still reads as Waived.
 const MIN_REASON = 3;
 const WAIVE_REASON_ERROR = 'Write the reason the fee is waived (why the consultation is free) — nothing was saved. If you cannot see a box for the reason, reload the page first.';
+// Money first (Gauri B4, Faran 2026-11-20) — ONE switch, CONSULT_MONEY_FIRST (unset = off = nothing changes):
+//   - "＋ Direct consultation": "Not paid yet" for a time still ahead only for a follow-up, or an existing client
+//     (about their current file) whose file the app finds (directConsultService);
+//   - "Record payment": an invoice the team sent is recorded only when staff tick that it has been paid (below).
+// Both pages are told the setting (the pop-up through its options, the record box through the record's own data),
+// so the screen and the server agree. Nothing new is stored: the tick is checked when saving and is not kept.
+const INVOICE_TICK_ERROR = 'Tick “The invoice has been paid”. An invoice that is only sent is not recorded — record it when the money is in. Nothing was saved.';
+function moneyFirstEnabled() { return /^(1|true|on|yes)$/i.test(String(process.env.CONSULT_MONEY_FIRST || '').trim()); }
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Exactly one of the kinds — an own key, so 'constructor' / 'toString' / '__proto__' are not kinds (review 2026-10-15). */
@@ -111,8 +119,10 @@ function validateBooking(b, { nowWall = torontoNowWall(), allowPast = false } = 
  * The page's payload → what may be written. `{ kind: 'clear' }` removes a record.
  * The date defaults to today (Toronto); a future day, an impossible day or a day
  * before 2020 is refused. A paid kind needs an amount; "waived" never has one.
+ * moneyFirst: the CONSULT_MONEY_FIRST switch, HANDED IN by the caller (this stays a pure function): when on, an
+ * "invoice" record needs `invoicePaid: true` on what the page sends. The tick is not stored.
  */
-function validateRecord(value, { today = torontoToday(), nowWall } = {}) {
+function validateRecord(value, { today = torontoToday(), nowWall, moneyFirst = false } = {}) {
   let o = value;
   try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { return bad('Invalid payment payload.'); }
   if (!o || typeof o !== 'object') return bad('Invalid payment payload.');
@@ -139,6 +149,8 @@ function validateRecord(value, { today = torontoToday(), nowWall } = {}) {
   if (!isRealDay(on)) return bad('Enter the date received as YYYY-MM-DD.');
   if (on > today) return bad('The date received cannot be in the future.');
   if (on < '2020-01-01') return bad('The date received looks wrong (before 2020).');
+  // Money first: an invoice that is only SENT is not a payment — the record needs the tick. No other kind changes.
+  if (moneyFirst === true && kind === 'invoice' && o.invoicePaid !== true) return bad(INVOICE_TICK_ERROR);
   // The package choice and the booking (2026-10-16). Whether a choice is REQUIRED
   // depends on the lead and the switch — applyAction decides; here only the shape.
   const pkg = String(o.package == null ? '' : o.package).trim();
@@ -190,4 +202,4 @@ function paidState(lead) {
   };
 }
 
-module.exports = { KINDS, MAX_CENTS, MAX_NOTE, MAX_REF, MIN_REASON, WAIVE_REASON_ERROR, PACKAGE_CHOICES, MEETING_TYPES, parseConsultPayment, validateRecord, validateBooking, describe, paidState, isRealDay, torontoToday, torontoNowWall };
+module.exports = { KINDS, MAX_CENTS, MAX_NOTE, MAX_REF, MIN_REASON, WAIVE_REASON_ERROR, INVOICE_TICK_ERROR, moneyFirstEnabled, PACKAGE_CHOICES, MEETING_TYPES, parseConsultPayment, validateRecord, validateBooking, describe, paidState, isRealDay, torontoToday, torontoNowWall };

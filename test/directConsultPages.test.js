@@ -175,7 +175,7 @@ const OPTIONS = {
   hstPct: 13, staff: ['Melanie', 'Shafoli Kapur'], bookedBy: 'Melanie', signedIn: true, sources: ['Walk-in', 'Existing Client'], caseTypes: ['Study Permit'], backDays: 30,
 };
 
-function popupWorld({ matches = null, answer = { s: 200, j: { ok: true, message: 'Saved.', link: '/admin/consultation/9', left: [] } } } = {}) {
+function popupWorld({ matches = null, answer = { s: 200, j: { ok: true, message: 'Saved.', link: '/admin/consultation/9', left: [] } }, options = {} } = {}) {
   const els = {};
   const el = (id) => (els[id] = els[id] || fakeEl(id));
   const radios = {
@@ -216,7 +216,7 @@ function popupWorld({ matches = null, answer = { s: 200, j: { ok: true, message:
     },
   };
   vm.createContext(ctx);
-  vm.runInContext(DQ.DQ_JS + '\nDQ_OPTS=' + JSON.stringify(OPTIONS) + ';\nopenDirectConsult();', ctx);
+  vm.runInContext(DQ.DQ_JS + '\nDQ_OPTS=' + JSON.stringify({ ...OPTIONS, ...options }) + ';\nopenDirectConsult();', ctx);
   const pickRadio = (n, v) => { R[n].forEach((r) => { r.checked = r.value === v; }); const r = R[n].find((x) => x.value === v); if (r && r.onchange) r.onchange({}); };
   const type = (id, v, ev = 'input') => { el(id).value = v; el(id).fire(ev); };
   return { el, R, pickRadio, type, posts, dlg, ctx, settle: () => new Promise((r) => setTimeout(r, 20)) };
@@ -418,6 +418,160 @@ test('pop-up: the server refuses "Free" with no reason (a page left open from be
   assert.equal(w.ctx.reloaded, undefined, 'the list is not re-read: nothing was saved');
 });
 
+/* ── Money first (Gauri B4, Faran 2026-11-20): "Not paid yet" on the page — only when the server says the switch is on (options.moneyFirst) ── */
+
+const PAY_FIRST_LINE = 'A new client pays first. “Not paid yet” is only for an existing client (about their current file) or a follow-up.';
+const NO_FILE_LINE = 'The app finds no file for this email or phone, so “Not paid yet” is not offered.';
+const ON = { options: { moneyFirst: true } };
+const notPaid = (w) => w.R['dq-pay'].find((r) => r.value === 'none');
+const offered = (w) => notPaid(w).disabled !== true;
+const hint = (w) => (w.el('dq-pay-hint').style.display === 'none' ? '' : w.el('dq-pay-hint').textContent);
+const A_CASE = { id: '501', name: 'Asha Example', caseRef: '2026-SP-001', caseStage: 'Document Collection Started' };
+const heldLead = (over = {}) => ({ id: '77', name: 'Asha Example', bookingStatus: 'Booked', bookedSlot: torontoIn(-60 * DAY).slice(0, 10) + ' 10:00', consultationHeld: torontoIn(-60 * DAY).slice(0, 10), outcome: 'Follow-Up', consultant: 'Shafoli Kapur', ...over });
+async function lookedUp(w) { w.el('dq-email').fire('blur'); await w.settle(); }
+
+test('money first, the form and the browser code: one hidden line under "Payment *", a greyed look for a choice that is not offered, and the two lines of words', () => {
+  const form = DQ.dqFormHtml();
+  assert.ok(form.includes('id="dq-pay"></div><div class="dq-hint" id="dq-pay-hint" style="display:none" aria-live="polite"></div><div id="dq-fee-w"'), 'right under the payment choices, empty and hidden');
+  assert.match(DQ.DQ_CSS, /\.dq \.dq-seg label:has\(input:disabled\) \{ opacity:\.5; cursor:not-allowed; \}/);
+  assert.ok(DQ.DQ_JS.includes("var DQ_PAY_FIRST='" + PAY_FIRST_LINE + "';") && DQ.DQ_JS.includes("var DQ_NO_FILE='" + NO_FILE_LINE + "';"));
+  assert.ok(DQ.DQ_JS.includes('if(!o.moneyFirst) return true;') && DQ.DQ_JS.includes('if(!o.moneyFirst) return;'), 'switched off, the new code does nothing');
+});
+
+test('money first ON, pop-up: "Not paid yet" stays in its place but is greyed for a new person the app does not know, and the line under Payment says why; it is live for "existing client" + a case found, and greyed (and unticked) again when the choice goes back to new', async () => {
+  const w = popupWorld({ ...ON, matches: { clients: [], cases: [A_CASE], leads: [] } });
+  assert.deepEqual(w.R['dq-pay'].map((r) => r.value), ['square', 'cash', 'e-transfer', 'waived', 'none'], 'five choices, the same order');
+  assert.equal(offered(w), false, 'greyed from the start: nothing is known yet');
+  assert.equal(hint(w), PAY_FIRST_LINE);
+  for (const r of w.R['dq-pay']) if (r.value !== 'none') assert.notEqual(r.disabled, true, r.value + ' is always offered');
+  filled(w);                       // a new client, a time three days ahead — the look-up has not answered yet
+  assert.equal(offered(w), false); assert.equal(hint(w), PAY_FIRST_LINE);
+  await lookedUp(w);               // the app finds a case — but a NEW matter pays first, file or no file (decision 4)
+  assert.equal(offered(w), false, 'a new matter pays first even for someone who has a file');
+  assert.equal(hint(w), PAY_FIRST_LINE);
+  w.pickRadio('dq-choice', 'existing');
+  assert.equal(offered(w), true, '"Existing client: about their current file" + a case found');
+  assert.equal(hint(w), '', 'nothing to explain');
+  w.pickRadio('dq-pay', 'none');
+  assert.equal(notPaid(w).checked, true);
+  assert.equal(w.el('dq-fee-w').style.display, 'none');
+  // back to a new matter: greyed again AND unticked — the payment must be chosen again
+  w.pickRadio('dq-choice', 'new');
+  assert.equal(offered(w), false); assert.equal(notPaid(w).checked, false, 'unticked');
+  assert.equal(hint(w), PAY_FIRST_LINE);
+  w.el('dq-save').onclick();
+  assert.equal(w.el('dq-err').textContent, 'Choose the payment.');
+  assert.equal(w.posts.length, 0);
+  // existing again, "Not paid yet": it saves as before, with no fee
+  w.pickRadio('dq-choice', 'existing'); w.pickRadio('dq-pay', 'none');
+  w.el('dq-save').onclick(); await w.settle();
+  assert.equal(w.posts.length, 1);
+  assert.deepEqual([w.posts[0].body.choice, w.posts[0].body.payment], ['existing', { kind: 'none' }]);
+});
+
+test('money first ON, pop-up: "existing client" picked but no file found — greyed, and the line says the app finds no file; a matched lead that has a case counts as a file', async () => {
+  let w = popupWorld({ ...ON, matches: { clients: [], cases: [], leads: [{ id: '90', name: 'Asha Example', bookingStatus: 'Abandoned' }] } });
+  filled(w, { choice: 'existing' }); await lookedUp(w);
+  assert.equal(offered(w), false);
+  assert.equal(hint(w), NO_FILE_LINE);
+  // "Free" is always there: for an existing client the reason box opens filled, and it saves
+  w.pickRadio('dq-pay', 'waived');
+  assert.equal(w.el('dq-reason').value, 'Existing client — about their current file');
+  w.el('dq-save').onclick(); await w.settle();
+  assert.equal(w.posts.length, 1); assert.equal(w.posts[0].body.payment.kind, 'waived');
+  // back to new: the general line
+  w.pickRadio('dq-choice', 'new');
+  assert.equal(hint(w), PAY_FIRST_LINE);
+  // a lead linked to a case is a file
+  w = popupWorld({ ...ON, matches: { clients: [], cases: [], leads: [{ id: '88', name: 'Asha Example', hasCase: true, conversionStatus: 'Retained' }] } });
+  filled(w, { choice: 'existing' }); await lookedUp(w);
+  assert.equal(offered(w), true); assert.equal(hint(w), '');
+  // the look-up did not answer (or there is no email / phone yet): greyed — the server would refuse too
+  w = popupWorld(ON);
+  w.pickRadio('dq-choice', 'existing');
+  assert.equal(offered(w), false); assert.equal(hint(w), NO_FILE_LINE);
+});
+
+test('money first ON, pop-up: live for a time that has ALREADY PASSED (entered late), for anyone; greyed again when the time is moved ahead', async () => {
+  const w = popupWorld(ON);
+  filled(w, { when: torontoIn(-2 * DAY).slice(0, 10) + 'T10:15' });
+  assert.equal(offered(w), true, 'a past consultation, a new client: allowed (it then shows the red "Not paid")');
+  assert.equal(hint(w), '');
+  w.pickRadio('dq-pay', 'none');
+  w.type('dq-when', torontoIn(3 * DAY).slice(0, 10) + 'T11:00', 'change');
+  assert.equal(offered(w), false, 'moved to a time ahead'); assert.equal(notPaid(w).checked, false); assert.equal(hint(w), PAY_FIRST_LINE);
+  w.type('dq-when', torontoIn(-1 * DAY).slice(0, 10) + 'T09:00', 'change');
+  assert.equal(offered(w), true);
+  w.pickRadio('dq-pay', 'none');
+  w.el('dq-save').onclick(); await w.settle();
+  assert.equal(w.posts.length, 1);
+  assert.deepEqual([w.posts[0].body.choice, w.posts[0].body.payment, w.posts[0].body.inSquare], ['new', { kind: 'none' }, null]);
+});
+
+test('money first ON, pop-up: live for a follow-up (a new matter after an earlier held consultation, no file) — by the server\'s own rule; not when the person has a file, the earlier row was never held, or the held day is not before this one', async () => {
+  let w = popupWorld({ ...ON, matches: { clients: [], cases: [], leads: [heldLead()] } });
+  filled(w); await lookedUp(w);
+  assert.equal(offered(w), true, 'a follow-up'); assert.equal(hint(w), '');
+  w.pickRadio('dq-pay', 'none'); w.el('dq-save').onclick(); await w.settle();
+  assert.equal(w.posts.length, 1); assert.deepEqual(w.posts[0].body.payment, { kind: 'none' });
+  for (const [why, matches] of [
+    ['has a file', { clients: [], cases: [A_CASE], leads: [heldLead()] }],
+    ['a linked case', { clients: [], cases: [], leads: [heldLead({ hasCase: true })] }],
+    ['never held', { clients: [], cases: [], leads: [heldLead({ consultationHeld: '' })] }],
+    ['not Booked', { clients: [], cases: [], leads: [heldLead({ bookingStatus: 'Abandoned' })] }],
+    ['held later than this one', { clients: [], cases: [], leads: [heldLead({ consultationHeld: torontoIn(5 * DAY).slice(0, 10) })] }],
+    ['held the same day', { clients: [], cases: [], leads: [heldLead({ consultationHeld: torontoIn(3 * DAY).slice(0, 10) })] }],
+  ]) {
+    w = popupWorld({ ...ON, matches });
+    filled(w); await lookedUp(w);
+    assert.equal(offered(w), false, why); assert.equal(hint(w), PAY_FIRST_LINE, why);
+  }
+  // the lead picked in "Use this lead" is left out of the rule, as on the server: the check runs again when it changes
+  w = popupWorld({ ...ON, matches: { clients: [], cases: [], leads: [heldLead()] } });
+  const use = Object.assign(fakeEl('dq-use:77'), { value: '77', name: 'dq-use' });
+  w.R['dq-use'].push(use);
+  filled(w); await lookedUp(w);
+  assert.equal(offered(w), true);
+  assert.equal(typeof use.onchange, 'function', 'bound');
+  use.checked = true; use.onchange({});
+  assert.equal(offered(w), false, 'that lead is the consultation itself, not an earlier one');
+});
+
+test('money first ON, pop-up: the server is the judge — its refusal (400) keeps the form OPEN with what was typed and shows its words', async () => {
+  const words = 'A new client pays first — nothing was saved. Choose how the fee was paid, or “Free” with the reason. “Not paid yet” is only for an existing client (about their current file) or a follow-up.';
+  // a page whose options are older than the switch (it still offers "Not paid yet"); the server refuses
+  const w = popupWorld({ answer: { s: 400, j: { error: words } } });
+  filled(w); w.pickRadio('dq-pay', 'none');
+  w.el('dq-save').onclick(); await w.settle();
+  assert.equal(w.posts.length, 1);
+  assert.equal(w.el('dq-err').textContent, words);
+  assert.equal(w.dlg.closed, undefined, 'still open');
+  assert.deepEqual([w.el('dq-name').value, w.el('dq-email').value, w.el('dq-about').value, w.el('dq-when').value !== '', notPaid(w).checked], ['Asha Example', 'asha@example.com', 'question about the file', true, true], 'nothing typed is lost');
+  assert.equal(w.ctx.reloaded, undefined, 'the list is not re-read: nothing was saved');
+  assert.notEqual(w.el('dq-save').disabled, true, 'Save works again — choose the payment and save');
+});
+
+test('money first OFF, pop-up: exactly as before — "Not paid yet" is never greyed, the line under Payment stays hidden and empty, nothing is bound to "Use this lead"', async () => {
+  for (const options of [{}, { moneyFirst: false }, { moneyFirst: 0 }, { moneyFirst: '' }]) {
+    const w = popupWorld({ options, matches: { clients: [], cases: [], leads: [heldLead()] } });
+    const use = Object.assign(fakeEl('dq-use:77'), { value: '77', name: 'dq-use' });
+    w.R['dq-use'].push(use);
+    const same = () => { assert.notEqual(notPaid(w).disabled, true, JSON.stringify(options)); assert.equal(w.el('dq-pay-hint').textContent, ''); assert.notEqual(w.el('dq-pay-hint').style.display, ''); };
+    same();
+    filled(w); same();
+    await lookedUp(w); same();
+    assert.equal(use.onchange, undefined, 'nothing new is bound');
+    w.pickRadio('dq-choice', 'existing'); same();
+    w.pickRadio('dq-choice', 'new'); same();
+    w.pickRadio('dq-pay', 'none');
+    w.type('dq-when', torontoIn(6 * DAY).slice(0, 10) + 'T11:00', 'change'); same();
+    assert.equal(notPaid(w).checked, true, 'the tick is never taken away');
+    w.el('dq-save').onclick(); await w.settle();
+    assert.equal(w.posts.length, 1, 'a new client, a time ahead, "Not paid yet": sent as before');
+    assert.deepEqual([w.posts[0].body.choice, w.posts[0].body.payment], ['new', { kind: 'none' }]);
+  }
+});
+
 test('pop-up: the look-up finds a live booking for the person — saving needs "This is a different consultation"', async () => {
   const slotDay = torontoIn(4 * DAY).slice(0, 10);
   const w = popupWorld({ matches: { clients: [], cases: [], leads: [{ id: '77', name: 'Asha Example', bookingStatus: 'Booked', bookedSlot: slotDay + ' 09:00', consultant: 'Shafoli Kapur', outcome: '' }] } });
@@ -490,7 +644,7 @@ test('client-matches: each lead says its outcome, booking, consultant and whethe
   const restore = [];
   const stub = (o, k, f) => { const orig = o[k]; o[k] = f; restore.push(() => { o[k] = orig; }); };
   stub(leadService, 'findAllByColumnValue', async (col) => (col === 'email' ? [
-    { id: '1', fullName: 'Asha', email: 'a@example.com', outcome: 'Follow-Up', bookingStatus: 'Booked', bookedSlot: '2026-11-01 10:00', assignedConsultant: 'Shafoli Kapur', consultOption: '' },
+    { id: '1', fullName: 'Asha', email: 'a@example.com', outcome: 'Follow-Up', bookingStatus: 'Booked', bookedSlot: '2026-11-01 10:00', consultationHeld: ' 2026-11-01 ', assignedConsultant: 'Shafoli Kapur', consultOption: '' },
     { id: '2', fullName: 'Asha', email: 'a@example.com', bookingStatus: 'Booked', bookedSlot: '2026-11-12 10:00', consultOption: JSON.stringify({ directConsult: { kind: 'Existing client' } }) },
   ] : []));
   stub(cm, 'findCasesByEmail', async () => []);
@@ -501,6 +655,8 @@ test('client-matches: each lead says its outcome, booking, consultant and whethe
     const [a, b] = m.leads;
     assert.deepEqual({ o: a.outcome, s: a.bookingStatus, t: a.bookedSlot, c: a.consultant, d: a.directConsult }, { o: 'Follow-Up', s: 'Booked', t: '2026-11-01 10:00', c: 'Shafoli Kapur', d: '' });
     assert.equal(b.directConsult, 'Existing client');
+    // money first (2026-11-20): each lead also says the day its consultation was held ('' = none), so the pop-up can use the server's follow-up rule
+    assert.deepEqual([a.consultationHeld, b.consultationHeld], ['2026-11-01', '']);
     assert.equal('rawLeads' in m, false, 'the raw rows never go to a page');
   } finally { restore.reverse().forEach((f) => f()); }
 });

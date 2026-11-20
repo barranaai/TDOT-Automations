@@ -12,6 +12,10 @@
 //  11  a server error / a closed pop-up never loses or misstates the answer.
 // Every Monday, Square, OneDrive, meeting and mail seam is stubbed (the no-network guard backs it).
 
+// Money first (CONSULT_MONEY_FIRST, 2026-11-20) ships off: these tests are the switched-off app whatever the machine's
+// environment says. The tests of the switch set it themselves.
+delete process.env.CONSULT_MONEY_FIRST;
+
 const test   = require('node:test');
 const assert = require('node:assert/strict');
 const vm     = require('node:vm');

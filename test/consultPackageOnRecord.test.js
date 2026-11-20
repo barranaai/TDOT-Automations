@@ -11,6 +11,10 @@
 // Every outbound seam is stubbed; the no-network guard (npm test) refuses the rest
 // and these tests also assert that no send result carries its refusal.
 
+// Money first (CONSULT_MONEY_FIRST, 2026-11-20) ships off: these tests are the switched-off app whatever the machine's
+// environment says. The tests of the switch set it themselves.
+delete process.env.CONSULT_MONEY_FIRST;
+
 const test   = require('node:test');
 const assert = require('node:assert/strict');
 const vm     = require('node:vm');
@@ -1173,3 +1177,35 @@ test('F4c the agreement link and the retainer link make a missing link code too'
   assert.match(r2, /const token = String\(lead\.leadToken \|\| ''\)\.trim\(\) \|\| await require\('\.\/leadTokenService'\)\.ensureToken\(leadId\)\.catch\(\(\) => ''\);/);
   void cas;
 });
+
+/* ── Money first (CONSULT_MONEY_FIRST, 2026-11-20): an invoice is recorded only once it has been paid ── */
+
+test('money first ON: an invoice WITH the tick + a booking + "Yes" runs exactly as a cash record does — the record, then the booking, then ONE package run; WITHOUT the tick nothing at all happens', withEnv({ ...ON, CONSULT_MONEY_FIRST: '1' }, async () => {
+  const w = world({ lead: { consultOption: JSON.stringify({ durationMin: 15 }) } });
+  try {
+    await assert.rejects(apply(PAID({ kind: 'invoice' })), (e) => e.badRequest && e.message === 'Tick “The invoice has been paid”. An invoice that is only sent is not recorded — record it when the money is in. Nothing was saved.');
+    assert.deepEqual([w.writes.length, w.notes.length, w.autoCalls.length, w.meetings.length], [0, 0, 0, 0], 'no record, no booking, no note, no email, no meeting');
+    const r = await apply(PAID({ kind: 'invoice', invoicePaid: true }));
+    assert.equal(r.ok, true, r.message);
+    assert.equal(r.package, 'sent');
+    assert.match(r.message, /^Recorded — Invoice sent by the team \$120\.00 received/);
+    assert.equal(w.writes.length, 2, 'the record, then the booking');
+    const stored = JSON.parse(w.writes[0].fields.consultPayment);
+    assert.equal(stored.kind, 'invoice'); assert.equal(stored.package, 'send');
+    assert.equal('invoicePaid' in stored, false, 'the tick is checked, never stored');
+    assert.deepEqual({ ...w.writes[1].fields, consultOption: undefined }, { bookingStatus: 'Booked', bookedSlot: `${day(3)} 11:00`, meetingType: 'In-person', assignedConsultant: 'Shermin Teymouri Mofrad', consultationHeld: day(3), consultOption: undefined, bookedBy: 'Melanie' });
+    assert.equal(w.autoCalls.length, 1, 'one package run');
+    assert.equal(w.autoCalls[0].opts.trigger, 'recorded');
+    assert.equal(JSON.parse(w.autoCalls[0].opts.overrides.consultPayment).kind, 'invoice');
+    assert.equal(w.notes.length, 1);
+  } finally { w.done(); }
+}));
+
+test('money first OFF: an invoice + a booking + "Yes" is recorded with no tick, as before', withEnv({ ...ON, CONSULT_MONEY_FIRST: null }, async () => {
+  const w = world();
+  try {
+    const r = await apply(PAID({ kind: 'invoice' }));
+    assert.equal(r.ok, true, r.message); assert.equal(r.package, 'sent');
+    assert.equal(w.writes.length, 2); assert.equal(w.autoCalls.length, 1);
+  } finally { w.done(); }
+}));

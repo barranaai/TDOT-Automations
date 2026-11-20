@@ -1674,7 +1674,11 @@ function openConsultPaymentModal(d, clear){
     if(clear&&!cur) return;
     var dlg=payOverlay();
     var feeDefault=(cur&&cur.paid!=='waived'&&cur.paidCents)?cur.paidCents:(cp.feeCents||null);
-    var kinds=[['cash','Cash'],['e-transfer','E-transfer'],['square','Paid in Square (booked by the team, not the booking link)'],['invoice','Invoice sent by the team (not the booking link)'],['other','Other'],['waived','Waived — no fee']];
+    /* Money first (the server's switch CONSULT_MONEY_FIRST, told to this page as consultPayment.moneyFirst): an invoice
+       is recorded only when it has been PAID — the choice says so, a tick is asked and the date is the day it was paid.
+       Switched off (mf false) every word of this box is as before. */
+    var mf=cp.moneyFirst===true;
+    var kinds=[['cash','Cash'],['e-transfer','E-transfer'],['square','Paid in Square (booked by the team, not the booking link)'],['invoice',mf?'Invoice — paid (sent by the team, not the booking link)':'Invoice sent by the team (not the booking link)'],['other','Other'],['waived','Waived — no fee']];
     var orc=cp.onRecord||{};
     var asks=!clear && !!(orc.enabled && orc.applicable && !orc.alreadySent);
     var h=payTitle(clear?'Remove the payment record':(cur?'Change the consultation payment record':'Record the consultation payment'), clear)+
@@ -1691,6 +1695,8 @@ function openConsultPaymentModal(d, clear){
         '<div id="cp-amt-wrap"><label for="cp-amt">Fee received <span class="paym-muted">(CAD, before HST — the way the KPIs count booking-link payments)</span></label>'+
         '<input id="cp-amt" type="text" inputmode="decimal" autocomplete="off" value="'+(feeDefault?(feeDefault/100).toFixed(2):'')+'"><div class="paym-hint" id="cp-amt-hint"></div></div>'+
         '<label for="cp-on">Date received</label><input id="cp-on" type="date" max="'+cpTodayStr()+'" value="'+payEsc((cur&&cur.on)?cur.on:cpTodayStr())+'">'+
+        (mf?'<div id="cp-inv-w" style="display:none"><label class="cp-choice" for="cp-inv-paid"><input type="checkbox" id="cp-inv-paid"><span>The invoice has been paid — the money is in</span></label>'+
+          '<div class="paym-hint">Only sent, not paid yet? Do not record it. The consultation shows “Not paid” in red until the money is in.</div></div>':'')+
         '<label for="cp-ref">Reference <span class="paym-muted">(optional — e-transfer or invoice number)</span></label><input id="cp-ref" type="text" maxlength="120" autocomplete="off" value="'+payEsc(cur?(cur.reference||''):'')+'">'+
         '<label for="cp-note" id="cp-note-l">Note <span class="paym-muted">(optional)</span></label><input id="cp-note" type="text" maxlength="200" autocomplete="off" value="'+payEsc(cur?(cur.note||''):'')+'">'+
         cpPackageSection(orc, asks);
@@ -1708,11 +1714,19 @@ function openConsultPaymentModal(d, clear){
     var pk=asks?cpPackageBind(dlg.box, orc, cur, kindEl, amtEl, function(send){ dlg.box.querySelector('[data-go]').textContent=send?(cur?'Save & email':'Record & email'):goLabel; }):null;
     /* The one note box: for "Waived — no fee" it is the reason, and it is required (2026-11-20). */
     var noteL=dlg.box.querySelector('#cp-note-l');
+    var invW=mf?dlg.box.querySelector('#cp-inv-w'):null, invEl=mf?dlg.box.querySelector('#cp-inv-paid'):null, onL=mf?dlg.box.querySelector('label[for="cp-on"]'):null;
     function syncKind(){
       if(!kindEl||!amtWrap) return;
       var w=kindEl.value==='waived';
       amtWrap.style.display=w?'none':'';
       if(noteL) noteL.innerHTML=w?'Reason the fee is waived *':'Note <span class="paym-muted">(optional)</span>';
+      /* Money first: the tick and "Date the invoice was paid" show for the invoice choice only; a tick never carries over to another kind. */
+      if(mf){
+        var inv=kindEl.value==='invoice';
+        if(invW) invW.style.display=inv?'':'none';
+        if(invEl&&!inv) invEl.checked=false;
+        if(onL) onL.textContent=inv?'Date the invoice was paid':'Date received';
+      }
       if(pk) pk.kindChanged();
     }
     function refreshHint(){
@@ -1736,7 +1750,10 @@ function openConsultPaymentModal(d, clear){
         var noteEl=dlg.box.querySelector('#cp-note'), note=noteEl.value.trim();
         /* Waived: no reason, no save — checked here, before the box closes, so nothing typed is lost. */
         if(kind==='waived'&&note.length<3){ err.textContent='Write the reason the fee is waived.'; noteEl.focus(); return; }
+        /* Money first: an invoice that is only sent is not recorded — no tick, no save (the box stays open). */
+        if(mf&&kind==='invoice'&&!(invEl&&invEl.checked)){ err.textContent='Tick “The invoice has been paid”.'; if(invEl) invEl.focus(); return; }
         payload={kind:kind, amountCents:cents, on:on, reference:dlg.box.querySelector('#cp-ref').value.trim(), note:note};
+        if(mf&&kind==='invoice') payload.invoicePaid=true;
         if(pk){ var pr=pk.collect(kind); if(pr.error){ err.textContent=pr.error; if(pr.focus) pr.focus.focus(); return; } payload.package=pr.package; payload.packageNote=pr.packageNote; if(pr.booking) payload.booking=pr.booking; }
       }
       if(byEl) paySaveName(by);

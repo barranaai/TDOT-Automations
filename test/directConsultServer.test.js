@@ -2,6 +2,9 @@
 // The live app has NO direct-only consultant (Faran 2026-11-09: Gauri is not a consultant).
 // The not-an-RCIC rules stay; these tests name one so the rules are still proven.
 process.env.DIRECT_ONLY_CONSULTANTS = 'Gauri Berde';
+// Money first (CONSULT_MONEY_FIRST, 2026-11-20) ships off: these tests are the switched-off app whatever the machine's
+// environment says. The tests of the switch set it themselves.
+delete process.env.CONSULT_MONEY_FIRST;
 
 // Direct consultation, commit 2 — the server (step 2, 2026-11-09). "＋ Direct consultation":
 // a consultation booked OUTSIDE the app (Melanie books most in Square) added by hand —
@@ -683,6 +686,7 @@ test('options: consultants (Gauri last, no prices), 15–120 lengths, the five p
       assert.equal(o.bookedBy, 'Melanie'); assert.equal(o.signedIn, true);
       assert.ok(o.sources.includes('Existing Client'));
       assert.equal(o.backDays, 30);
+      assert.equal(o.moneyFirst, false, 'money first ships off (CONSULT_MONEY_FIRST unset)');
     } finally { w.restore(); }
   });
 });
@@ -753,6 +757,223 @@ test('create: "Free" with a reason — the waived record holds it as its note, a
       assert.match(note.body, / · Waived on \d{4}-\d{2}-\d{2} by Faran Test · reason: Existing client — about &lt;their&gt; current file · Existing client/);
       assert.ok(!note.body.includes('<their>'), 'escaped');
       assert.equal(w.calls.pkg.length, 0); assert.equal(w.calls.meetings, 0);
+    } finally { w.restore(); }
+  });
+});
+
+/* ── Money first (Gauri B4, Faran 2026-11-20): who may be saved "Not paid yet" — switch CONSULT_MONEY_FIRST ── */
+
+const PAY_FIRST = 'A new client pays first — nothing was saved. Choose how the fee was paid, or “Free” with the reason. “Not paid yet” is only for an existing client (about their current file) or a follow-up.';
+const NO_FILE = 'The app finds no file for this email or phone, so “Not paid yet” cannot be used — nothing was saved. Type the email or phone that is on the client’s case, or choose how the fee was paid (or “Free” with the reason).';
+/** The column made, "＋ Direct consultation" on, and the money-first switch ON — or as given (undefined = unset). */
+const moneyFirst = (fn, ...sw) => live(() => withEnv({ CONSULT_MONEY_FIRST: sw.length ? sw[0] : '1' }, fn));
+const NOT_PAID = { payment: { kind: 'none' } };
+const EXISTING = { choice: 'existing', sourceChannel: '' };
+const OPEN_CASE = { id: '501', caseRef: '2026-SP-001', caseStage: 'Document Collection Started' };
+const heldLead = (over = {}) => ({ id: '77', fullName: 'Asha Example', email: 'asha@example.com', bookingStatus: 'Booked', bookedSlot: `${torontoIn(-60 * DAY).slice(0, 10)} 10:00`, consultationHeld: torontoIn(-60 * DAY).slice(0, 10), outcome: 'Follow-Up', ...over });
+/** Nothing was written anywhere: no row, no column write, no note, no package, no folder — and no Monday call at all. */
+function wroteNothing(w, msg) {
+  assert.deepEqual([w.calls.creates.length, w.calls.updates.length, w.calls.notes.length, w.calls.pkg.length, w.calls.folders, w.calls.meetings], [0, 0, 0, 0, 0, 0], msg + ': no row, no write, no note, no package, no folder, no meeting');
+  assert.equal(w.calls.monday.length, 0, msg + ': no Monday call of any kind (every read in this world is its own stub)');
+}
+const refused = (words) => (e) => e.status === 400 && e.badRequest === true && e.message === words;
+
+test('money first ON — a NEW client, a time still ahead, "Not paid yet": 400 with the exact words and NOTHING is written (before "Use this lead" and the clash check)', async () => {
+  assert.equal(dcs.PAY_FIRST_ERROR, PAY_FIRST); assert.equal(dcs.NO_FILE_ERROR, NO_FILE);
+  await moneyFirst(async () => {
+    const w = world({ getLead: async () => { throw new Error('the chosen lead must not be read'); } });
+    try {
+      for (const over of [NOT_PAID, { ...NOT_PAID, inSquare: false }, { ...NOT_PAID, clashAck: true }, { ...NOT_PAID, date: futureDay(1), time: '08:00' }, { ...NOT_PAID, package: false, residentialAddress: '1 Test Street, Toronto' }]) {
+        await assert.rejects(dcs.createDirectConsult(entry(over), { actor: FARAN }), refused(PAY_FIRST), JSON.stringify(over));
+      }
+      wroteNothing(w, 'a new client');
+      assert.equal(w.calls.claimsRead, 0, 'refused before the clash check');
+      assert.ok(w.calls.lookups >= 1, 'the person WAS looked up — the rule needs to know who they are');
+      // the same person can be added the moment the fee is recorded, or as "Free" with the reason
+      assert.equal((await dcs.createDirectConsult(entry({ payment: { kind: 'cash', amountCents: 30000 } }), { actor: FARAN })).ok, true);
+    } finally { w.restore(); }
+    const w2 = world();
+    try {
+      const r = await dcs.createDirectConsult(entry({ payment: { kind: 'waived', note: 'promised by phone' } }), { actor: FARAN });
+      assert.equal(r.ok, true, '"Free" with a reason is always possible');
+      assert.equal(JSON.parse(written(w2.calls, '900')[C.consultPayment]).note, 'promised by phone');
+    } finally { w2.restore(); }
+    // "Free" with NO reason is still its own refusal (the waiver rule has no switch)
+    const w3 = world();
+    try {
+      await assert.rejects(dcs.createDirectConsult(entry({ payment: { kind: 'waived' } }), { actor: FARAN }), refused(FREE_REASON_ERROR));
+      wroteNothing(w3, 'free without a reason');
+    } finally { w3.restore(); }
+  });
+});
+
+test('money first ON — the same with "Use this lead" ticked: 400, and the chosen lead is neither read nor written', async () => {
+  await moneyFirst(async () => {
+    const reads = [];
+    const lead = { id: '321', fullName: 'Asha Example', email: 'asha@example.com', phone: '4165550101', bookingStatus: 'Abandoned', sourceChannel: 'Website' };
+    const w = world({ matches: { rawLeads: [lead] }, getLead: async (id) => { reads.push(String(id)); return lead; } });
+    try {
+      await assert.rejects(dcs.createDirectConsult(entry({ ...NOT_PAID, useLeadId: '321' }), { actor: FARAN }), refused(PAY_FIRST));
+      wroteNothing(w, '"Use this lead"');
+      assert.deepEqual(reads, [], 'the rule sits before the "Use this lead" guard');
+      assert.ok(!w.calls.updates.some((u) => u.id === '321'), 'the chosen lead was not written');
+      // with the fee recorded the same entry goes through on that lead
+      const r = await dcs.createDirectConsult(entry({ useLeadId: '321' }), { actor: FARAN });
+      assert.equal(r.reused, true); assert.equal(r.leadId, '321');
+    } finally { w.restore(); }
+  });
+});
+
+test('money first ON — "Existing client: about their current file" + the app FINDS their file: "Not paid yet" saves — no fee record, and the note says "Not paid yet"', async () => {
+  await moneyFirst(async () => {
+    // a case found by email / phone
+    let w = world({ matches: { cases: [OPEN_CASE] } });
+    try {
+      const r = await dcs.createDirectConsult(entry({ ...EXISTING, ...NOT_PAID }), { actor: FARAN });
+      assert.equal(r.ok, true); assert.equal(r.kind, 'Existing client');
+      assert.equal(written(w.calls, '900')[C.consultPayment], undefined, 'no fee record');
+      const note = w.calls.notes.find((x) => x.id === '900' && /Direct consultation added by Faran Test/.test(x.body));
+      assert.match(note.body, / · Not paid yet · Existing client · case 2026-SP-001/);
+    } finally { w.restore(); }
+    // a finished case is a file too (a previous client)
+    w = world({ matches: { cases: [{ id: '502', caseRef: '2025-VV-009', caseStage: 'Approved' }] } });
+    try { assert.equal((await dcs.createDirectConsult(entry({ ...EXISTING, ...NOT_PAID }), { actor: FARAN })).ok, true); } finally { w.restore(); }
+    // or a matched lead that is linked to a case
+    w = world({ matches: { rawLeads: [{ id: '88', fullName: 'Asha Example', email: 'asha@example.com', conversionStatus: 'Retained', clientMasterItemId: '9001' }] } });
+    try { assert.equal((await dcs.createDirectConsult(entry({ ...EXISTING, ...NOT_PAID }), { actor: FARAN })).ok, true); } finally { w.restore(); }
+  });
+});
+
+test('money first ON — "Existing client" picked but the app finds NO file: 400 with the "finds no file" words, nothing written (the button alone is nobody\'s proof)', async () => {
+  await moneyFirst(async () => {
+    // nobody found; and a person the app knows only as a lead with no case
+    for (const matches of [{}, { rawLeads: [{ id: '90', fullName: 'Asha Example', email: 'asha@example.com', bookingStatus: 'Abandoned' }] }, { clients: [{ id: 'c1', name: 'Asha Example' }] }]) {
+      const w = world({ matches });
+      try {
+        await assert.rejects(dcs.createDirectConsult(entry({ ...EXISTING, ...NOT_PAID }), { actor: FARAN }), refused(NO_FILE), JSON.stringify(matches));
+        wroteNothing(w, 'existing, no file');
+        assert.equal(w.calls.claimsRead, 0);
+      } finally { w.restore(); }
+    }
+    // nobody is stuck: "Free" with a reason goes through for the same entry
+    const w = world();
+    try { assert.equal((await dcs.createDirectConsult(entry({ ...EXISTING, payment: { kind: 'waived', note: 'Existing client — about their current file' } }), { actor: FARAN })).ok, true); } finally { w.restore(); }
+  });
+});
+
+test('money first ON — a FOLLOW-UP (a new matter after an earlier held consultation, no file) may be saved "Not paid yet"', async () => {
+  await moneyFirst(async () => {
+    const w = world({ matches: { rawLeads: [heldLead()] } });
+    try {
+      const r = await dcs.createDirectConsult(entry(NOT_PAID), { actor: FARAN });
+      assert.equal(r.ok, true); assert.equal(r.kind, 'Follow-up');
+      assert.equal(written(w.calls, '900')[C.consultPayment], undefined);
+      assert.match(w.calls.notes.find((x) => x.id === '900').body, / · Not paid yet · Follow-up · follow-up of lead 77/);
+    } finally { w.restore(); }
+    // not a follow-up: the earlier row was never held, or is the very lead chosen in "Use this lead"
+    for (const lead of [heldLead({ consultationHeld: '' }), heldLead({ bookingStatus: 'Abandoned' })]) {
+      const w2 = world({ matches: { rawLeads: [lead] } });
+      try { await assert.rejects(dcs.createDirectConsult(entry(NOT_PAID), { actor: FARAN }), refused(PAY_FIRST)); wroteNothing(w2, 'not a follow-up'); } finally { w2.restore(); }
+    }
+  });
+});
+
+test('money first ON — a NEW MATTER pays first even for someone who has a file (decision 4): refused with the new-client words', async () => {
+  await moneyFirst(async () => {
+    for (const matches of [{ cases: [OPEN_CASE] }, { rawLeads: [heldLead()], cases: [{ id: '503', caseRef: '2026-EE-010', caseStage: 'Submitted' }] }, { rawLeads: [{ id: '88', fullName: 'Asha Example', email: 'asha@example.com', conversionStatus: 'Retained', clientMasterItemId: '9001' }] }]) {
+      const w = world({ matches });
+      try {
+        await assert.rejects(dcs.createDirectConsult(entry(NOT_PAID), { actor: FARAN }), refused(PAY_FIRST), JSON.stringify(Object.keys(matches)));
+        wroteNothing(w, 'a new matter, has a file');
+      } finally { w.restore(); }
+    }
+    // the same person, the same day, about their CURRENT file: allowed
+    const w = world({ matches: { cases: [OPEN_CASE] } });
+    try { assert.equal((await dcs.createDirectConsult(entry({ ...EXISTING, ...NOT_PAID }), { actor: FARAN })).ok, true); } finally { w.restore(); }
+  });
+});
+
+test('money first ON — a consultation whose time has ALREADY PASSED, entered late, may still be saved "Not paid yet" for a new client (decision 5)', async () => {
+  await moneyFirst(async () => {
+    for (const over of [{ date: torontoIn(-2 * DAY).slice(0, 10) }, { date: torontoIn(-29 * DAY).slice(0, 10) }, { date: torontoIn(-2 * 3600000).slice(0, 10), time: torontoIn(-2 * 3600000).slice(11) }]) {
+      const w = world();
+      try {
+        const r = await dcs.createDirectConsult(entry({ ...NOT_PAID, ...over, inSquare: undefined }), { actor: FARAN });
+        assert.equal(r.ok, true, JSON.stringify(over)); assert.equal(r.kind, 'New');
+        assert.equal(written(w.calls, '900')[C.consultPayment], undefined, 'no fee record — it shows the red "Not paid" until settled');
+        assert.match(w.calls.notes.find((x) => x.id === '900').body, / · Not paid yet · New/);
+      } finally { w.restore(); }
+    }
+    // an existing client with no file found, past time: allowed too (the rule is about a time still ahead)
+    const w = world();
+    try { assert.equal((await dcs.createDirectConsult(entry({ ...EXISTING, ...NOT_PAID, date: torontoIn(-2 * DAY).slice(0, 10), inSquare: undefined }), { actor: FARAN })).ok, true); } finally { w.restore(); }
+  });
+});
+
+test('money first ON — the earlier answers still come first: the re-submit guard, the Not Wanted warning and "the same consultation" (409), and a failed look-up; none of them writes', async () => {
+  await moneyFirst(async () => {
+    // Not Wanted (409) before the money rule
+    let w = world({ hit: true });
+    try {
+      await assert.rejects(dcs.createDirectConsult(entry(NOT_PAID), { actor: FARAN }), (e) => e.status === 409 && e.code === 'not-wanted');
+      await assert.rejects(dcs.createDirectConsult(entry({ ...NOT_PAID, blacklistAck: true }), { actor: FARAN }), refused(PAY_FIRST), 'with the tick, the money rule is next');
+      wroteNothing(w, 'not wanted');
+    } finally { w.restore(); }
+    // "this is that consultation" (409) before the money rule
+    const other = { id: '66', fullName: 'Asha Example', bookingStatus: 'Booked', bookedSlot: `${futureDay(10)} 14:00`, assignedConsultant: SHERMIN, outcome: '' };
+    w = world({ matches: { rawLeads: [other] } });
+    try {
+      await assert.rejects(dcs.createDirectConsult(entry(NOT_PAID), { actor: FARAN }), (e) => e.status === 409 && e.code === 'same-consultation');
+      await assert.rejects(dcs.createDirectConsult(entry({ ...NOT_PAID, differentConsultation: true }), { actor: FARAN }), refused(PAY_FIRST));
+      wroteNothing(w, 'same consultation');
+    } finally { w.restore(); }
+    // the re-submit memory (409 "already") before the money rule
+    w = world();
+    try {
+      await dcs.createDirectConsult(entry(), { actor: FARAN });
+      await assert.rejects(dcs.createDirectConsult(entry(NOT_PAID), { actor: FARAN }), (e) => e.status === 409 && e.code === 'already');
+      assert.equal(w.calls.creates.length, 1);
+    } finally { w.restore(); }
+    // the validator's own refusals (pure, before anything is read)
+    w = world();
+    try {
+      await assert.rejects(dcs.createDirectConsult(entry({ ...NOT_PAID, package: true }), { actor: FARAN }), (e) => e.status === 400 && /goes with a recorded fee/.test(e.message));
+      assert.equal(w.calls.lookups, 0);
+    } finally { w.restore(); }
+  });
+  // a failed person look-up refuses first (strict) — the rule never decides on an empty answer
+  await moneyFirst(async () => {
+    const w = world();
+    const r = stub(portal, 'findClientMatches', async () => { throw new Error('Monday down'); });
+    try {
+      await assert.rejects(dcs.createDirectConsult(entry({ ...EXISTING, ...NOT_PAID }), { actor: FARAN }), (e) => e.status === 400 && /Could not look this person up just now — nothing was saved/.test(e.message));
+      wroteNothing(w, 'look-up failed');
+    } finally { r(); w.restore(); }
+  });
+});
+
+test('money first OFF (unset, 0, off): "Not paid yet" saves for a new client with a time ahead, exactly as before; the options say moneyFirst false / true', async () => {
+  for (const sw of [undefined, '0', 'off', 'maybe']) {
+    await moneyFirst(async () => {
+      const w = world();
+      try {
+        const r = await dcs.createDirectConsult(entry(NOT_PAID), { actor: FARAN });
+        assert.equal(r.ok, true, String(sw)); assert.equal(r.kind, 'New');
+        assert.equal(written(w.calls, '900')[C.consultPayment], undefined);
+        assert.match(w.calls.notes.find((x) => x.id === '900').body, / · Not paid yet · New/);
+        assert.equal((await dcs.getOptions({ actor: FARAN })).moneyFirst, false, String(sw));
+      } finally { w.restore(); }
+      // "Existing client" with no file found: also as before
+      const w2 = world();
+      try { assert.equal((await dcs.createDirectConsult(entry({ ...EXISTING, ...NOT_PAID }), { actor: FARAN })).ok, true); } finally { w2.restore(); }
+    }, sw);
+  }
+  await moneyFirst(async () => {
+    const w = world();
+    try {
+      const o = await dcs.getOptions({ actor: FARAN });
+      assert.equal(o.moneyFirst, true);
+      assert.deepEqual(o.payments.map((p) => [p.kind, p.label]), [['square', 'Paid in Square'], ['cash', 'Cash'], ['e-transfer', 'E-transfer'], ['waived', 'Free'], ['none', 'Not paid yet']], 'the same five choices in the same order — "Not paid yet" is greyed on the page, never removed');
     } finally { w.restore(); }
   });
 });

@@ -21,6 +21,8 @@ function stub(obj, key, fn) { const orig = obj[key]; obj[key] = fn; return () =>
 const TODAY = '2026-10-15';
 // The package-on-record switch is read from the environment: these tests are about the record alone.
 delete process.env.CONSULT_PACKAGE_ON_RECORD;
+// Money first (CONSULT_MONEY_FIRST) ships off: these tests are the switched-off app, whatever the machine's environment says.
+delete process.env.CONSULT_MONEY_FIRST;
 
 /* ── the column is wired everywhere a lead field must be ── */
 
@@ -188,7 +190,7 @@ test('list: paid reads app | kind | blank with the amount, who and when; the det
   const r2 = [stub(leadService, 'getLead', async () => ({ id: '2', fullName: 'B', consultOption: JSON.stringify({ durationMin: 30, feeCents: 20000 }), consultPayment: rows[1].consultPayment }))];
   try {
     const d = await portal.getConsultationDetail('2');
-    assert.deepEqual(d.consultPayment, { paid: 'cash', paidCents: 20000, on: '2026-10-14', by: 'Melanie', verified: false, reference: '', note: '', at: '', feeCents: 20000, alsoRecorded: '', onRecord: { enabled: false } }, 'the package question is off unless switched on');
+    assert.deepEqual(d.consultPayment, { paid: 'cash', paidCents: 20000, on: '2026-10-14', by: 'Melanie', verified: false, reference: '', note: '', at: '', feeCents: 20000, alsoRecorded: '', onRecord: { enabled: false }, moneyFirst: false }, 'the package question is off unless switched on; so is money first (CONSULT_MONEY_FIRST, 2026-11-20)');
   } finally { r2.forEach((r) => r()); }
   const r3 = [stub(leadService, 'getLead', async () => ({ id: '1', fullName: 'A', squareConsultTxnId: 'SQ1', consultOption: rows[0].consultOption, consultPayment: rows[1].consultPayment }))];
   try {
