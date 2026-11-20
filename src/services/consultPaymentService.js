@@ -29,6 +29,11 @@ const MEETING_TYPES = ['In-person', 'Virtual', 'Phone Call'];
 const MAX_BOOK_DAYS = 365;
 const MAX_CENTS = 2000000;            // $20,000 — a typo guard (a consultation fee is ~$200), not a business rule
 const MAX_NOTE = 200, MAX_REF = 120;
+// A waived fee needs a typed reason (Gauri B3, Faran 2026-11-20: "whoever is waiving off the consultation fee
+// needs to write a reason"). It is kept in the record's own `note` — no new field, no new Monday column. The rule
+// is on what a page SENDS (validateRecord) only: a stored record with no reason still reads as Waived.
+const MIN_REASON = 3;
+const WAIVE_REASON_ERROR = 'Write the reason the fee is waived (why the consultation is free) — nothing was saved. If you cannot see a box for the reason, reload the page first.';
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Exactly one of the kinds — an own key, so 'constructor' / 'toString' / '__proto__' are not kinds (review 2026-10-15). */
@@ -118,6 +123,9 @@ function validateRecord(value, { today = torontoToday(), nowWall } = {}) {
   if (reference.length > MAX_REF) return bad(`Keep the reference under ${MAX_REF} characters.`);
   const note = oneLine(o.note);
   if (note.length > MAX_NOTE) return bad(`Keep the note under ${MAX_NOTE} characters.`);
+  // Waived / Free: the reason is required — for "Record payment / Waived" and "＋ Direct consultation" alike
+  // (both send their entry through here before anything is read or written). Other kinds: the note stays optional.
+  if (kind === 'waived' && note.length < MIN_REASON) return bad(WAIVE_REASON_ERROR);
   let amountCents = 0;
   if (kind !== 'waived') {
     // A number, or a string of digits (a form field) — never a boolean, an array or
@@ -148,14 +156,15 @@ function validateRecord(value, { today = torontoToday(), nowWall } = {}) {
   return { ok: true, normalized: { kind, amountCents, on, reference, note, package: pkg, packageNote, booking } };
 }
 
-/** One line for notes and messages: "Cash $200.00 received 2026-10-15 by Melanie (name as typed) · ref 123 · note: …". */
+/** One line for notes and messages: "Cash $200.00 received 2026-10-15 by Melanie (name as typed) · ref 123 · note: …".
+ *  A waived record's note is its reason: "Waived on 2026-11-20 by Melanie · reason: …". */
 function describe(rec) {
   if (!rec) return '';
   const who = rec.by ? ` by ${rec.by}${rec.verified ? '' : ' (name as typed)'}` : '';
   const head = rec.kind === 'waived'
     ? `Waived${rec.on ? ` on ${rec.on}` : ''}${who}`
     : `${KINDS[rec.kind] || rec.kind} ${rec.amountCents > 0 ? dollars(rec.amountCents) : '(amount not recorded)'}${rec.on ? ` received ${rec.on}` : ''}${who}`;
-  return head + (rec.reference ? ` · ref ${rec.reference}` : '') + (rec.note ? ` · note: ${rec.note}` : '');
+  return head + (rec.reference ? ` · ref ${rec.reference}` : '') + (rec.note ? ` · ${rec.kind === 'waived' ? 'reason' : 'note'}: ${rec.note}` : '');
 }
 
 /**
@@ -181,4 +190,4 @@ function paidState(lead) {
   };
 }
 
-module.exports = { KINDS, MAX_CENTS, MAX_NOTE, MAX_REF, PACKAGE_CHOICES, MEETING_TYPES, parseConsultPayment, validateRecord, validateBooking, describe, paidState, isRealDay, torontoToday, torontoNowWall };
+module.exports = { KINDS, MAX_CENTS, MAX_NOTE, MAX_REF, MIN_REASON, WAIVE_REASON_ERROR, PACKAGE_CHOICES, MEETING_TYPES, parseConsultPayment, validateRecord, validateBooking, describe, paidState, isRealDay, torontoToday, torontoNowWall };

@@ -74,7 +74,7 @@ function entry(over = {}) {
  */
 function world({ matches = {}, snapRows = [], hit = false, claims = [], getLead = null, pkg = null } = {}) {
   dcs._resetForTests();   // each world starts with an empty re-submit memory
-  const calls = { monday: [], creates: [], updates: [], notes: [], folders: 0, meetings: 0, pkg: [], claimsRead: 0 };
+  const calls = { monday: [], creates: [], updates: [], notes: [], folders: 0, meetings: 0, pkg: [], claimsRead: 0, lookups: 0 };
   const r = [
     quiet(),
     stub(mondayApi, 'query', async (q, v = {}) => {
@@ -85,7 +85,7 @@ function world({ matches = {}, snapRows = [], hit = false, claims = [], getLead 
       if (/create_update/.test(q)) { calls.notes.push({ id: String(v.id || v.i), body: String(v.b) }); return { create_update: { id: 'u1' } }; }
       return {};
     }),
-    stub(portal, 'findClientMatches', async () => ({ leads: [], cases: [], clients: [], rawLeads: [], ...matches })),
+    stub(portal, 'findClientMatches', async () => { calls.lookups++; return { leads: [], cases: [], clients: [], rawLeads: [], ...matches }; }),
     stub(snap, 'leads', async () => snapRows),
     stub(blacklist, 'check', async () => (hit ? { checked: true, hit: true, matchedOn: 'email', entries: [{ name: 'X' }] } : { checked: true, hit: false })),
     stub(blacklist, 'noteOnLead', async () => true),
@@ -187,8 +187,8 @@ test('validator: every refusal, in plain words', () => {
   // a past consultation: no "in Square" question; existing: source "Existing Client", no referral asked
   const past = dcs.validateDirectConsult(entry({ date: torontoIn(-2 * DAY).slice(0, 10), inSquare: undefined, choice: 'existing', sourceChannel: '' }), { nowWall: now, actor: FARAN });
   assert.equal(past.ok, true); assert.equal(past.n.inSquare, null); assert.equal(past.n.sourceChannel, 'Existing Client'); assert.equal(past.n.referredBy, '');
-  // "Free" = waived, no amount; "Not paid yet" = no record
-  assert.equal(v({ payment: { kind: 'waived' } }).n.payment.kind, 'waived');
+  // "Free" = waived, no amount, with its reason (required since 2026-11-20); "Not paid yet" = no record
+  { const p = v({ payment: { kind: 'waived', note: ' question  about their file ' } }).n.payment; assert.deepEqual([p.kind, p.amountCents, p.note], ['waived', 0, 'question about their file']); }
   assert.equal(v({ payment: { kind: 'none' } }).n.payment, null);
 });
 
@@ -454,7 +454,7 @@ test('Gauri: a direct consultation with her saves with no meeting and no package
   await live(async () => {
     const w = world();
     try {
-      const r = await dcs.createDirectConsult(entry({ consultant: GAURI, meetingType: 'Virtual', durationMin: 60, payment: { kind: 'waived' } }), { actor: FARAN });
+      const r = await dcs.createDirectConsult(entry({ consultant: GAURI, meetingType: 'Virtual', durationMin: 60, payment: { kind: 'waived', note: 'question about their file' } }), { actor: FARAN });
       assert.equal(r.ok, true);
       assert.equal(w.calls.meetings, 0); assert.equal(w.calls.pkg.length, 0);
       const opt = JSON.parse(written(w.calls, '900')[C.consultOption]);
@@ -692,4 +692,67 @@ test('Faran 2026-11-09: no direct-only consultant by default — Gauri is not of
   const out = execFileSync(process.execPath, ['-e', "delete process.env.DIRECT_ONLY_CONSULTANTS; console.log(JSON.stringify(require('./config/consultantRouting').DIRECT_ONLY_CONSULTANTS))"],
     { cwd: require('path').join(__dirname, '..'), env: { ...process.env, DIRECT_ONLY_CONSULTANTS: '' } }).toString().trim().split('\n').pop();
   assert.equal(out, '[]');
+});
+
+/* ── "Free" needs a reason (Gauri B3, 2026-11-20): the one rule in validateRecord covers this door too ── */
+
+const FREE_REASON_ERROR = 'Write the reason the fee is waived (why the consultation is free) — nothing was saved. If you cannot see a box for the reason, reload the page first.';
+
+test('"Free" with no reason is refused by the validator with the server\'s words — also the exact body a page left open from before sends; "Not paid yet" and the paid kinds ask for none', () => {
+  const now = `${futureDay(0)} 12:00`;
+  const v = (over) => dcs.validateDirectConsult(entry(over), { nowWall: now, actor: FARAN });
+  // what the old pop-up sent for "Free": the kind and the date paid, nothing else
+  assert.deepEqual(v({ payment: { kind: 'waived', on: now.slice(0, 10) } }), { ok: false, error: FREE_REASON_ERROR });
+  for (const note of [undefined, '', '  ', 'no', ' a ']) assert.deepEqual(v({ payment: { kind: 'waived', note } }), { ok: false, error: FREE_REASON_ERROR }, JSON.stringify(note));
+  // for an existing client about their current file too: the page pre-fills the box, the server takes nobody's word
+  assert.deepEqual(v({ choice: 'existing', sourceChannel: '', payment: { kind: 'waived' } }), { ok: false, error: FREE_REASON_ERROR });
+  // with a reason: kept as payment.note, one trimmed line
+  const ok = v({ payment: { kind: 'waived', note: '  Existing client —   about their current file ' } });
+  assert.equal(ok.ok, true);
+  assert.deepEqual([ok.n.payment.kind, ok.n.payment.amountCents, ok.n.payment.note], ['waived', 0, 'Existing client — about their current file']);
+  assert.match(v({ payment: { kind: 'waived', note: 'x'.repeat(201) } }).error, /Keep the note under 200 characters/);
+  // "Not paid yet": no record at all, so no reason is asked (that door belongs to the money-first rule)
+  assert.equal(v({ payment: { kind: 'none' } }).n.payment, null);
+  assert.equal(v({ payment: { kind: 'none', note: '' } }).ok, true);
+  // the paid kinds need no note
+  for (const kind of ['square', 'cash', 'e-transfer']) { const r = v({ payment: { kind, amountCents: 30000 } }); assert.equal(r.ok, true, kind); assert.equal(r.n.payment.note, '', kind); }
+});
+
+test('create: "Free" with no reason → 400 before anything is read or written — no look-up, no row, no update, no note; also with "Use this lead" and with the package ticked', async () => {
+  await live(async () => {
+    const w = world({ getLead: async () => { throw new Error('the lead must not be read'); } });
+    try {
+      for (const over of [
+        { payment: { kind: 'waived' } },
+        { payment: { kind: 'waived', on: futureDay(0) } },
+        { payment: { kind: 'waived', note: 'x ' } },
+        { payment: { kind: 'waived' }, useLeadId: '321' },
+        { payment: { kind: 'waived' }, package: true },
+        { payment: { kind: 'waived' }, choice: 'existing', sourceChannel: '' },
+        { payment: { kind: 'waived' }, clashAck: true, blacklistAck: true, differentConsultation: true },
+      ]) {
+        await assert.rejects(dcs.createDirectConsult(entry(over), { actor: FARAN }), (e) => e.status === 400 && e.badRequest === true && e.message === FREE_REASON_ERROR, JSON.stringify(over));
+      }
+      assert.equal(w.calls.lookups, 0, 'the person was not even looked up');
+      assert.equal(w.calls.monday.length, 0, 'no Monday call of any kind');
+      assert.deepEqual([w.calls.creates.length, w.calls.updates.length, w.calls.notes.length, w.calls.pkg.length, w.calls.claimsRead, w.calls.folders], [0, 0, 0, 0, 0, 0]);
+    } finally { w.restore(); }
+  });
+});
+
+test('create: "Free" with a reason — the waived record holds it as its note, and the direct consultation\'s update reads "Waived on … · reason: <text>" (escaped)', async () => {
+  await live(async () => {
+    const w = world();
+    try {
+      const r = await dcs.createDirectConsult(entry({ choice: 'existing', sourceChannel: '', payment: { kind: 'waived', note: 'Existing client — about <their> current file' } }), { actor: FARAN });
+      assert.equal(r.ok, true); assert.equal(r.kind, 'Existing client');
+      const rec = JSON.parse(written(w.calls, '900')[C.consultPayment]);
+      assert.deepEqual({ ...rec, at: undefined, on: undefined }, { kind: 'waived', amountCents: 0, hstCents: 0, on: undefined, reference: '', note: 'Existing client — about <their> current file', by: 'Faran Test', at: undefined, verified: true, package: 'skip', packageNote: 'Direct consultation — booked outside the app' }, 'today\'s record shape — the reason is the note, nothing new is stored');
+      const note = w.calls.notes.find((x) => x.id === '900' && /Direct consultation added by Faran Test/.test(x.body));
+      assert.ok(note, 'the note on the row');
+      assert.match(note.body, / · Waived on \d{4}-\d{2}-\d{2} by Faran Test · reason: Existing client — about &lt;their&gt; current file · Existing client/);
+      assert.ok(!note.body.includes('<their>'), 'escaped');
+      assert.equal(w.calls.pkg.length, 0); assert.equal(w.calls.meetings, 0);
+    } finally { w.restore(); }
+  });
 });

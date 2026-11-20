@@ -106,6 +106,9 @@ function dqFormHtml() {
     '<input id="dq-fee" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 300.00">',
     '<div class="dq-total" id="dq-total" style="display:none"></div>',
     '<label class="dq-l" for="dq-paidon">Date paid</label><input id="dq-paidon" type="date">',
+    // "Free": the reason is required (Gauri B3, 2026-11-20) — it is the fee record's own note. Shown only for "Free".
+    '<div id="dq-reason-w" style="display:none"><label class="dq-l" for="dq-reason">Why is it free? *</label>',
+    '<input id="dq-reason" type="text" maxlength="200" autocomplete="off" placeholder="e.g. existing client — question about their current file"></div>',
     '</div>',
     '<label class="dq-l" for="dq-about">What it is about * <span class="dq-h">(one short line)</span></label><input id="dq-about" type="text" maxlength="200" autocomplete="off" placeholder="e.g. spousal sponsorship, study permit extension…">',
     '<label class="dq-l" for="dq-casetype">Case type <span class="dq-h">(optional)</span></label><select id="dq-casetype"><option value="">— not sure yet —</option></select>',
@@ -154,6 +157,8 @@ function dqDayDiff(a,b){ var x=String(a).split('-'), y=String(b).split('-'); ret
 function dqMoney(c){ return '$'+(Number(c||0)/100).toFixed(2); }
 function dqCents(v){ var s=String(v==null?'':v).replace(/[^0-9.]/g,''); if(!s) return NaN; var n=Number(s); return isFinite(n)?Math.round(n*100):NaN; }
 function dqNorm(n){ return String(n||'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/ +/g,' ').trim(); }
+/* "Free" for an existing client about their current file: the reason box opens with these words (Faran 2026-11-20); staff can keep or change them. */
+var DQ_REASON_EXISTING='Existing client — about their current file';
 
 /* The button: shown only when the server says this person may use it. */
 function dqInitButton(){
@@ -191,7 +196,7 @@ function openDirectConsult(){
   var box=dlg.box; box.innerHTML=DQ_FORM;
   var run=dlg.openId;
   function q(id){ return box.querySelector('#'+id); }
-  var st={ match:null, matchSeq:0, matchTimer:null, feeTouched:false, lenTouched:false, blHit:false, clashAck:false, live:[] };
+  var st={ match:null, matchSeq:0, matchTimer:null, feeTouched:false, lenTouched:false, blHit:false, clashAck:false, live:[], reasonAuto:false, reasonTouched:false };
   var ref=tdotRef('dq');
 
   /* Fill the lists from the options. */
@@ -235,7 +240,16 @@ function openDirectConsult(){
     Array.prototype.forEach.call(q('dq-fees').querySelectorAll('[data-fee]'),function(b){
       b.onclick=function(){ st.feeTouched=true; q('dq-fee').value=(Number(b.getAttribute('data-fee'))/100).toFixed(2); syncTotal(); };
     });
-    syncTotal();
+    syncTotal(); syncReason();
+  }
+  /* "Why is it free?" — shown for "Free" only. For an existing client about their current file it opens already
+     filled; any other case it is empty and must be typed. Words the app filled in and staff did not edit are taken
+     out again when the answer is no longer "existing client" + "Free", so they never ride on a new client. */
+  function syncReason(){
+    var el=q('dq-reason'), free=radio('dq-pay')==='waived', existing=radio('dq-choice')==='existing';
+    q('dq-reason-w').style.display=free?'':'none';
+    if(free && existing){ if(!st.reasonTouched && !String(el.value||'').trim()){ el.value=DQ_REASON_EXISTING; st.reasonAuto=true; } }
+    else if(st.reasonAuto){ el.value=''; st.reasonAuto=false; }
   }
   function syncTotal(){
     var kind=radio('dq-pay'), t=q('dq-total');
@@ -269,7 +283,7 @@ function openDirectConsult(){
   function syncChoice(){
     var existing=radio('dq-choice')==='existing';
     q('dq-src-w').style.display=existing?'none':'';
-    renderMatch(); syncPackage();
+    renderMatch(); syncPackage(); syncReason();
   }
 
   /* ── The live look-up: what the app already has for this email / phone, grouped by person ── */
@@ -348,6 +362,7 @@ function openDirectConsult(){
   Array.prototype.forEach.call(box.querySelectorAll('input[name="dq-how"]'),function(r){ r.onchange=function(){ clearServer(); syncPackage(); }; });
   Array.prototype.forEach.call(box.querySelectorAll('input[name="dq-pay"]'),function(r){ r.onchange=function(){ syncFees(); syncPackage(); }; });
   q('dq-fee').addEventListener('input',function(){ st.feeTouched=true; syncTotal(); });
+  q('dq-reason').addEventListener('input',function(){ st.reasonAuto=false; st.reasonTouched=true; });
   Array.prototype.forEach.call(box.querySelectorAll('input[name="dq-inca"]'),function(r){ r.onchange=function(){ q('dq-country-w').style.display=(radio('dq-inca')==='No')?'':'none'; syncTotal(); }; });
   q('dq-country').onchange=syncTotal;
   q('dq-pkg').onchange=syncPackage;
@@ -379,6 +394,7 @@ function openDirectConsult(){
     if(kind!=='none'){
       if(kind!=='waived'){ var c=dqCents(q('dq-fee').value); if(isNaN(c)||c<=0) return fail('Enter the fee before HST, in dollars and cents — or tap a price.',q('dq-fee')); payment.amountCents=c; }
       payment.on=q('dq-paidon').value||today;
+      if(kind==='waived'){ var why=String(q('dq-reason').value||'').trim(); if(why.length<3) return fail('Write why this consultation is free.',q('dq-reason')); payment.note=why; }
     }
     var about=q('dq-about').value.trim(); if(about.length<3) return fail('Say in one short line what the consultation is about.',q('dq-about'));
     var bookedBy=q('dq-bookedby').value; if(!bookedBy) return fail('Choose who booked it.',q('dq-bookedby'));

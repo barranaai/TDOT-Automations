@@ -1157,8 +1157,9 @@ test('page row — Not paid: red for a consultation still to happen and for a pa
     assert.equal(paid({ bookedSlot: slot }), PAID_DASH, 'no date: ' + String(slot));
     assert.equal(cells({ bookedSlot: slot })[0], '<td><span class="pill grey">no date</span></td>', 'and the Date cell says so — one rule for both');
   }
-  // any payment: exactly what the shared pill says (it is not touched)
-  assert.equal(paid({ bookedSlot: '2026-11-13 09:00', paid: 'waived', paidCents: 0, paidBy: 'Staff Two', paidOn: '2026-11-10', paidVerified: true }), '<td><span class="pill grey" title="Waived · recorded by Staff Two on 2026-11-10">Waived</span></td>');
+  // any payment: exactly what the shared pill says (the red mark does not touch it). Waived: the hover text ends with the reason (2026-11-20)
+  assert.equal(paid({ bookedSlot: '2026-11-13 09:00', paid: 'waived', paidCents: 0, paidBy: 'Staff Two', paidOn: '2026-11-10', paidVerified: true, paidNote: 'family of a client' }), '<td><span class="pill grey" title="Waived · recorded by Staff Two on 2026-11-10 · reason: family of a client">Waived</span></td>');
+  assert.equal(paid({ bookedSlot: '2026-11-13 09:00', paid: 'waived', paidCents: 0, paidBy: 'Staff Two', paidOn: '2026-11-10', paidVerified: true }), '<td><span class="pill grey" title="Waived · recorded by Staff Two on 2026-11-10 · no reason recorded">Waived</span></td>', 'a waiver from before the reason was required');
   assert.equal(paid({ bookedSlot: '2026-11-13 09:00', paid: 'app', paidCents: 22600 }), '<td><span class="pill green">Paid (app) $226</span></td>');
   assert.equal(paid({ bookedSlot: '2026-11-13 09:00', paid: 'app', paidCents: null }), '<td><span class="pill green">Paid (app)</span></td>', 'the whole-firm free setting marks the row paid by the app — never red');
   assert.equal(paid({ bookedSlot: '2026-11-03 10:00', paid: 'cash', paidCents: 20000, paidBy: 'Staff One' }), '<td><span class="pill green" title="Cash · recorded by Staff One (name as typed)">Cash $200</span></td>');
@@ -1171,7 +1172,7 @@ test('page row — Not paid: red for a consultation still to happen and for a pa
   // where it lives: once, in the Consultations row — the shared pill and the Retainers page do not have it
   assert.equal(html.split('No payment is recorded and the consultation is not marked free').length - 1, 1);
   assert.ok(pick('rowHtml').includes('var unpaid=!c.paid&&!c.done&&!!dParts(String(c.bookedSlot||\'\').slice(0,10));'));
-  assert.ok(!pick('paidPill').includes('Not paid') && !pick('paidPill').includes('red'), 'paidPill is not touched');
+  assert.ok(!pick('paidPill').includes('Not paid') && !pick('paidPill').includes('red'), 'the red mark is not in paidPill');
   assert.ok(pick('paidPill').includes("if(!c.paid) return '<span class=\"pill grey\">—</span>';"));
   const r = require('../src/routes/adminConsultation').buildRetainersHTML();
   assert.ok(!r.includes('No payment is recorded') && !r.includes('var unpaid='), 'not on the Retainers & follow-ups page');

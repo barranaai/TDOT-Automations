@@ -3281,6 +3281,8 @@ function consultRow(l, consultPayment) {
     preConsultSubmitted: s(l.preConsultSubmitted) === 'Yes',
     agreementSent: s(l.consultAgreementSent), agreementSigned: s(l.consultAgreementSigned),
     paid: ps.paid, paidCents: ps.paidCents, paidBy: ps.by, paidOn: ps.on, paidVerified: ps.verified,
+    // A waived fee: its reason, for the hover text of the "Waived" pill ('' = an older record with none). Only on a waived row.
+    ...(ps.paid === 'waived' ? { paidNote: ps.note } : {}),
     outcome: consultOutcomeText(l.outcome), followUpDate: s(l.followUpDate),   // never the lead-only Webinar: the consultation still needs its outcome
     consultationHeld: s(l.consultationHeld), hasMeeting: !!s(l.meetingLink),
     tier: s(l.tier), createdAt: l.createdAt || '',
@@ -3323,6 +3325,7 @@ function retainerRow(l, consultPayment) {
     caseDeleted: s(l.clientMasterItemId) ? '' : s(l.caseDeleted),   // its case was deleted, this record kept (point 8)
     bookedSlot: s(l.bookedSlot), outcome: oc || s(l.outcome), followUpDate: s(l.followUpDate), createdAt: l.createdAt || '',
     paid: ps.paid, paidCents: ps.paidCents, paidBy: ps.by, paidOn: ps.on, paidVerified: ps.verified,
+    ...(ps.paid === 'waived' ? { paidNote: ps.note } : {}),   // the reason, for the "Waived" pill's hover text — only on a waived row
     ...adminOnlyDelete(l),
   };
 }

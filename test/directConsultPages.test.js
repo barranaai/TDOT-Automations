@@ -291,12 +291,131 @@ test('pop-up: video is never offered the package; Free sends no amount; outside 
   assert.equal(w.el('dq-total').textContent, 'Fee $300.00 — no HST (outside Canada)');
   w.pickRadio('dq-pay', 'waived');
   assert.equal(w.el('dq-fee').style.display, 'none');
+  w.type('dq-reason', 'family of a client');   // "Free" needs its reason (2026-11-20)
   w.type('dq-about', 'visitor visa'); w.el('dq-source').value = 'Walk-in'; w.pickRadio('dq-sq', 'no');
   w.el('dq-save').onclick();
   await w.settle();
   const b = w.posts[0].body;
-  assert.equal(b.payment.kind, 'waived'); assert.equal('amountCents' in b.payment, false);
+  assert.equal(b.payment.kind, 'waived'); assert.equal('amountCents' in b.payment, false); assert.equal(b.payment.note, 'family of a client');
   assert.equal(b.inSquare, false); assert.equal(b.inCanada, 'No'); assert.equal(b.currentCountry, 'India');
+});
+
+/* ── "Free" needs a reason (Gauri B3, 2026-11-20) ── */
+
+/** A form filled in up to the payment: a new client, a time ahead, in person. */
+function filled(w, { choice = 'new', when = torontoIn(3 * DAY).slice(0, 10) + 'T11:00' } = {}) {
+  w.type('dq-name', 'Asha Example'); w.type('dq-email', 'asha@example.com');
+  w.pickRadio('dq-choice', choice);
+  w.el('dq-consultant').value = 'Shafoli Kapur'; w.el('dq-consultant').onchange();
+  w.pickRadio('dq-how', 'In-person');
+  w.type('dq-when', when, 'change');
+  w.type('dq-about', 'question about the file'); w.el('dq-source').value = 'Walk-in'; w.pickRadio('dq-sq', 'yes');
+}
+
+test('pop-up: "Why is it free? *" — one box (id dq-reason) inside the payment block, shown only for "Free"; Save with it empty says so and sends nothing; with words they travel as payment.note', async () => {
+  const form = DQ.dqFormHtml();
+  assert.equal(form.split('id="dq-reason"').length - 1, 1, 'built once');
+  assert.ok(form.includes('<div id="dq-reason-w" style="display:none"><label class="dq-l" for="dq-reason">Why is it free? *</label><input id="dq-reason" type="text" maxlength="200" autocomplete="off" placeholder="e.g. existing client — question about their current file"></div>'));
+  assert.ok(form.indexOf('id="dq-paidon"') < form.indexOf('id="dq-reason"') && form.indexOf('id="dq-reason"') < form.indexOf('id="dq-about"'), 'after "Date paid", inside the payment block');
+  assert.ok(form.slice(form.indexOf('id="dq-fee-w"'), form.indexOf('id="dq-about"')).includes('id="dq-reason"'));
+  for (const id of ['dq-fee-w', 'dq-paidon', 'dq-fee', 'dq-pay']) assert.ok(form.includes('id="' + id + '"'), 'kept: ' + id);
+  assert.match(DQ.DQ_CSS, /\.dq input\[type=text\][^{]*\{[^}]*font-size:16px/, 'a text box like the others: 16px, full width (a phone does not zoom in)');
+
+  const w = popupWorld();
+  filled(w);
+  assert.equal(w.el('dq-reason-w').style.display, 'none', 'nothing chosen yet');
+  for (const kind of ['square', 'cash', 'e-transfer', 'none']) { w.pickRadio('dq-pay', kind); assert.equal(w.el('dq-reason-w').style.display, 'none', kind + ': no reason box'); }
+  w.pickRadio('dq-pay', 'waived');
+  assert.equal(w.el('dq-reason-w').style.display, '', '"Free": the box shows');
+  assert.equal(w.el('dq-reason').value, '', 'a new client: empty, it must be typed');
+  for (const typed of ['', '  ', 'no']) {
+    w.el('dq-reason').value = typed;
+    w.el('dq-save').onclick();
+    assert.equal(w.el('dq-err').textContent, 'Write why this consultation is free.', JSON.stringify(typed));
+    assert.equal(w.posts.length, 0, 'nothing is sent');
+    assert.equal(w.dlg.closed, undefined, 'the form stays open');
+  }
+  w.type('dq-reason', '  family of an existing client ');
+  w.el('dq-save').onclick();
+  await w.settle();
+  assert.equal(w.posts.length, 1);
+  const p = w.posts[0].body.payment;
+  assert.deepEqual(Object.keys(p).sort(), ['kind', 'note', 'on']);
+  assert.equal(p.kind, 'waived'); assert.equal(p.note, 'family of an existing client'); assert.equal('amountCents' in p, false);
+  // a paid kind and "Not paid yet" never send a note
+  for (const kind of ['cash', 'none']) {
+    const w2 = popupWorld(); filled(w2);
+    w2.pickRadio('dq-pay', 'waived'); w2.type('dq-reason', 'typed, then the payment was changed');
+    w2.pickRadio('dq-pay', kind);
+    w2.el('dq-save').onclick(); await w2.settle();
+    assert.equal(w2.posts.length, 1, kind);
+    assert.equal('note' in w2.posts[0].body.payment, false, kind + ': no note travels');
+  }
+  // the form is built fresh at every opening: the box is empty again
+  const again = popupWorld(); filled(again); again.pickRadio('dq-pay', 'waived');
+  assert.equal(again.el('dq-reason').value, '');
+});
+
+test('pop-up: "Existing client: about their current file" + "Free" — the reason box opens ALREADY FILLED; staff can keep or change it; unedited words never ride on a new client', async () => {
+  const WORDS = 'Existing client — about their current file';
+  assert.ok(DQ.DQ_JS.includes("var DQ_REASON_EXISTING='" + WORDS + "';"));
+  // existing first, then Free
+  let w = popupWorld(); filled(w, { choice: 'existing' });
+  w.pickRadio('dq-pay', 'waived');
+  assert.equal(w.el('dq-reason-w').style.display, '');
+  assert.equal(w.el('dq-reason').value, WORDS, 'pre-filled');
+  w.el('dq-save').onclick(); await w.settle();
+  assert.equal(w.posts.length, 1, 'kept as it is: it saves');
+  assert.deepEqual([w.posts[0].body.choice, w.posts[0].body.payment.kind, w.posts[0].body.payment.note], ['existing', 'waived', WORDS]);
+  // Free first, then existing
+  w = popupWorld(); filled(w);
+  w.pickRadio('dq-pay', 'waived');
+  assert.equal(w.el('dq-reason').value, '', 'a new client: empty');
+  w.pickRadio('dq-choice', 'existing');
+  assert.equal(w.el('dq-reason').value, WORDS, 'filled when the choice becomes "existing client"');
+  // changed back to a new client without touching the words: taken out again, and it must be typed
+  w.pickRadio('dq-choice', 'new');
+  assert.equal(w.el('dq-reason').value, '', 'cleared — a pre-filled reason never rides on a new client');
+  w.el('dq-save').onclick();
+  assert.equal(w.el('dq-err').textContent, 'Write why this consultation is free.');
+  assert.equal(w.posts.length, 0);
+  // pre-filled, then the payment changes away from Free: cleared too (and not sent)
+  w.pickRadio('dq-choice', 'existing');
+  assert.equal(w.el('dq-reason').value, WORDS);
+  w.pickRadio('dq-pay', 'cash');
+  assert.equal(w.el('dq-reason').value, '');
+  assert.equal(w.el('dq-reason-w').style.display, 'none');
+  w.pickRadio('dq-pay', 'waived');
+  assert.equal(w.el('dq-reason').value, WORDS, 'and back');
+  // staff CHANGE the words: theirs are kept, whatever is chosen next — the app never overwrites or removes typed text
+  w.type('dq-reason', 'Existing client — about their current file, PR card renewal');
+  w.pickRadio('dq-choice', 'new');
+  assert.equal(w.el('dq-reason').value, 'Existing client — about their current file, PR card renewal', 'edited words are staff\'s own');
+  w.pickRadio('dq-choice', 'existing');
+  assert.equal(w.el('dq-reason').value, 'Existing client — about their current file, PR card renewal', 'never overwritten');
+  // staff EMPTY the box: it is not filled in again behind their back
+  w = popupWorld(); filled(w, { choice: 'existing' }); w.pickRadio('dq-pay', 'waived');
+  w.type('dq-reason', '');
+  w.pickRadio('dq-pay', 'cash'); w.pickRadio('dq-pay', 'waived');
+  assert.equal(w.el('dq-reason').value, '', 'emptied by staff: left empty');
+  w.el('dq-save').onclick();
+  assert.equal(w.el('dq-err').textContent, 'Write why this consultation is free.');
+  // a reason typed for a new client is kept when the choice becomes "existing client"
+  w = popupWorld(); filled(w); w.pickRadio('dq-pay', 'waived'); w.type('dq-reason', 'staff family');
+  w.pickRadio('dq-choice', 'existing');
+  assert.equal(w.el('dq-reason').value, 'staff family');
+});
+
+test('pop-up: the server refuses "Free" with no reason (a page left open from before) — the form stays OPEN with what was typed and shows the server\'s words', async () => {
+  const words = 'Write the reason the fee is waived (why the consultation is free) — nothing was saved. If you cannot see a box for the reason, reload the page first.';
+  const w = popupWorld({ answer: { s: 400, j: { error: words } } });
+  filled(w); w.pickRadio('dq-pay', 'waived'); w.type('dq-reason', 'family of an existing client');
+  w.el('dq-save').onclick(); await w.settle();
+  assert.equal(w.posts.length, 1);
+  assert.equal(w.el('dq-err').textContent, words);
+  assert.equal(w.dlg.closed, undefined, 'still open');
+  assert.deepEqual([w.el('dq-name').value, w.el('dq-email').value, w.el('dq-about').value, w.el('dq-reason').value], ['Asha Example', 'asha@example.com', 'question about the file', 'family of an existing client'], 'nothing typed is lost');
+  assert.equal(w.ctx.reloaded, undefined, 'the list is not re-read: nothing was saved');
 });
 
 test('pop-up: the look-up finds a live booking for the person — saving needs "This is a different consultation"', async () => {

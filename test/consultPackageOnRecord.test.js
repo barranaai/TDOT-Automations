@@ -71,7 +71,7 @@ test('validateRecord: carries the package choice, its reason and the booking; an
   const v = (o) => cp.validateRecord(o, { today: '2026-10-16', nowWall: NOW_WALL });
   const r = v({ kind: 'cash', amountCents: 20000, package: 'send', booking: { date: '2026-10-20', time: '11:00', consultant: 'Shafoli Kapur', meetingType: 'Virtual', durationMin: 30 } });
   assert.equal(r.ok, true); assert.equal(r.normalized.package, 'send'); assert.equal(r.normalized.booking.slot, '2026-10-20 11:00');
-  assert.deepEqual(v({ kind: 'waived', package: 'skip', packageNote: '  returning   client ' }).normalized, { kind: 'waived', amountCents: 0, on: '2026-10-16', reference: '', note: '', package: 'skip', packageNote: 'returning client', booking: null });
+  assert.deepEqual(v({ kind: 'waived', note: 'family of a client', package: 'skip', packageNote: '  returning   client ' }).normalized, { kind: 'waived', amountCents: 0, on: '2026-10-16', reference: '', note: 'family of a client', package: 'skip', packageNote: 'returning client', booking: null });
   assert.equal(v({ kind: 'cash', amountCents: 1, package: 'maybe' }).ok, false);
   assert.match(v({ kind: 'cash', amountCents: 1, package: 'send', booking: { date: '2026-10-20' } }).error, /time/);
   // stored, read back
@@ -357,7 +357,7 @@ test('apply: a paid "No — they already have them" (reason) and a waived "No" r
   } finally { w.done(); }
   w = world();
   try {
-    const r = await apply({ kind: 'waived', on: TODAY_TO, package: 'skip' });
+    const r = await apply({ kind: 'waived', note: 'family of a client', on: TODAY_TO, package: 'skip' });
     assert.equal(w.writes.length, 1, 'no booking given: only the record');
     assert.equal(w.autoCalls.length, 0);
     assert.match(r.message, /were NOT emailed — you chose not to\./);
@@ -368,7 +368,7 @@ test('apply: a paid "No — they already have them" (reason) and a waived "No" r
 test('apply: a waived "Yes" sends like a paid one', withEnv(ON, async () => {
   const w = world();
   try {
-    const r = await apply({ kind: 'waived', on: TODAY_TO, package: 'send', booking: BK() });
+    const r = await apply({ kind: 'waived', note: 'family of a client', on: TODAY_TO, package: 'send', booking: BK() });
     assert.equal(r.package, 'sent'); assert.equal(w.autoCalls.length, 1);
   } finally { w.done(); }
 }));
@@ -598,7 +598,7 @@ test('R1 apply: "No" after the consultation — the past time is left alone; "No
   } finally { w.done(); }
   w = world({ lead: { bookingStatus: 'Booked', bookedSlot: `${day(3)} 11:00`, meetingType: 'In-person', assignedConsultant: 'Shermin Teymouri Mofrad', consultOption: JSON.stringify({ durationMin: 30 }) } });
   try {
-    const r = await apply({ kind: 'waived', on: TODAY_TO, package: 'skip', booking: BK() });
+    const r = await apply({ kind: 'waived', note: 'family of a client', on: TODAY_TO, package: 'skip', booking: BK() });
     assert.equal(w.writes.length, 1, 'unchanged booking: nothing written');
     assert.match(r.message, /The booking reminders still go out\./);
   } finally { w.done(); }
@@ -832,12 +832,12 @@ test('R2 gate: a save whose booking failed retires a package an earlier save lef
 test('R2/R3 "No" + video: an unchanged booking counts as unchanged only when its meeting exists and its length is stored and equal', withEnv(ON, async () => {
   let w = world({ lead: { bookingStatus: 'Booked', bookedSlot: `${day(3)} 11:00`, meetingType: 'Virtual', assignedConsultant: 'Shermin Teymouri Mofrad', consultOption: JSON.stringify({ durationMin: 30 }) } });
   try {
-    await apply({ kind: 'waived', on: TODAY_TO, package: 'skip', booking: BK({ meetingType: 'Virtual' }) });
+    await apply({ kind: 'waived', note: 'family of a client', on: TODAY_TO, package: 'skip', booking: BK({ meetingType: 'Virtual' }) });
     assert.equal(w.meetings.length, 1, 'no link yet: the meeting is (re)tried');
   } finally { w.done(); }
   w = world({ lead: { bookingStatus: 'Booked', bookedSlot: `${day(3)} 11:00`, meetingType: 'In-person', assignedConsultant: 'Shermin Teymouri Mofrad' } });
   try {
-    await apply({ kind: 'waived', on: TODAY_TO, package: 'skip', booking: BK() });
+    await apply({ kind: 'waived', note: 'family of a client', on: TODAY_TO, package: 'skip', booking: BK() });
     assert.equal(w.writes.length, 2, 'no stored length (booked by hand): the length staff chose is written (round 3)');
     assert.equal(JSON.parse(w.writes[1].fields.consultOption).durationMin, 30);
   } finally { w.done(); }

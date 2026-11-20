@@ -230,7 +230,9 @@ function paidPill(c){
   if(!c.paid) return '<span class="pill grey">—</span>';
   var label=Object.prototype.hasOwnProperty.call(PAID_LABELS,c.paid)?PAID_LABELS[c.paid]:String(c.paid);
   var who=c.paidBy?(' · recorded by '+c.paidBy+(c.paidVerified?'':' (name as typed)')+(c.paidOn?(' on '+c.paidOn):'')):'';
-  return '<span class="pill '+(c.paid==='waived'?'grey':'green')+'" title="'+escHtml(label+who)+'">'+escHtml(label+amt)+'</span>';
+  /* Waived: the hover text also says why (a waiver made before 2026-11-20 may have no reason). */
+  var why=c.paid==='waived'?(c.paidNote?(' · reason: '+c.paidNote):' · no reason recorded'):'';
+  return '<span class="pill '+(c.paid==='waived'?'grey':'green')+'" title="'+escHtml(label+who+why)+'">'+escHtml(label+amt)+'</span>';
 }
 function outcomeCell(c){
   var o=c.outcome, cls=o==='Retain'?'green':o==='Follow-Up'?'amber':o==='Not Wanted'?'red':'grey';
@@ -1524,7 +1526,9 @@ function hydrateConsultPayment(d){
     st.textContent=cp.paid==='waived'?'Waived':('Paid — '+(CP_LABELS[cp.paid]||cp.paid));
     h+=kv('How',CP_LABELS[cp.paid]||cp.paid);
     if(cp.paid!=='waived') h+=kv('Fee received',(cp.paidCents!=null?cpMoney(cp.paidCents):'amount not recorded')+' (before HST)');
-    h+=kv(cp.paid==='waived'?'Waived on':'Received on',cp.on)+kv('Recorded by',(cp.by||'')+(cp.by&&!cp.verified?' (name as typed)':''))+kv('Reference',cp.reference)+kv('Note',cp.note);
+    h+=kv(cp.paid==='waived'?'Waived on':'Received on',cp.on)+kv('Recorded by',(cp.by||'')+(cp.by&&!cp.verified?' (name as typed)':''))+kv('Reference',cp.reference)+
+      /* A waived fee: the note is its reason — the row always shows (an older waiver may have none). */
+      (cp.paid==='waived'?kv('Reason',cp.note||'not recorded'):kv('Note',cp.note));
     rec.style.display=''; rec.innerHTML=ICONS.dollar+' Change record'; clr.style.display='';
   } else {
     st.textContent='Not recorded';
@@ -1688,7 +1692,7 @@ function openConsultPaymentModal(d, clear){
         '<input id="cp-amt" type="text" inputmode="decimal" autocomplete="off" value="'+(feeDefault?(feeDefault/100).toFixed(2):'')+'"><div class="paym-hint" id="cp-amt-hint"></div></div>'+
         '<label for="cp-on">Date received</label><input id="cp-on" type="date" max="'+cpTodayStr()+'" value="'+payEsc((cur&&cur.on)?cur.on:cpTodayStr())+'">'+
         '<label for="cp-ref">Reference <span class="paym-muted">(optional — e-transfer or invoice number)</span></label><input id="cp-ref" type="text" maxlength="120" autocomplete="off" value="'+payEsc(cur?(cur.reference||''):'')+'">'+
-        '<label for="cp-note">Note <span class="paym-muted">(optional — e.g. why the fee was waived)</span></label><input id="cp-note" type="text" maxlength="200" autocomplete="off" value="'+payEsc(cur?(cur.note||''):'')+'">'+
+        '<label for="cp-note" id="cp-note-l">Note <span class="paym-muted">(optional)</span></label><input id="cp-note" type="text" maxlength="200" autocomplete="off" value="'+payEsc(cur?(cur.note||''):'')+'">'+
         cpPackageSection(orc, asks);
     }
     h+=(v.signedIn
@@ -1702,7 +1706,15 @@ function openConsultPaymentModal(d, clear){
     dlg.box.querySelector('[data-x]').onclick=dlg.close;
     var kindEl=dlg.box.querySelector('#cp-kind'), amtWrap=dlg.box.querySelector('#cp-amt-wrap'), amtEl=dlg.box.querySelector('#cp-amt'), hint=dlg.box.querySelector('#cp-amt-hint');
     var pk=asks?cpPackageBind(dlg.box, orc, cur, kindEl, amtEl, function(send){ dlg.box.querySelector('[data-go]').textContent=send?(cur?'Save & email':'Record & email'):goLabel; }):null;
-    function syncKind(){ if(!kindEl||!amtWrap) return; amtWrap.style.display=(kindEl.value==='waived')?'none':''; if(pk) pk.kindChanged(); }
+    /* The one note box: for "Waived — no fee" it is the reason, and it is required (2026-11-20). */
+    var noteL=dlg.box.querySelector('#cp-note-l');
+    function syncKind(){
+      if(!kindEl||!amtWrap) return;
+      var w=kindEl.value==='waived';
+      amtWrap.style.display=w?'none':'';
+      if(noteL) noteL.innerHTML=w?'Reason the fee is waived *':'Note <span class="paym-muted">(optional)</span>';
+      if(pk) pk.kindChanged();
+    }
     function refreshHint(){
       if(!amtEl||!hint) return;
       var c=payParseCents(amtEl.value);
@@ -1721,7 +1733,10 @@ function openConsultPaymentModal(d, clear){
         var kind=kindEl.value, cents=null;
         if(kind!=='waived'){ cents=payParseCents(amtEl.value); if(isNaN(cents)||cents<=0){ err.textContent='Enter the fee received, in dollars and cents.'; amtEl.focus(); return; } }
         var on=dlg.box.querySelector('#cp-on').value; if(!on){ err.textContent='Enter the date received.'; return; }
-        payload={kind:kind, amountCents:cents, on:on, reference:dlg.box.querySelector('#cp-ref').value.trim(), note:dlg.box.querySelector('#cp-note').value.trim()};
+        var noteEl=dlg.box.querySelector('#cp-note'), note=noteEl.value.trim();
+        /* Waived: no reason, no save — checked here, before the box closes, so nothing typed is lost. */
+        if(kind==='waived'&&note.length<3){ err.textContent='Write the reason the fee is waived.'; noteEl.focus(); return; }
+        payload={kind:kind, amountCents:cents, on:on, reference:dlg.box.querySelector('#cp-ref').value.trim(), note:note};
         if(pk){ var pr=pk.collect(kind); if(pr.error){ err.textContent=pr.error; if(pr.focus) pr.focus.focus(); return; } payload.package=pr.package; payload.packageNote=pr.packageNote; if(pr.booking) payload.booking=pr.booking; }
       }
       if(byEl) paySaveName(by);

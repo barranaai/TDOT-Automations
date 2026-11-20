@@ -61,7 +61,7 @@ test('recording or removing a payment drops the cached agreement copy (its "has 
     stub(cas, 'evictCache', (id) => { evicted.push(String(id)); return true; }),
   ];
   try {
-    await portal.applyAction({ leadId: '41', action: 'recordConsultPayment', value: { kind: 'waived' }, staffName: 'Melanie', actor: { name: 'Melanie', verified: false } });
+    await portal.applyAction({ leadId: '41', action: 'recordConsultPayment', value: { kind: 'waived', note: 'returning client' }, staffName: 'Melanie', actor: { name: 'Melanie', verified: false } });
     await portal.applyAction({ leadId: '41', action: 'recordConsultPayment', value: { kind: 'clear' }, staffName: 'Melanie', actor: { name: 'Melanie', verified: false } });
     assert.deepEqual(evicted, ['41', '41']);
   } finally { restore.reverse().forEach((x) => x()); }
@@ -224,7 +224,7 @@ test('ROUND 2: editing a record with the same amount keeps the HST fixed when it
     assert.equal(writes[0].hstCents, 2600, 'same amount → the HST fixed at first record survives a later move abroad');
     await portal.applyAction({ leadId: '43', action: 'recordConsultPayment', value: { kind: 'cash', amountCents: 25000, on: '2026-10-14' }, staffName: 'M', actor: { name: 'M', verified: false } });
     assert.equal(writes[1].hstCents, 0, 'a new amount → the HST from where the client is now (abroad)');
-    const r = await portal.applyAction({ leadId: '43', action: 'recordConsultPayment', value: { kind: 'waived' }, staffName: 'M', actor: { name: 'M', verified: false } });
+    const r = await portal.applyAction({ leadId: '43', action: 'recordConsultPayment', value: { kind: 'waived', note: 'returning client' }, staffName: 'M', actor: { name: 'M', verified: false } });
     assert.match(r.message, /^Recorded — the consultation fee is waived\. The consultation agreement already sent for signature keeps the earlier amount/);
   } finally { restore.reverse().forEach((x) => x()); }
 });

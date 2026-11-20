@@ -83,7 +83,7 @@ test('paidState: the booking-link payment outranks a staff record; a staff recor
   assert.equal(odd.paid, 'cash'); assert.equal(odd.paidCents, null);
   assert.equal(cp.describe(odd.record), 'Cash (amount not recorded) received 2026-10-01 by Melanie (name as typed)');
   assert.equal(cp.describe(rec), 'Cash $200.00 received 2026-10-14 by Melanie (name as typed) · ref r · note: n');
-  assert.equal(cp.describe({ kind: 'waived', amountCents: 0, on: '2026-10-01', by: 'Gauri Berde', verified: true, reference: '', note: 'referral' }), 'Waived on 2026-10-01 by Gauri Berde · note: referral');
+  assert.equal(cp.describe({ kind: 'waived', amountCents: 0, on: '2026-10-01', by: 'Gauri Berde', verified: true, reference: '', note: 'referral' }), 'Waived on 2026-10-01 by Gauri Berde · reason: referral', 'a waived record\'s note is its reason (2026-11-20)');
 });
 
 /* ── the action ── */
@@ -138,11 +138,11 @@ test('apply: waived — no amount, 🆓 note; "clear" empties the column (a real
     const r1 = await portal.applyAction({ leadId: '555', action: 'recordConsultPayment', value: { kind: 'waived', note: 'referred by an existing client' }, actor: w.actor });
     assert.equal(r1.message, 'Recorded — the consultation fee is waived.');
     assert.equal(JSON.parse(w.writes[0].fields.consultPayment).amountCents, 0);
-    assert.match(w.notes[0], /^🧑‍💼 <b>\[Consultant portal\]<\/b> 🆓 Consultation fee waived — Waived on \d{4}-\d{2}-\d{2} by Gauri Berde · note: referred by an existing client\./);
+    assert.match(w.notes[0], /^🧑‍💼 <b>\[Consultant portal\]<\/b> 🆓 Consultation fee waived — Waived on \d{4}-\d{2}-\d{2} by Gauri Berde · reason: referred by an existing client\./);
     const r2 = await portal.applyAction({ leadId: '555', action: 'recordConsultPayment', value: { kind: 'clear' }, actor: w.actor });
     assert.deepEqual(r2, { ok: true, message: 'The consultation payment record was removed.', consultPayment: null });
     assert.deepEqual(w.writes[1], { id: '555', fields: { consultPayment: '' }, opts: { clearKeys: ['consultPayment'] } });
-    assert.match(w.notes[1], /🗑 Consultation fee record removed by Gauri Berde — was: Waived on \d{4}-\d{2}-\d{2} by Gauri Berde · note: referred by an existing client\./);
+    assert.match(w.notes[1], /🗑 Consultation fee record removed by Gauri Berde — was: Waived on \d{4}-\d{2}-\d{2} by Gauri Berde · reason: referred by an existing client\./);
     assert.equal(cp.paidState(w.state.lead).paid, '');
     await assert.rejects(portal.applyAction({ leadId: '555', action: 'recordConsultPayment', value: { kind: 'clear' }, actor: w.actor }), (e) => e.badRequest && /No consultation payment is recorded/.test(e.message));
     assert.equal(w.writes.length, 2, 'a refused clear writes nothing');
@@ -152,7 +152,7 @@ test('apply: waived — no amount, 🆓 note; "clear" empties the column (a real
 test('apply: REFUSED when the fee was paid through the booking link (every kind, clear too); REFUSED with no name; nothing is written either way', async () => {
   const w = world({ lead: { squareConsultTxnId: 'SQ9', consultOption: JSON.stringify({ durationMin: 30, feeCents: 20000, paidCents: 22600 }) }, signedIn: true });
   try {
-    for (const value of [{ kind: 'cash', amountCents: 20000 }, { kind: 'waived' }, { kind: 'clear' }]) {
+    for (const value of [{ kind: 'cash', amountCents: 20000 }, { kind: 'waived', note: 'agreed by phone' }, { kind: 'clear' }]) {
       await assert.rejects(portal.applyAction({ leadId: '555', action: 'recordConsultPayment', value, actor: w.actor }),
         (e) => e.badRequest && /paid through the booking link \(\$226\.00 incl\. HST\) — there is nothing to record here\. A refund is done in Square\./.test(e.message), JSON.stringify(value));
     }
