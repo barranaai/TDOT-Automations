@@ -713,7 +713,9 @@ app.get('/admin/dashboard-stats', async (req, res) => {
 
 // "Needs attention" — the list at the top of the Summary page (worked out at
 // 07:00 Toronto and on "Check now"; see needsAttentionService). Same viewers as
-// the dashboard: a staffer limited to their own cases sees only those items.
+// the dashboard: a staffer limited to their own cases sees only those items —
+// and the follow-up lines (a follow-up date passed / not set), which everybody
+// who is signed in sees (the owner's decision, 2026-11-23).
 const SUMMARY_LOGIN_URL = '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard%2Fsummary';
 app.get('/admin/needs-attention', (req, res) => {
   const viewer = resolveViewer(req);

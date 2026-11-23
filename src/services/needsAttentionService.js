@@ -11,6 +11,9 @@
  *   - a staff note saying the payment came in while Payment Status is not "Paid";
  *   - a client record (Lead Board) with a Retainer Paid date but no Retainer Signed
  *     date (2026-11-10) — read from the shared lead list, never its own board read;
+ *   - a client whose outcome is Follow-Up and whose follow-up date has passed — and, while
+ *     "Follow-Up needs a date" is switched on, one with no follow-up date at all (2026-11-23);
+ *     from the same shared lead list, and shown to EVERY signed-in staff member (CLIENT_KINDS);
  *   - paid, but no document checklist (Sub Type needed, set-up failed, onboarding
  *     on hold, or simply never started);
  *   - the app's own warning notes that nothing has answered yet (intake email
@@ -34,6 +37,7 @@ const mondayApi = require('./mondayApi');
 const { clientMasterBoardId, executionBoardId } = require('../../config/monday');
 const caseAccess = require('./caseAccessService');
 const { torontoTime } = require('../utils/torontoTime');
+const outcomes = require('../../config/outcomes');   // the outcome Follow-Up (and the old label that reads as it); the switch "Follow-Up needs a date"
 
 // ─── Columns (Cases board) ───────────────────────────────────────────────────
 const COL = {
@@ -149,6 +153,24 @@ const KINDS = {
   'other-warning': { order: 80, severity: 'low',    label: 'Other app warnings' },
 };
 
+// ─── Lines about a CLIENT RECORD that every signed-in staff member sees ──────
+// Follow-up dates (Gauri's answer H4, 2026-11-23: the consultant sets the date, the person doing retainers
+// calls on that day). The owner's decision: ALL staff see these lines, not only admins — so they are their
+// own table, and this table IS the rule: a kind listed here (and no other kind) is shown to a viewer who is
+// limited to their own cases. Such an item is about a client record (a Lead Board row), never a case row, and
+// carries the client's name and the date only — no case, no stage, no payment, nothing else of the record.
+// Kept apart from KINDS on purpose: every KINDS label is pinned to an entry in the staff guide
+// (test/needsAttention.test.js); the guide gets these two with its next rebuild.
+const CLIENT_KINDS = {
+  'followup-due':     { order: 67, severity: 'medium', label: 'Follow-up date passed' },
+  'followup-no-date': { order: 68, severity: 'medium', label: 'Follow-Up with no follow-up date' },   // listed only while FOLLOWUP_DATE_REQUIRED is on
+};
+const kindInfo = (kind) => KINDS[kind] || CLIENT_KINDS[kind] || null;
+/** An item every signed-in staff member sees (a CLIENT_KINDS item about a client record — it has no case row). */
+const isForAllStaff = (entry) => !!(entry && CLIENT_KINDS[entry.kind] && !entry.rows.length);
+/** Admins, the team key, and staff who see every case. */
+const seesEveryCase = (viewer) => !!(viewer && (viewer.isAdmin || viewer.scope === 'all'));
+
 // ─── The notes it reads (Monday text_body: tags stripped) ────────────────────
 // Matched on the stable bold heads the services write, never on whole sentences.
 const NOTE = {
@@ -210,7 +232,8 @@ const dateWord = (ms) => {
 };
 const keyOf = (fingerprint) => `NA-${crypto.createHash('sha1').update(fingerprint).digest('hex').slice(0, 10)}`;
 const isClosed = (c) => CLOSED_STAGES.includes(c.stage);
-const isTestCase = (c) => inGroups(c, NOT_CASE_GROUPS) || /\btest client\b|\be2e\b/i.test(c.name);
+const TEST_NAME_RE = /\btest client\b|\be2e\b/i;           // the office's own test records, by name
+const isTestCase = (c) => inGroups(c, NOT_CASE_GROUPS) || TEST_NAME_RE.test(c.name);
 const isLegacy = (c) => inGroups(c, LEGACY_GROUPS);
 const isPaid = (c) => c.payment === 'Paid';
 // The document reminders' numbers: a stored Uploaded % ('' = never computed), Toronto days.
@@ -316,7 +339,9 @@ function needsSecondParentCheck(c) {
   return !!c.ref && !isTestCase(c) && !isClosed(c) && isPaid(c) && !BEFORE_CHECKLIST.includes(c.stage) && isSuperVisa(c.caseType) && TWO_PEOPLE_RE.test(String(c.name || ''));
 }
 
-function detect({ cases, checklist = new Map(), folders = null, workFolders = new Map(), checklistNewest = new Map(), family = new Map(), checklistFamily = new Map(), manifestFamily = new Map(), balances = new Map(), templateProblems = [], leads = [], now }) {
+function detect({ cases, checklist = new Map(), folders = null, workFolders = new Map(), checklistNewest = new Map(), family = new Map(), checklistFamily = new Map(), manifestFamily = new Map(), balances = new Map(), templateProblems = [], leads = [],
+  followUpNeedsDate = outcomes.followUpDateRequired(),   // the switch FOLLOWUP_DATE_REQUIRED, read when the check runs (never cached)
+  now }) {
   const out = [];
   const live = cases.filter((c) => !isTestCase(c));
   const add = (kind, rowsIn, fingerprint, { since = 0, why, todo }) => {
@@ -667,6 +692,60 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
         itemIds: [], caseRef: '', client: name, stage: '', payment: '', manager: '', rows: [],
         since: iso(paidAt), why, todo, leadId: s(lead.id), link,
         linkedCaseId: s(lead.clientMasterItemId),   // a case that is not among the live cases (moved off the board): a handled note may still be on it
+      });
+    }
+  }
+
+  // ── 9c. Follow-up dates (Gauri's answer H4, 2026-11-23) ───────────────────
+  // The consultant sets a follow-up date with the outcome Follow-Up; the person doing retainers calls
+  // the client back on that day. Two lines, both about the client record alone (never a case row —
+  // every signed-in staff member sees them, see CLIENT_KINDS):
+  //   followup-due      the date is BEFORE today (Toronto day). Today's date is today's work, not a
+  //                     missed step — the list is worked out at 07:00. Always on (no switch).
+  //   followup-no-date  no date at all — listed only while "Follow-Up needs a date" is switched on
+  //                     (switched off, nobody is asked for dates yet).
+  // Only the outcome Follow-Up (or the old label that reads as it): a date left on a Newsletter or
+  // Not Wanted client is nobody's call to make. Never a retained client (the Retained tab's own rule),
+  // never a test record. ONE item per client record, keyed on the record and the date (or "none"):
+  // a new date or a changed outcome drops the old item at the next check, and a "handled" mark covers
+  // that one date — a later date that is missed is a new item.
+  const today = torontoDayOf(now);
+  const followUpSeen = new Set();
+  let classifyLead = null;                                               // the lists' one rule (loaded only when a Follow-Up client is met)
+  for (const lead of leads || []) {
+    if (!lead || !s(lead.id)) continue;
+    if (outcomes.canonicalOutcome(lead.outcome) !== outcomes.OUTCOME_FOLLOW_UP) continue;
+    if (!classifyLead) classifyLead = require('./consultantPortalService').classifyLead;
+    if (classifyLead(lead) === 'gone') continue;                         // retained: a date from before the retainer is moot (the Retained tab's rule)
+    const name = s(lead.fullName || lead.name);
+    if (TEST_NAME_RE.test(name)) continue;
+    const c = caseById.get(s(lead.clientMasterItemId)) || null;
+    if (c && isTestCase(c)) continue;                                    // its case sits in a group that is not a live case (TEST, Leads, Cancel)
+    const id = s(lead.id);
+    if (followUpSeen.has(id)) continue;                                  // one item per client record
+    const raw = s(lead.followUpDate), day = raw.slice(0, 10);
+    const who = name || 'the client';
+    const record = { itemIds: [], caseRef: '', client: name, stage: '', payment: '', manager: '', rows: [],
+      leadId: id, link: `/admin/consultation/${encodeURIComponent(id)}?from=retainers`, linkLabel: 'Client record' };
+    const leaves = 'The line then leaves this list at the next check (07:00, or Check now).';
+    if (isDayText(day)) {
+      if (!(day < today)) continue;                                      // today or later: not passed
+      const dayAt = tms(`${day}T12:00:00Z`);
+      if (!dayAt || new Date(dayAt).toISOString().slice(0, 10) !== day) continue;   // not a real day (a 31 February): no claim
+      followUpSeen.add(id);
+      out.push({
+        key: keyOf(`followup-due|${id}|${day}`), kind: 'followup-due', ...record,
+        since: iso(dayAt), followUpDate: day,
+        why: `Follow-up date passed (${dateWord(dayAt)}): ${who} was to be called back on that day. The outcome is still Follow-Up.`,
+        todo: `Call ${who} back, then set a new follow-up date or change the outcome: open the client's record — "Follow-up date" is under Attribution & follow-up (press "Save attribution"), the outcome is under "Record outcome". ${leaves}`,
+      });
+    } else if (!raw && followUpNeedsDate) {
+      followUpSeen.add(id);
+      out.push({
+        key: keyOf(`followup-no-date|${id}|none`), kind: 'followup-no-date', ...record,
+        since: iso(tms(lead.outcomeChangedAt)),                          // when the outcome was set, when Monday says
+        why: `Follow-Up with no follow-up date: ${who} has the outcome Follow-Up, but no day is set to call them back.`,
+        todo: `Choose the day to call ${who} back: open the client's record, type it in "Follow-up date" under Attribution & follow-up and press "Save attribution". If no call is planned, change the outcome under "Record outcome". ${leaves}`,
       });
     }
   }
@@ -1153,9 +1232,16 @@ async function buildSnapshot() {
   catch (err) { partial.push(`The Reminder Templates board could not be checked (${oneLine(err.message, 120)}).`); }
 
   // The client records (the shared lead list): paid, but no signed date.
+  // …and a follow-up date that has passed (or is missing). One read, two rules: when it fails neither
+  // was checked. The first line says so in the words it always had; the follow-up half is said in a
+  // line of its own (partialAlso — the page shows both), so no item is silently missing.
   let leads = [];
+  const partialAlso = [];
   try { leads = (await io.leads()) || []; }
-  catch (err) { partial.push(`The client records could not be checked for a payment without a signed date (${oneLine(err.message, 120)}).`); }
+  catch (err) {
+    partial.push(`The client records could not be checked for a payment without a signed date (${oneLine(err.message, 120)}).`);
+    partialAlso.push('Follow-up dates could not be checked either, so a missed follow-up may be missing from the list.');
+  }
 
   const entries = detect({ cases, checklist, folders, workFolders, checklistNewest, family, checklistFamily, manifestFamily, balances, templateProblems, leads, now: io.now() });
 
@@ -1197,6 +1283,7 @@ async function buildSnapshot() {
     entries: entries.filter((e) => !handled.has(e.key)),
     handledCount: entries.filter((e) => handled.has(e.key)).length,
     partial,
+    partialAlso,   // what the same failed read left unchecked besides (follow-up dates) — shown after `partial`
   };
 }
 
@@ -1226,7 +1313,7 @@ function refresh({ reason = '' } = {}) {
       _snap = snap;
       _lastError = null;
       for (const [k, at] of _handledHere) if (at < started) _handledHere.delete(k);   // the new check read that note
-      console.log(`[NeedsAttention] ${reason || 'check'}: ${snap.entries.length} item(s) across ${snap.casesChecked} case(s) in ${Math.round(snap.tookMs / 1000)}s${snap.partial.length ? ` — ${snap.partial.join(' ')}` : ''}`);
+      console.log(`[NeedsAttention] ${reason || 'check'}: ${snap.entries.length} item(s) across ${snap.casesChecked} case(s) in ${Math.round(snap.tookMs / 1000)}s${snap.partial.length ? ` — ${snap.partial.concat(snap.partialAlso || []).join(' ')}` : ''}`);
       return snap;
     } catch (err) {
       _lastError = { at: iso(io.now()), message: oneLine(err.message, 200) };
@@ -1256,6 +1343,11 @@ function visibleRows(entry, viewer) {
  */
 function shapeFor(entry, viewer) {
   const { rows: _all, ...out } = entry;
+  // A follow-up line (CLIENT_KINDS): every signed-in staff member — the owner's decision (2026-11-23).
+  // It carries the client's name and the date, nothing else. A viewer limited to their own cases gets
+  // it without "Mark handled" (noHandle: they cannot open the record to check, and a mark hides the
+  // line from everybody; it leaves the list by itself once the date or the outcome is changed).
+  if (isForAllStaff(entry)) return viewer ? (seesEveryCase(viewer) ? out : { ...out, noHandle: true }) : null;
   // An item about no case (a Reminder Templates board row): admins and viewers who see every case.
   if (!entry.rows.length) return viewer && (viewer.isAdmin || viewer.scope === 'all') ? out : null;
   const rows = visibleRows(entry, viewer);
@@ -1287,9 +1379,9 @@ function view(viewer, { ensure = false } = {}) {
     running: !!_running,
     checkedAt: _snap ? _snap.checkedAt : '',
     casesChecked: _snap ? _snap.casesChecked : 0,
-    partial: _snap ? _snap.partial : [],
+    partial: _snap ? _snap.partial.concat(_snap.partialAlso || []) : [],
     error: _lastError,
-    kinds: KINDS,
+    kinds: { ...KINDS, ...CLIENT_KINDS },
     entries,
   };
 }
@@ -1314,9 +1406,10 @@ const escHtml = (t) => s(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace
  * — test/needsAttention.test.js checks it against every note scanner.
  */
 function handledNoteBody(entry, actor) {
-  const label = (KINDS[entry.kind] || {}).label || entry.kind;
+  const label = (kindInfo(entry.kind) || {}).label || entry.kind;
+  const about = entry.caseRef || (CLIENT_KINDS[entry.kind] && entry.followUpDate) || '';   // the case number — or, for a follow-up line, the date it covers
   return `✔ <b>Marked as handled</b> on the Summary page by ${escHtml(actor)} — ${escHtml(torontoTime(io.now()))} (Toronto). `
-    + `Item: ${escHtml(label)}${entry.caseRef ? ` (${escHtml(entry.caseRef)})` : ''}. `
+    + `Item: ${escHtml(label)}${about ? ` (${escHtml(about)})` : ''}. `
     + `It stays off the "Needs attention" list unless the problem comes back. Ref ${entry.key}`;
 }
 
@@ -1339,6 +1432,9 @@ async function markHandled({ key, viewer, actor }) {
   const onLead = !!(entry && !entry.rows.length && entry.leadId);
   if (entry && !entry.rows.length && !onLead) throw fail(409, 'This item is about no case, so there is nowhere to note it. It leaves the list by itself once the row on the Reminder Templates board is fixed.');
   const rows = entry ? visibleRows(entry, viewer) : [];
+  // A follow-up line is shown to every signed-in staff member, but only those who see every case may mark it
+  // handled: the mark is a note on the client's record and hides the line from everybody (see shapeFor).
+  if (isForAllStaff(entry) && viewer && !seesEveryCase(viewer)) throw fail(403, 'Only an admin, or staff who see every case, can mark this handled. It leaves the list by itself once a new follow-up date is set or the outcome is changed.');
   if (onLead ? !(viewer && (viewer.isAdmin || viewer.scope === 'all')) : !rows.length) throw fail(404, 'This item is no longer on the list. Press Check now to see the current list.');
   if (_handledHere.has(k)) return { ok: true, already: true };
   if (_marking.has(k)) throw fail(409, 'Someone is marking this item right now.');
@@ -1373,5 +1469,5 @@ module.exports = {
   refresh, view, requestRefresh, markHandled, isTorontoHour,
   detect, parseCase, caseNotes, newestPaymentNote, heldFor, handledKeys, handledNoteBody,   // pure
   refsNeedingChecklist, refsNeedingWorkFolders, buildSnapshot,
-  io, KINDS, NOTE, COL, CLOSED_STAGES, BEFORE_DOCS, NOT_CASE_GROUPS, DEADLINE_SINCE, PAID_UNSIGNED_WORKING_DAYS, paidUnsignedGraceEnd, _resetForTests,
+  io, KINDS, CLIENT_KINDS, NOTE, COL, CLOSED_STAGES, BEFORE_DOCS, NOT_CASE_GROUPS, DEADLINE_SINCE, PAID_UNSIGNED_WORKING_DAYS, paidUnsignedGraceEnd, _resetForTests,
 };

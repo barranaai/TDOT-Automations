@@ -854,6 +854,7 @@ function buildDashboardHTML(view = 'cases', opts) {
     .na-confirm-q { font-size: 11.5px; color: #475569; max-width: 230px; line-height: 1.4; }
     .na-confirm-row { display: flex; gap: 6px; }
     .na-err { font-size: 11.5px; color: #b91c1c; max-width: 240px; line-height: 1.4; }
+    .na-auto { font-size: 11.5px; color: #475569; max-width: 230px; line-height: 1.4; }
     .na-more {
       display: block; width: 100%; padding: 10px 22px; border: none; border-top: 1px solid #f1f5f9;
       background: #fafbfc; color: #1d4ed8; font: inherit; font-size: 12.5px; font-weight: 700;
@@ -2974,22 +2975,41 @@ function naSince(iso) {
   };
 }
 
+// A line about a client record, not a case (a follow-up date, 2026-11-23): the server names its link
+// (linkLabel) and the link is the client's record page — nothing else is ever made into a link here.
+function naIsRecord(e) {
+  return !e.caseRef && !!e.linkLabel && String(e.link || '').indexOf('/admin/consultation/') === 0;
+}
+
+// Where a "Mark handled" note is written, in words: the case number, or the client's record.
+function naNoteOn(li, fallback) {
+  if (li.getAttribute('data-na-on') === 'record') return "the client's record";
+  var refEl = li.querySelector('.na-ref');
+  return refEl ? refEl.textContent : fallback;
+}
+
 function naItemHtml(e) {
+  var rec = naIsRecord(e);
   var who = e.caseRef
     ? '<a class="na-ref" href="/admin/case/' + encodeURIComponent(e.caseRef) + '" title="Open the case page">' + escHtml(e.caseRef) + '</a>'
-    : '<span class="na-noref">No case number</span>';
+    : rec
+      ? '<a class="na-ref" href="' + escHtml(e.link) + '" title="Open the client record">' + escHtml(e.linkLabel) + '</a>'
+      : '<span class="na-noref">No case number</span>';
   var meta = [];
   if (e.stage) meta.push(e.stage);
   if (e.manager) meta.push('Case manager: ' + e.manager);
   var since = naSince(e.since);
-  return '<li class="na-item" data-na-key="' + escHtml(e.key) + '">' +
+  return '<li class="na-item" data-na-key="' + escHtml(e.key) + '"' + (rec ? ' data-na-on="record"' : '') + '>' +
     '<div class="na-who">' + who + '<span class="na-client">' + escHtml(e.client) + '</span>' +
       (meta.length ? '<span class="na-meta">' + escHtml(meta.join(' · ')) + '</span>' : '') + '</div>' +
     '<div class="na-text"><p class="na-why">' + escHtml(e.why) + '</p>' +
       '<p class="na-todo"><span class="na-todo-lbl">What to do:</span> ' + escHtml(e.todo) + '</p></div>' +
     '<div class="na-side">' +
       (since ? '<span class="na-since" title="' + escHtml(since.full) + '">Since <b>' + escHtml(since.day) + '</b> · ' + escHtml(since.age) + '</span>' : '') +
-      '<span class="na-act"><button type="button" class="na-btn" onclick="naAskHandled(this)">Mark handled</button></span>' +
+      // noHandle: this viewer may see the line but not mark it (a follow-up line shown to staff limited to their own cases)
+      (e.noHandle
+        ? '<span class="na-auto">Leaves this list once the follow-up date or the outcome is changed.</span>'
+        : '<span class="na-act"><button type="button" class="na-btn" onclick="naAskHandled(this)">Mark handled</button></span>') +
     '</div>' +
   '</li>';
 }
@@ -3115,9 +3135,8 @@ function naCheckNow() {
 function naAskHandled(btn) {
   var act = btn.closest('.na-act');
   var li = btn.closest('.na-item');
-  var refEl = li.querySelector('.na-ref');
   _naBusy[li.getAttribute('data-na-key')] = true;
-  act.innerHTML = '<span class="na-confirm-q">Adds a note on ' + escHtml(refEl ? refEl.textContent : 'the case') +
+  act.innerHTML = '<span class="na-confirm-q">Adds a note on ' + escHtml(naNoteOn(li, 'the case')) +
       ' in Monday and takes it off this list.</span>' +
     '<span class="na-confirm-row"><button type="button" class="na-btn primary" onclick="naMarkHandled(this)">Mark handled</button>' +
       '<button type="button" class="na-btn" onclick="naCancelHandled(this)">Cancel</button></span>';
@@ -3154,7 +3173,7 @@ function naMarkHandled(btn) {
   var li = btn.closest('.na-item');
   var act = btn.closest('.na-act');
   var key = li.getAttribute('data-na-key');
-  var refEl = li.querySelector('.na-ref');
+  var noteOn = naNoteOn(li, '');
   var buttons = act.querySelectorAll('button');
   for (var i = 0; i < buttons.length; i++) buttons[i].disabled = true;
   btn.textContent = 'Saving…';
@@ -3184,7 +3203,7 @@ function naMarkHandled(btn) {
       });
     })
     .then(function() {
-      drop('Marked handled' + (refEl ? '. A note was added to ' + refEl.textContent + '.' : '.'));
+      drop('Marked handled' + (noteOn ? '. A note was added to ' + noteOn + '.' : '.'));
     })
     .catch(function(e) {
       if (e.gone) {   // no longer on the server's list: nothing was written; show the current list
@@ -3193,7 +3212,7 @@ function naMarkHandled(btn) {
         return;
       }
       if (!document.body.contains(li)) {   // the list was redrawn meanwhile: say it where it can be seen
-        naFlash('The note for ' + (refEl ? refEl.textContent : 'that item') + ' could not be saved (' + e.message + ').', 'err');
+        naFlash('The note for ' + (noteOn || 'that item') + ' could not be saved (' + e.message + ').', 'err');
         return;
       }
       btn.textContent = 'Mark handled';
