@@ -281,6 +281,7 @@ async function getConsultationDetail(leadId, { actor } = {}) {
 
     // KPI attribution (staff-entered on the detail page)
     followUpDate:      lead.followUpDate || '',
+    followUpDateRequired: followUpDateRequired(),   // the switch FOLLOWUP_DATE_REQUIRED, told to the page (2026-11-23): Follow-Up asks for its date
     leadOwner:         lead.leadOwner || '',
     bookedBy:          lead.bookedBy || '',
     paymentReviewedBy: lead.paymentReviewedBy || '',
@@ -730,6 +731,9 @@ async function getLeadDetail(leadId) {
     bookingStatus: lead.bookingStatus || 'Not Yet',
     bookedSlot:    lead.bookedSlot || '',
     outcome:       lead.outcome || (lead.webinar === 'Yes' ? OUTCOME_WEBINAR : ''),   // the lead page shows the Webinar mark as its outcome
+    // The follow-up date (2026-11-23): shown on the "Lead status" card; the switch tells the page whether Follow-Up asks for it.
+    followUpDate:  String(lead.followUpDate == null ? '' : lead.followUpDate).trim(),
+    followUpDateRequired: followUpDateRequired(),
     // The client's stated intent ("Book consultation" / "Request quote" / …) —
     // the portal warns before sending a booking invite when it isn't a booking.
     wantsTo:       lead.whatDoYouWant || '',
@@ -792,6 +796,18 @@ function normaliseRows(x) {
 // would mint a junk label via create_labels_if_missing, so they must match
 // byte-for-byte. Four since 2026-10-15 (Gauri point 5): config/outcomes.js.
 const { OUTCOME_LABELS, LEAD_OUTCOME_LABELS, OUTCOME_NOT_WANTED, OUTCOME_RETAIN, OUTCOME_WEBINAR, canonicalOutcome, consultOutcomeText } = require('../../config/outcomes');
+const { OUTCOME_FOLLOW_UP, OUTCOME_NEWSLETTER, followUpDateRequired } = require('../../config/outcomes');   // "Follow-Up needs a date" (2026-11-23)
+/** The follow-up date's check — one set of words for the "Follow-up date" box and the Follow-Up outcome. PURE. '' = a real day. */
+function followUpDateError(fu) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fu)) return 'Follow-up date must be YYYY-MM-DD.';
+  const dt = new Date(`${fu}T00:00:00Z`);
+  if (Number.isNaN(dt.getTime()) || dt.toISOString().slice(0, 10) !== fu) return 'That follow-up date doesn’t exist.';
+  return '';
+}
+/** What the app says when a save is refused over the follow-up date (switch FOLLOWUP_DATE_REQUIRED on). */
+const FOLLOW_UP_DATE_NEEDED  = 'Follow-Up needs a follow-up date (the day to call the client back). Choose the date and save again. If you see no date box, reload this page first.';
+const FOLLOW_UP_DATE_PAST    = 'The follow-up date cannot be in the past. Choose today or a later day.';
+const FOLLOW_UP_DATE_KEPT    = "This client's outcome is Follow-Up, so the follow-up date cannot be removed. Choose a new date, or change the outcome first.";
 const NOT_WANTED_REASON_MIN = 3;
 // One-click remark presets (consultant note #8) — config/leadRemarks.js
 const { REMARK_PRESETS } = require('../../config/leadRemarks');
@@ -900,12 +916,19 @@ function validateAction(action, value) {
     case 'outcome': {
       // A label, or { label, reason }. "Not Wanted" needs the consultant's reason —
       // it goes on the lead's note and on the Not Wanted list (point 5).
-      let label = value, reason = '';
-      if (value && typeof value === 'object') { label = value.label; reason = value.reason; }
+      // Follow-Up may carry its follow-up date the same way: { label, followUpDate: 'YYYY-MM-DD' } (2026-11-23).
+      let label = value, reason = '', followUp = '';
+      if (value && typeof value === 'object') { label = value.label; reason = value.reason; followUp = value.followUpDate; }
       else if (typeof value === 'string' && value.trim().startsWith('{')) {
-        try { const o = JSON.parse(value); label = o && o.label; reason = o && o.reason; } catch (_) { return { ok: false, error: 'Invalid outcome value.' }; }
+        try { const o = JSON.parse(value); label = o && o.label; reason = o && o.reason; followUp = o && o.followUpDate; } catch (_) { return { ok: false, error: 'Invalid outcome value.' }; }
       }
       if (!LEAD_OUTCOME_LABELS.includes(label)) return { ok: false, error: 'Invalid outcome value.' };   // the four, and the lead-only Webinar (2026-11-11)
+      // The date is checked to be a real day here (the words of the "Follow-up date" box) and handed on as its OWN
+      // field, only when one was sent — `normalized` stays the plain label, and a bare label answers as before.
+      // Whether a date is NEEDED, and today-or-later, is decided where the lead and the switch are known (applyAction).
+      // Any other outcome ignores a date sent.
+      followUp = label === OUTCOME_FOLLOW_UP ? String(followUp || '').trim() : '';
+      if (followUp) { const bad = followUpDateError(followUp); if (bad) return { ok: false, error: bad }; }
       reason = String(reason == null ? '' : reason).replace(/\s+/g, ' ').trim();
       if (label === OUTCOME_NOT_WANTED) {
         if (reason.length < NOT_WANTED_REASON_MIN) return { ok: false, error: 'Give the reason this person is not wanted — it is recorded on the lead and on the Not Wanted list.' };
@@ -913,6 +936,7 @@ function validateAction(action, value) {
       } else {
         reason = '';
       }
+      if (followUp) return { ok: true, normalized: label, reason, followUpDate: followUp };
       return { ok: true, normalized: label, reason };
     }
     case 'remark': {
@@ -951,13 +975,12 @@ function validateAction(action, value) {
       let o = value; try { if (typeof value === 'string') o = JSON.parse(value); } catch (_) { return { ok: false, error: 'Invalid payload.' }; }
       o = o || {};
       const fu = String(o.followUpDate || '').trim();
-      if (fu) {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(fu)) return { ok: false, error: 'Follow-up date must be YYYY-MM-DD.' };
-        const dt = new Date(`${fu}T00:00:00Z`);
-        if (Number.isNaN(dt.getTime()) || dt.toISOString().slice(0, 10) !== fu) return { ok: false, error: 'That follow-up date doesn’t exist.' };
-      }
+      if (fu) { const bad = followUpDateError(fu); if (bad) return { ok: false, error: bad }; }
       const clean = (s) => String(s || '').trim().slice(0, 80);
-      return { ok: true, normalized: { followUpDate: fu, leadOwner: clean(o.leadOwner), bookedBy: clean(o.bookedBy), paymentReviewedBy: clean(o.paymentReviewedBy) } };
+      // removeFollowUpDate: the page's explicit mark (sent after its "Remove the follow-up date …?" question) — the ONLY
+      // way an emptied box removes a saved date. An empty box alone changes nothing: the button can be pressed before
+      // the record has loaded, with every box still empty. A date in the box wins over the mark.
+      return { ok: true, normalized: { followUpDate: fu, leadOwner: clean(o.leadOwner), bookedBy: clean(o.bookedBy), paymentReviewedBy: clean(o.paymentReviewedBy), removeFollowUpDate: !fu && o.removeFollowUpDate === true } };
     }
     // Residential address on an EXISTING lead (Gauri 2026-09-04, point 07):
     // the Add-lead form has required it since 2026-09-04, but leads created
@@ -1205,7 +1228,7 @@ function directRetainGuard(lead, confirm) {
   }
 }
 
-async function applyAction({ leadId, action, value, amend = false, staffName = '', actor = null, confirm = false }) {
+async function applyAction({ leadId, action, value, amend = false, staffName = '', actor = null, confirm = false, now = new Date() }) {
   const who = String(staffName || '').trim().slice(0, 60);
   const v = validateAction(action, value);
   if (!v.ok) { const e = new Error(v.error); e.badRequest = true; throw e; }
@@ -1232,6 +1255,24 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
       const byName = (actor && actor.verified && String(actor.name || '').trim()) ? String(actor.name).trim().slice(0, 60) : who;
       const isNotWanted = v.normalized === OUTCOME_NOT_WANTED;
 
+      // Follow-Up needs a date (2026-11-23, switch FOLLOWUP_DATE_REQUIRED): refused BEFORE anything is read further or
+      // written — no date, or a day before today (Toronto). A page left open from before the switch sends the bare
+      // label and is told to reload. Switched off, a bare Follow-Up saves as it always did and any real day is taken.
+      const fuRequired = followUpDateRequired();
+      const fuDate = v.normalized === OUTCOME_FOLLOW_UP ? String(v.followUpDate || '') : '';
+      if (fuRequired && v.normalized === OUTCOME_FOLLOW_UP) {
+        if (!fuDate) { const e = new Error(FOLLOW_UP_DATE_NEEDED); e.badRequest = true; throw e; }
+        if (fuDate < torontoDay(new Date(now).toISOString())) { const e = new Error(FOLLOW_UP_DATE_PAST); e.badRequest = true; throw e; }
+      }
+      // Follow-Up → Newsletter / Not Wanted / Webinar (switch on): the follow-up date goes in the SAME write — the
+      // client is no longer waiting for a call, and a date left behind keeps the row amber under "Due". Retain keeps
+      // it. Nothing is cleared when there was no date or the outcome was not Follow-Up (the old label reads as it).
+      const fuOld = String(lead.followUpDate == null ? '' : lead.followUpDate).trim();
+      const fuCleared = fuRequired && !!fuOld && canonicalOutcome(lead.outcome) === OUTCOME_FOLLOW_UP
+        && [OUTCOME_NEWSLETTER, OUTCOME_NOT_WANTED, OUTCOME_WEBINAR].includes(v.normalized);
+      const fuNote = `${fuDate ? ` — follow-up date: ${fuDate}` : ''}${fuCleared ? ` — follow-up date ${escHtmlNote(fuOld)} removed` : ''}`;
+      const fuMsg = fuCleared ? ` The follow-up date ${fuOld} was removed.` : '';
+
       // Not Wanted (point 5): the person goes on the Not Wanted list BEFORE the
       // outcome is written — the write echoes back through the Lead Board webhook,
       // which then finds this lead on the list instead of adding a second,
@@ -1254,15 +1295,19 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
           e.badRequest = true; throw e;
         }
       }
-      await leadService.updateLead(leadId, { outcome: v.normalized });
-      await postPortalNote(leadId, `Outcome set to “${v.normalized}”${byName ? ` by ${escHtmlNote(byName)}` : ''}${isNotWanted ? ` — reason: ${escHtmlNote(v.reason)}` : ''}.`);
+      // ONE write: the outcome with its follow-up date (or with the date's removal) — the write echoes back through the
+      // Lead Board webhook and the lists show the client at once, so the board never holds one without the other.
+      if (fuDate) await leadService.updateLead(leadId, { outcome: v.normalized, followUpDate: fuDate });
+      else if (fuCleared) await leadService.updateLead(leadId, { outcome: v.normalized }, { clearKeys: ['followUpDate'] });
+      else await leadService.updateLead(leadId, { outcome: v.normalized });
+      await postPortalNote(leadId, `Outcome set to “${v.normalized}”${byName ? ` by ${escHtmlNote(byName)}` : ''}${isNotWanted ? ` — reason: ${escHtmlNote(v.reason)}` : ''}${fuNote}.`);
       await module.exports.notifyOutcomeChange({ leadId, lead, from: lead.outcome, to: v.normalized, staffName: byName });
       if (v.normalized === OUTCOME_RETAIN) {
         return { ok: true, message: feeSet
           ? 'Outcome recorded as Retain — the retainer agreement (stating the fee) is being emailed to the client.'
           : 'Outcome recorded as Retain. The agreement states the fee, so it will be emailed automatically once you set the retainer fee below — no agreement goes out without a fee.' };
       }
-      if (!isNotWanted) return { ok: true, message: `Outcome recorded: ${v.normalized}.` };
+      if (!isNotWanted) return { ok: true, message: `Outcome recorded: ${v.normalized}.${fuDate ? ` Follow-up date: ${fuDate}.` : ''}${fuMsg}` };
 
       // A record only — nothing already in flight is cancelled; the note says what is still live so a person decides.
       const extras = [];
@@ -1294,7 +1339,7 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
           if (!(listError && listError.badRequest)) await postPortalNote(leadId, `⚠ Not added to the Not Wanted list yet (${escHtmlNote(listError ? listError.message : 'unknown error')}) — the 15-minute check will retry.`);
         }
       }
-      return { ok: true, message: `Outcome recorded: ${v.normalized}. ${listMsg}${extras.length ? ` ${extras.join(' ')}` : ''}` };
+      return { ok: true, message: `Outcome recorded: ${v.normalized}. ${listMsg}${extras.length ? ` ${extras.join(' ')}` : ''}${fuMsg}` };
     }
 
     case 'remark': {
@@ -1346,9 +1391,21 @@ async function applyAction({ leadId, action, value, amend = false, staffName = '
 
     case 'saveAttribution': {
       const n = v.normalized;
-      await leadService.updateLead(leadId, { followUpDate: n.followUpDate, leadOwner: n.leadOwner, bookedBy: n.bookedBy, paymentReviewedBy: n.paymentReviewedBy });
-      await postPortalNote(leadId, `Attribution saved — owner: ${n.leadOwner || '—'}, booked by: ${n.bookedBy || '—'}, payment reviewed by: ${n.paymentReviewedBy || '—'}, follow-up: ${n.followUpDate || '—'}.`);
-      return { ok: true, message: 'Attribution saved.' };
+      // The follow-up date (2026-11-23). An emptied box removes the saved date ONLY with the page's explicit mark —
+      // then through the clear list (an empty value alone is skipped by updateLead, so the old date used to stay on
+      // the board while the note said "—"). Without the mark an empty box changes nothing, and the note names the
+      // date that stays. While the outcome is Follow-Up (switch on) the date may be changed here, never removed.
+      const fuSaved = String(lead.followUpDate == null ? '' : lead.followUpDate).trim();
+      const fuRemove = n.removeFollowUpDate === true && !n.followUpDate && !!fuSaved;
+      if (fuRemove && followUpDateRequired() && canonicalOutcome(lead.outcome) === OUTCOME_FOLLOW_UP) {
+        const e = new Error(FOLLOW_UP_DATE_KEPT); e.badRequest = true; throw e;
+      }
+      const attribution = { followUpDate: n.followUpDate, leadOwner: n.leadOwner, bookedBy: n.bookedBy, paymentReviewedBy: n.paymentReviewedBy };
+      if (fuRemove) await leadService.updateLead(leadId, attribution, { clearKeys: ['followUpDate'] });
+      else await leadService.updateLead(leadId, attribution);
+      const fuSays = fuRemove ? `removed (was ${escHtmlNote(fuSaved)})` : (n.followUpDate || escHtmlNote(fuSaved) || '—');
+      await postPortalNote(leadId, `Attribution saved — owner: ${n.leadOwner || '—'}, booked by: ${n.bookedBy || '—'}, payment reviewed by: ${n.paymentReviewedBy || '—'}, follow-up: ${fuSays}.`);
+      return { ok: true, message: fuRemove ? `Attribution saved. The follow-up date ${fuSaved} was removed.` : 'Attribution saved.' };
     }
 
     case 'saveDeadline': {
@@ -3219,6 +3276,9 @@ async function getConsultationsBoard({ fresh = false, now = new Date(), withReta
   const stageDate = (r) => (r.stage === '' ? (r.bookedSlot || '\uffff') : (r.retainerPaid || r.retainerSigned || r.retainerSent || r.createdAt || ''));
   retainers.sort((a, b) => (STAGE_ORDER[a.stage] - STAGE_ORDER[b.stage]) || stageDate(a).localeCompare(stageDate(b)) || Number(a.id) - Number(b.id));
   const out = { consultations, retainers, at: snap.at, ageMs: snap.ageMs, stale: !!snap.stale };
+  // The switch FOLLOWUP_DATE_REQUIRED, once per answer (2026-11-23): the lists draw "no follow-up date" on a Follow-Up
+  // row only when it is on. Sent ONLY when on — switched off, the answer is key for key what it was.
+  if (followUpDateRequired()) out.followUpDateRequired = true;
   if (withCompleted) {
     // Completed: the latest consultation first; the ones with no date last.
     completed.sort((a, b) => (a.bookedSlot && b.bookedSlot) ? b.bookedSlot.localeCompare(a.bookedSlot) : a.bookedSlot ? -1 : b.bookedSlot ? 1 : Number(b.id) - Number(a.id));
@@ -3408,4 +3468,5 @@ module.exports = {
   // Direct consultation (step 2): the shared pieces its service reuses.
   buildConsultPaymentRecord, writeRecordedBooking, slotsOverlap, withRecordLock, postPortalNote, escHtmlNote,
   conflictBody, normalizeLeadLocation,
+  followUpDateRequired, FOLLOW_UP_DATE_NEEDED, FOLLOW_UP_DATE_PAST, FOLLOW_UP_DATE_KEPT,   // "Follow-Up needs a date" (2026-11-23)
 };

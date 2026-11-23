@@ -51,4 +51,16 @@ const isWebinar = (value) => String(value == null ? '' : value).trim() === OUTCO
 /** The outcome text a CONSULTATION list shows: the cell as stored, but never the lead-only Webinar. */
 const consultOutcomeText = (value) => (isWebinar(value) ? '' : String(value == null ? '' : value).trim());
 
-module.exports = { OUTCOME_WEBINAR, LEAD_OUTCOME_LABELS, isWebinar, consultOutcomeText, OUTCOME_LABELS, OUTCOME_RETAIN, OUTCOME_FOLLOW_UP, OUTCOME_NEWSLETTER, OUTCOME_NOT_WANTED, LEGACY_OUTCOMES, canonicalOutcome, isNotWanted };
+/**
+ * "Follow-Up needs a date" (Gauri's answers H2 b + H4, 2026-11-23). The switch FOLLOWUP_DATE_REQUIRED ships OFF:
+ * unset = off; on only for 1 / true / on / yes. Read at call time (a Render change needs no restart), never cached.
+ *   off = as before: Follow-Up saves in one click, the server takes a bare 'Follow-Up', a date may be removed from
+ *         a Follow-Up client, changing the outcome leaves the date alone.
+ *   on  = the outcome Follow-Up is refused without a follow-up date (today or later, Toronto day); the date cannot
+ *         be removed while the outcome is Follow-Up; Follow-Up → Newsletter / Not Wanted / Webinar removes the date
+ *         in the same write. The pages are told by the server (followUpDateRequired on the record detail, the lead
+ *         detail and the lists' answer) — never hard-coded in page script.
+ */
+function followUpDateRequired() { return /^(1|true|on|yes)$/i.test(String(process.env.FOLLOWUP_DATE_REQUIRED || '').trim()); }
+
+module.exports = { followUpDateRequired, OUTCOME_WEBINAR, LEAD_OUTCOME_LABELS, isWebinar, consultOutcomeText, OUTCOME_LABELS, OUTCOME_RETAIN, OUTCOME_FOLLOW_UP, OUTCOME_NEWSLETTER, OUTCOME_NOT_WANTED, LEGACY_OUTCOMES, canonicalOutcome, isNotWanted };
