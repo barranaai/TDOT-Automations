@@ -279,7 +279,8 @@ test('one line per client record, keyed on the record and the date: a new date i
 // ── Toronto day ─────────────────────────────────────────────────────────────
 
 test('the day is the Toronto day: at 23:30 the date of that day has not passed; half an hour later it has — also across both clock changes', () => {
-  const at = (date, when) => run([lead({ followUpDate: date })], { now: Date.parse(when), needsDate: false }).length;
+  // the consultation is long past at every "now" below (a NEW booked consultation takes the client off the list — its own test)
+  const at = (date, when) => run([lead({ followUpDate: date, bookedSlot: '2026-01-05 11:00' })], { now: Date.parse(when), needsDate: false }).length;
   // an ordinary night (EST, UTC-5): 23:30 on 20 November is 04:30 UTC on the 21st
   assert.equal(at('2026-11-20', '2026-11-21T04:30:00Z'), 0, '23:30 Toronto on the day itself');
   assert.equal(at('2026-11-19', '2026-11-21T04:30:00Z'), 1, 'the day before has passed');
@@ -862,4 +863,20 @@ test('the routes: the list, Check now and Mark handled answer every signed-in st
   assert.ok(/getKey\(\)/.test(recordPage) && !/peekKey\(\)/.test(recordPage), 'the record page itself asks for the team key (a tab without it is sent to the sign-in page) — the reason the link follows the key');
   assert.ok(routes.includes("require('./services/needsAttentionService').markHandled({ key, viewer, actor })"));
   assert.ok(routes.includes("if (err.status) return res.status(err.status).json({ error: err.message });"), 'the 403 reaches the page with its words');
+});
+
+test('a passed follow-up date is NOT listed when the client has booked a new consultation (a booked time today or later, Toronto day); a past consultation, or a time that is not booked, changes nothing', async () => {
+  await switchOff(async () => {
+    assert.equal(run([lead({ bookedSlot: '2026-11-27 10:00' })]).length, 0, 'a new consultation later this week: not listed');
+    assert.equal(run([lead({ bookedSlot: TODAY + ' 16:00' })]).length, 0, 'a consultation today: not listed');
+    assert.equal(run([lead({ bookedSlot: YESTERDAY + ' 16:00' })]).length, 1, 'yesterday\'s consultation: listed');
+    assert.equal(run([lead({ bookedSlot: '2026-11-13 11:00' })]).length, 1, 'the old consultation: listed');
+    assert.equal(run([lead({ bookingStatus: 'Cancelled', bookedSlot: '2026-11-27 10:00' })]).length, 0 + 1, 'a later time that is not booked: listed');
+    assert.equal(run([lead({ bookingStatus: 'Booked', bookedSlot: '' })]).length, 1, 'no time at all: listed');
+    assert.equal(run([lead({ bookedSlot: 'soon' })]).length, 1, 'a time that is not a day: listed');
+    // 23:30 Toronto on the 23rd is already the 24th in UTC: a consultation on the 23rd still counts as today
+    assert.equal(run([lead({ bookedSlot: TODAY + ' 09:00' })], { now: Date.parse('2026-11-24T04:30:00Z') }).length, 0);
+  });
+  // the no-date line is not touched by this rule
+  assert.equal(run([lead({ followUpDate: '', bookedSlot: '2026-11-27 10:00' })], { needsDate: true }).length, 1);
 });

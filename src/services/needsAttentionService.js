@@ -747,6 +747,9 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
     const leaves = 'The line then leaves this list at the next check (07:00, or Check now).';
     if (isDayText(day)) {
       if (!(day < today)) continue;                                      // today or later: not passed
+      // A client who has booked a NEW consultation (a booked time today or later, Toronto day) is being seen
+      // again: no missed call-back to list (Faran 2026-11-23). An old, past consultation changes nothing.
+      if (s(lead.bookingStatus) === 'Booked' && isDayText(s(lead.bookedSlot).slice(0, 10)) && s(lead.bookedSlot).slice(0, 10) >= today) continue;
       const dayAt = tms(`${day}T12:00:00Z`);
       if (!dayAt || new Date(dayAt).toISOString().slice(0, 10) !== day) continue;   // not a real day (a 31 February): no claim
       followUpSeen.add(id);
