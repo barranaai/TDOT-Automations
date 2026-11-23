@@ -11,6 +11,8 @@
 // The owner's decision: EVERY signed-in staff member sees these two lines (every other line keeps its own
 // rule). They carry the client's name and the date — nothing else of the record. A viewer limited to their
 // own cases sees them without "Mark handled"; the mark is a note on the client's record (the Lead Board row).
+// The link to the client's record goes only to a tab that can open it (the team key); everyone else gets
+// the line without a link and is told to tell the person who does the retainers.
 //
 // Made-up people only ("Dana Example" — "Test Client" is a test record by name, so it can never be a listed one). Every test that sets the switch puts the environment back.
 
@@ -20,6 +22,7 @@ const fs = require('fs');
 const vm = require('vm');
 
 const NA = require('../src/services/needsAttentionService');
+const REAL_IO = { ...NA.io };   // the real seams, before any test replaces them (two tests below run one of them offline)
 const outcomes = require('../config/outcomes');
 const portal = require('../src/services/consultantPortalService');
 
@@ -174,14 +177,38 @@ test('a retained client is never listed (the Retained tab\'s own rule); a retain
   });
 });
 
-test('a test record is never listed: by its name, or because its case sits in a group that is not a live case', async () => {
+test('a test record is never listed: by its name, or because its case sits in the TEST group — a case in the Cancel or Leads group is a real client and IS listed', async () => {
   await switchOn(async () => {
     assert.deepEqual(run([lead({ fullName: 'TEST CLIENT - E2E 1790000000000' })]), []);
     assert.deepEqual(run([lead({ fullName: 'Test Client', followUpDate: '' })]), []);
     assert.deepEqual(run([lead({ fullName: 'E2E Person' })]), []);
     const testCase = item({ id: 't1', group: 'group_mm3842s', groupTitle: 'TEST' });
     assert.deepEqual(run([lead({ clientMasterItemId: 't1' })], { items: [testCase] }), []);
-    assert.deepEqual(run([lead({ clientMasterItemId: 'c1' })], { items: [item({ id: 'c1', group: 'group_mm3b9tap', groupTitle: 'Cancel /Did not retained' })] }), []);
+    assert.deepEqual(run([lead({ clientMasterItemId: 't1', followUpDate: '' })], { items: [testCase] }), []);
+    // the TEST group by its title alone (the group was re-made), and a case named as a test record in a live group
+    assert.deepEqual(run([lead({ clientMasterItemId: 't2' })], { items: [item({ id: 't2', group: 'group_new', groupTitle: 'Test' })] }), []);
+    assert.deepEqual(run([lead({ clientMasterItemId: 't3' })], { items: [item({ id: 't3', name: 'TEST CLIENT - E2E 1790000000000' })] }), []);
+    // NOT the other two groups that are not live cases: a client whose case row was moved to "Cancel / Did not retained",
+    // or is kept in "Leads", is still on the Follow-Up tab of Retainers & follow-ups — and is the person to call back
+    for (const [group, groupTitle] of [['group_mm3b9tap', 'Cancel /Did not retained'], ['group_mm2tz8e1', 'Leads'], ['group_remade', 'Cancel / Did not retained'], ['group_remade2', 'Leads']]) {
+      const row = item({ id: 'c1', group, groupTitle });
+      assert.equal(require('../src/utils/caseGroups').isCaseGroup({ id: group, title: groupTitle }), false, `${groupTitle}: not a live-case group`);
+      for (const l of [lead({ clientMasterItemId: 'c1' }), lead({ clientMasterItemId: 'c1', retainerSent: '2026-11-10', retainerSigned: '2026-11-11' })]) {
+        assert.equal(portal.retainerTab(l), 'Follow-Up', 'the Retainers page has this client under Follow-Up');
+        const out = run([l], { items: [row] });
+        assert.deepEqual(out.map((e) => [e.kind, e.client, e.followUpDate]), [['followup-due', 'Dana Example', '2026-11-20']], `${groupTitle}: listed`);
+        assert.deepEqual([out[0].rows, out[0].itemIds, out[0].caseRef, out[0].stage, out[0].payment], [[], [], '', '', ''], 'still about the client record alone — nothing of the case row');
+      }
+      assert.deepEqual(run([lead({ clientMasterItemId: 'c1', followUpDate: '' })], { items: [row] }).map((e) => e.kind), ['followup-no-date']);
+      assert.deepEqual(run([lead({ clientMasterItemId: 'c1', followUpDate: '' })], { items: [row], needsDate: false }), [], 'the switch still decides the no-date line');
+    }
+    // the same key as without the case row: a handled mark is not lost when the row is moved to another group
+    assert.equal(run([lead({ clientMasterItemId: 'c1' })], { items: [item({ id: 'c1', group: 'group_mm3b9tap', groupTitle: 'Cancel /Did not retained' })] })[0].key, run([lead()])[0].key);
+    // the rule beside it keeps its own: a payment without a signed date on a cancelled case is still not listed
+    const paid = { id: 'P1', fullName: 'Paid Person', outcome: 'Retain', followUpDate: '', retainerPaid: '2026-11-10', retainerSigned: '', retainerSent: '', clientMasterItemId: 'c1', caseDeleted: '' };
+    assert.deepEqual(NA.detect({ cases: [item({ id: 'c1', group: 'group_mm3b9tap', groupTitle: 'Cancel /Did not retained' })].map(NA.parseCase), leads: [paid], now: NOW }).map((e) => e.kind), []);
+    const src = fs.readFileSync(require.resolve('../src/services/needsAttentionService.js'), 'utf8');
+    assert.ok(src.includes('if (c && (isTestGroup({ id: c.groupId, title: c.groupTitle }) || TEST_NAME_RE.test(c.name))) continue;'), 'the TEST group alone, by the shared helper');
     // a live case, or a case that is not on the board any more, changes nothing: still a line about the client record alone
     const [onCase] = run([lead({ clientMasterItemId: 'live1' })], { items: [item({ id: 'live1', ref: '2026-SV-077', stage: 'Internal Review' })] });
     assert.deepEqual([onCase.kind, onCase.rows, onCase.itemIds, onCase.caseRef, onCase.stage], ['followup-due', [], [], '', '']);
@@ -277,8 +304,9 @@ test('the day is the Toronto day: at 23:30 the date of that day has not passed; 
 
 test('the check reads the shared lead list (never a board read of its own) and the notes of the listed records only', async () => {
   const src = fs.readFileSync(require.resolve('../src/services/needsAttentionService.js'), 'utf8');
-  assert.equal(src.split("require('./leadSnapshot')").length - 1, 1, 'one use of the shared lead list — the seam the paid-not-signed rule already had');
+  assert.equal(src.split("require('./leadSnapshot')").length - 1, 2, 'the shared lead list — the seam the paid-not-signed rule already had — and the question "is this an older copy?"; nothing else');
   assert.ok(src.includes("leads: () => require('./leadSnapshot').leads(),"));
+  assert.ok(src.includes("leadsOldCopyAt: (list) => require('./leadSnapshot').servedStale(list),"));
   assert.ok(require('../src/services/leadSnapshot').SNAPSHOT_KEYS.includes('followUpDate') && require('../src/services/leadSnapshot').SNAPSHOT_KEYS.includes('outcome') && require('../src/services/leadSnapshot').SNAPSHOT_KEYS.includes('conversionStatus'), 'the list carries what the rule reads');
   await switchOff(async () => {
     const calls = harness({ leads: () => [lead({ id: 'L1' }), lead({ id: 'L2', followUpDate: TOMORROW }), lead({ id: 'L3', outcome: 'Newsletter' })] });
@@ -288,6 +316,61 @@ test('the check reads the shared lead list (never a board read of its own) and t
     assert.deepEqual(calls.deep, [['L1']], 'only the listed record\'s notes are read (for a "handled" note)');
     assert.equal(calls.notes.length, 0, 'a check never writes');
   });
+});
+
+test('many follow-up lines: ONE notes read for all the listed records — 10 records a query, three queries at a time, never one after another; a failed query costs only its own ten', async () => {
+  const mondayApi = require('../src/services/mondayApi');
+  const realQuery = mondayApi.query;
+  const many = Array.from({ length: 25 }, (_, i) => lead({ id: `L${i + 1}`, fullName: `Person ${i + 1}` }));
+  const allIds = many.map((l) => l.id);
+  try {
+    await switchOff(async () => {
+      // 1. what the check asks for: every listed record in ONE call, to be read three queries at a time
+      harness({ leads: () => many });
+      const asked = [];
+      NA.io.readDeepNotes = async (ids, opts) => { asked.push([ids, opts]); return { notes: new Map(), failed: [] }; };
+      let snap = await NA.buildSnapshot();
+      assert.equal(snap.entries.length, 25);
+      assert.deepEqual(asked, [[allIds, { parallel: 3 }]]);
+      const l3 = snap.entries.find((e) => e.leadId === 'L3');
+
+      // 2. the real read, with Monday replaced by a counter: 3 queries (10 + 10 + 5), all three under way together
+      NA.io.readDeepNotes = REAL_IO.readDeepNotes;
+      let running = 0, most = 0, queries = [];
+      mondayApi.query = async (q, vars) => {
+        running++; most = Math.max(most, running); queries.push({ q, ids: vars.ids });
+        await new Promise((r) => setImmediate(r));
+        running--;
+        if (vars.ids.includes('L11')) throw new Error('Monday could not answer');
+        return { items: vars.ids.map((id) => ({ id, updates: id === 'L3' ? [asNote(NA.handledNoteBody(l3, 'Retainer Person'))] : [] })) };
+      };
+      snap = await NA.buildSnapshot();
+      assert.deepEqual(queries.map((x) => x.ids), [allIds.slice(0, 10), allIds.slice(10, 20), allIds.slice(20)], 'one query per 10 listed records');
+      assert.equal(most, 3, 'the three queries run together');
+      for (const x of queries) assert.match(x.q, /^query\(\$ids:\[ID!\]\)\{ items\(ids:\$ids, limit:(10|5)\)\{ id updates\(limit:200\)\{ id created_at text_body \} \} \}$/, 'the notes only — no column of the record — and as far back as for a case');
+      assert.deepEqual([snap.entries.length, snap.handledCount], [24, 1], 'the handled note is found');
+      assert.ok(!snap.entries.some((e) => e.leadId === 'L3'));
+      assert.equal(snap.entries.filter((e) => allIds.slice(10, 20).includes(e.leadId)).length, 10, 'the ten whose notes could not be read still show');
+      assert.deepEqual(snap.partial, ['Notes on 10 client records could not be read, so an item marked handled may show again.']);
+
+      // 3. a caller that does not ask for it reads one query after another, as before (the cases' older notes)
+      running = 0; most = 0; queries = [];
+      const r = await REAL_IO.readDeepNotes(allIds);
+      assert.deepEqual([queries.length, most, r.failed.length, r.notes.size], [3, 1, 10, 15]);
+      for (const odd of [0, -2, 'x', null]) { most = 0; await REAL_IO.readDeepNotes(allIds, { parallel: odd }); assert.equal(most, 1, `parallel ${odd}: one at a time`); }
+      // a list that fits one query is one query
+      queries = [];
+      await REAL_IO.readDeepNotes(['L1', 'L2'], { parallel: 3 });
+      assert.deepEqual(queries.map((x) => x.ids), [['L1', 'L2']]);
+      queries = [];
+      assert.deepEqual(await REAL_IO.readDeepNotes([], { parallel: 3 }), { notes: new Map(), failed: [] });
+      assert.equal(queries.length, 0);
+    });
+    const src = fs.readFileSync(require.resolve('../src/services/needsAttentionService.js'), 'utf8');
+    assert.ok(src.includes('const LEAD_NOTES_PARALLEL = 3;'));
+    assert.ok(src.includes('await io.readDeepNotes(leadOnly, { parallel: LEAD_NOTES_PARALLEL });'));
+    assert.ok(src.includes('const needDeep = cases.filter') && src.includes('await io.readDeepNotes(needDeep);') && src.includes('await io.readDeepNotes(deep);'), 'the cases\' own reads are as they were');
+  } finally { mondayApi.query = realQuery; }
 });
 
 test('Mark handled: a note on the CLIENT RECORD naming the date; it hides that date only — a later missed date shows again', async () => {
@@ -392,6 +475,74 @@ test('the lead list cannot be read: nothing is invented, the rest of the check r
   assert.equal(NA.view(ADMIN).entries.length, 1);
 });
 
+test('the Lead Board cannot be RE-read and the shared list hands out an older copy: the lines are worked out from it, and the page is told — never a list that reads as checked', async () => {
+  const shared = require('../src/services/leadSnapshot');
+  const real = { fetchLeads: shared.io.fetchLeads, now: shared.io.now, warn: console.warn, log: console.log };
+  const OLD = 'The client records could not be read just now, so an older copy (from 22 Nov 2026, 10:00 pm) was used: a payment without a signed date or a follow-up date changed since then may be missing, or still listed.';
+  const down = async () => { throw new Error('the Lead Board could not be read'); };
+  console.warn = () => {}; console.log = () => {};
+  try {
+    harness();
+    NA.io.leads = REAL_IO.leads;                       // the real shared list; its board read is the stand-in below
+    assert.equal(NA.io.leadsOldCopyAt, REAL_IO.leadsOldCopyAt);
+    shared._reset();
+    await switchOff(async () => {
+      // a good read at 22:00 the evening before
+      shared.io.now = () => NOW - 12 * H;
+      shared.io.fetchLeads = async () => [lead()];
+      let snap = await NA.buildSnapshot();
+      assert.deepEqual([snap.entries.map((e) => e.kind), snap.partial, snap.partialAlso], [['followup-due'], [], []], 'a current list: nothing is said');
+
+      // the morning check: the board cannot be read — the old copy is used, and the page says so
+      shared.io.now = () => NOW;
+      shared.io.fetchLeads = down;
+      snap = await NA.refresh();
+      assert.deepEqual(snap.entries.map((e) => [e.kind, e.leadId]), [['followup-due', 'L1']], 'the old list is better than none');
+      assert.deepEqual([snap.partial, snap.partialAlso], [[OLD], []]);
+      for (const viewer of [ADMIN, SEES_ALL, LIMITED]) assert.deepEqual(NA.view(viewer).partial, [OLD], 'everybody who sees the lines is told');
+      // still down at the next check: said again
+      assert.deepEqual((await NA.buildSnapshot()).partial, [OLD]);
+
+      // the board reads again: the new list, and the sentence is gone
+      shared.io.fetchLeads = async () => [lead({ followUpDate: TOMORROW })];
+      snap = await NA.buildSnapshot();
+      assert.deepEqual([snap.entries, snap.partial, snap.partialAlso], [[], [], []]);
+
+      // a copy a few minutes old is a current list (any list may be a few minutes behind): nothing is said, even if the read behind it fails
+      shared.io.now = () => NOW + 5 * 60 * 1000;
+      shared.io.fetchLeads = down;
+      snap = await NA.buildSnapshot();
+      assert.deepEqual([snap.entries, snap.partial], [[], []]);
+      await new Promise((r) => setImmediate(r));
+
+      // no copy at all and no read: the two sentences this always had — nothing invented
+      shared._reset();
+      snap = await NA.buildSnapshot();
+      assert.deepEqual(snap.entries, []);
+      assert.deepEqual(snap.partial, ['The client records could not be checked for a payment without a signed date (the Lead Board could not be read).']);
+      assert.deepEqual(snap.partialAlso, ['Follow-up dates could not be checked either, so a missed follow-up may be missing from the list.']);
+    });
+    // the question itself: only a list handed out after a FAILED re-read, and when that list was read
+    for (const none of [[], [lead()], null, undefined, 'x', 0]) assert.equal(shared.servedStale(none), 0);
+    shared._reset();
+    shared.io.now = () => NOW - 12 * H;
+    shared.io.fetchLeads = async () => [lead()];
+    const first = await shared.getLeadSnapshot();
+    assert.equal(shared.servedStale(first.leads), 0);
+    shared.io.now = () => NOW;
+    shared.io.fetchLeads = down;
+    const second = await shared.getLeadSnapshot();
+    assert.deepEqual([second.stale, second.leads === first.leads, shared.servedStale(second.leads)], [true, true, NOW - 12 * H]);
+    assert.equal(await shared.leads(), first.leads, 'leads() hands out the same list — the caller asks servedStale about it');
+    // a list given by a test stand-in (or any other list) is never called old
+    harness({ leads: () => [lead()] });
+    assert.deepEqual((await switchOff(() => NA.buildSnapshot())).partial, []);
+  } finally {
+    shared.io.fetchLeads = real.fetchLeads; shared.io.now = real.now; console.warn = real.warn; console.log = real.log;
+    shared._reset();
+  }
+});
+
 test('the record\'s notes cannot be read: the line shows (a handled mark may be missed), and the page says so', async () => {
   await switchOff(async () => {
     harness({ leads: () => [lead({ id: 'L1' }), lead({ id: 'L2' })], deepFail: ['L2'] });
@@ -426,18 +577,25 @@ test('EVERY signed-in staff member sees the follow-up lines — and only those: 
 
       // an admin (or the team key) and staff who see every case: everything, with Mark handled
       for (const viewer of [ADMIN, SEES_ALL]) {
-        const all = NA.view(viewer).entries;
-        assert.equal(all.length, 5);
-        for (const e of all) assert.ok(!('noHandle' in e), `${e.kind}: Mark handled is offered`);
+        for (const opensRecords of [true, false]) {
+          const all = NA.view(viewer, { opensRecords }).entries;
+          assert.equal(all.length, 5);
+          for (const e of all) assert.ok(!('noHandle' in e), `${e.kind}: Mark handled is offered`);
+        }
       }
 
       // a viewer limited to their own cases
       const mine = NA.view(LIMITED).entries;
       assert.deepEqual(mine.map((e) => e.kind).sort(), ['followup-due', 'followup-no-date', 'ref-duplicate'], 'the two follow-up lines and their own case — not the other client-record line, not the templates line');
       const due = mine.find((e) => e.kind === 'followup-due'), none = mine.find((e) => e.kind === 'followup-no-date');
-      assert.deepEqual([due.client, due.leadId, due.link, due.noHandle], ['Dana Example', 'L1', '/admin/consultation/L1?from=retainers', true]);
-      assert.deepEqual([none.client, none.leadId, none.noHandle], ['Robin Example', 'L2', true]);
+      assert.deepEqual([due.client, due.leadId, due.linkLabel, due.noHandle], ['Dana Example', 'L1', 'Client record', true]);
+      assert.deepEqual([none.client, none.leadId, none.linkLabel, none.noHandle], ['Robin Example', 'L2', 'Client record', true]);
+      assert.ok(!('link' in due) && !('link' in none), 'no link: the record page opens with the team key only, and this viewer has none');
+      assert.ok(!JSON.stringify(mine.filter((e) => FU_KINDS.includes(e.kind))).includes('/admin/consultation/'));
       assert.equal(due.why, 'Follow-up date passed (20 Nov): Dana Example was to be called back on that day. The outcome is still Follow-Up.', 'the name and the date, on purpose');
+      assert.equal(due.todo, 'Tell the person who does the retainers. They call Dana Example back, then set a new follow-up date or change the outcome on the client\'s record; the line leaves this list at the next check after that (07:00, or Check now).');
+      assert.equal(none.todo, 'Tell the person who does the retainers, or the consultant. They choose the day to call Robin Example back, or change the outcome, on the client\'s record; the line leaves this list at the next check after that (07:00, or Check now).');
+      for (const e of [due, none]) assert.ok(!/open the client's record|Save attribution|Record outcome/.test(e.todo), 'never sent to a page they cannot open');
       for (const e of [due, none]) {
         assert.deepEqual(Object.keys(e).filter((k) => !['key', 'kind', 'itemIds', 'caseRef', 'client', 'stage', 'payment', 'manager', 'since', 'why', 'todo', 'leadId', 'link', 'linkLabel', 'followUpDate', 'noHandle'].includes(k)), [], 'no other field');
         assert.ok(!('rows' in e) && !('assignees' in e));
@@ -449,6 +607,33 @@ test('EVERY signed-in staff member sees the follow-up lines — and only those: 
       assert.deepEqual([dup.client, dup.itemIds], ['Mine Person', ['mine']]);
       assert.ok(!JSON.stringify(mine).includes('Other Person'), 'never the other client');
       assert.ok(!JSON.stringify(mine).includes('Paid Person'), 'never the client of a line they may not see');
+
+      // The link to the client's record follows the TAB, not the person: it is sent only when the request came with
+      // the team key (the only thing that opens the record page). A Monday sign-in alone — an admin by email, or staff
+      // who see every case — gets the line with Mark handled, no link, and words they can act on.
+      for (const viewer of [ADMIN, SEES_ALL]) {
+        const withKey = NA.view(viewer, { opensRecords: true }).entries.find((e) => e.kind === 'followup-due');
+        assert.deepEqual([withKey.link, withKey.linkLabel], ['/admin/consultation/L1?from=retainers', 'Client record']);
+        assert.match(withKey.todo, /^Call Dana Example back, then set a new follow-up date or change the outcome: open the client's record — /);
+        for (const opts of [undefined, {}, { opensRecords: false }, { ensure: false }]) {
+          const noKey = NA.view(viewer, opts).entries.filter((e) => FU_KINDS.includes(e.kind));
+          assert.equal(noKey.length, 2);
+          for (const e of noKey) {
+            assert.ok(!('link' in e) && !('noHandle' in e) && e.linkLabel === 'Client record', 'no link, the label, Mark handled');
+            assert.match(e.todo, /^Tell the person who does the retainers/);
+          }
+        }
+      }
+      // …and the team key never widens what a limited viewer sees or may do (it cannot happen — the key makes an admin — but the rule holds by itself)
+      const odd = NA.view(LIMITED, { opensRecords: true }).entries;
+      assert.deepEqual(odd.map((e) => e.kind).sort(), ['followup-due', 'followup-no-date', 'ref-duplicate']);
+      assert.ok(odd.filter((e) => FU_KINDS.includes(e.kind)).every((e) => e.noHandle === true));
+      // every other line is the same with or without the key: only the follow-up lines change
+      for (const viewer of [ADMIN, SEES_ALL, LIMITED]) {
+        const rest = (o) => NA.view(viewer, o).entries.filter((e) => !FU_KINDS.includes(e.kind));
+        assert.deepEqual(rest({ opensRecords: true }), rest({ opensRecords: false }));
+      }
+      assert.equal(NA.view(ADMIN, { opensRecords: false }).entries.find((e) => e.kind === 'paid-not-signed').link, '/admin/consultation/L3?from=retainers', 'the other client-record line is sent as it always was');
 
       // someone assigned to no case at all still sees the two follow-up lines, and nothing else
       assert.deepEqual(NA.view({ userId: '1', teamIds: [], isAdmin: false, scope: 'assigned' }).entries.map((e) => e.kind).sort(), ['followup-due', 'followup-no-date']);
@@ -499,7 +684,20 @@ test('the table: two kinds of their own, "To do", after the other To-do lines; t
   // the visibility rule is the table: no other kind is shown to a limited viewer without a case row
   const src = fs.readFileSync(require.resolve('../src/services/needsAttentionService.js'), 'utf8');
   assert.ok(src.includes('const isForAllStaff = (entry) => !!(entry && CLIENT_KINDS[entry.kind] && !entry.rows.length);'));
-  assert.ok(src.includes("if (isForAllStaff(entry)) return viewer ? (seesEveryCase(viewer) ? out : { ...out, noHandle: true }) : null;"));
+  assert.ok(src.includes("const shaped = seesEveryCase(viewer) ? out : { ...out, noHandle: true };"));
+  assert.ok(src.includes('if (opensRecords) return shaped;'), 'the link only for a tab that opens the record page');
+  assert.ok(src.includes('function shapeFor(entry, viewer, { opensRecords = false } = {}) {') && src.includes('function view(viewer, { ensure = false, opensRecords = false } = {}) {'), 'no link unless the route says the tab can open it');
+});
+
+// OPEN ITEM (review 2026-11-23) — a "todo" test: it does NOT pass today and does not fail the suite; it is
+// here so the open item shows in every test run instead of only in a comment. Every group staff can see under
+// "Needs attention" is to be explained in the staff guide; test/needsAttention.test.js checks that for KINDS,
+// and the two follow-up groups sit in CLIENT_KINDS, outside that check, until the guide has them (the guide's
+// data file is rebuilt, not edited by hand). At the next guide rebuild: add the two entries, see this pass,
+// then widen the guide check to { ...NA.KINDS, ...NA.CLIENT_KINDS } and delete this test.
+test('OPEN ITEM — the staff guide explains the two follow-up groups (they come with the next guide rebuild)', { todo: 'add "Follow-up date passed" and "Follow-Up with no follow-up date" to the guide\'s Needs-attention table at the next guide rebuild' }, () => {
+  const guide = JSON.parse(fs.readFileSync(require.resolve('../src/staffGuide/guide-data.json'), 'utf8'));
+  for (const k of FU_KINDS) assert.ok(guide.needs_attention.some((e) => e.problem === NA.CLIENT_KINDS[k].label), `guide entry for ${k}`);
 });
 
 // ── The Summary page ────────────────────────────────────────────────────────
@@ -520,7 +718,7 @@ async function pageList() {
   const body = { innerHTML: '' };
   const ctx = { document: { getElementById: () => body }, _naShowAll: {}, NA_SEV: { high: 'Urgent', medium: 'To do', low: 'Check' } };
   vm.createContext(ctx);
-  vm.runInContext(['escHtml', 'naDay', 'naDayNumber', 'naSince', 'naIsRecord', 'naNoteOn', 'naItemHtml', 'naRenderBody'].map(pick).join('\n'), ctx);
+  vm.runInContext(['escHtml', 'naDay', 'naDayNumber', 'naSince', 'naIsRecord', 'naRecordLink', 'naNoteOn', 'naItemHtml', 'naRenderBody'].map(pick).join('\n'), ctx);
   return { html, src, pick, ctx, draw: (d) => { ctx.naRenderBody(d); return body.innerHTML; } };
 }
 
@@ -532,8 +730,8 @@ test('the Summary page draws the two groups: the heading, the client, a link to 
     await NA.refresh();
   });
 
-  // an admin: both groups, in the table's order, each with its link and its button
-  const admin = JSON.parse(JSON.stringify(NA.view(ADMIN)));   // as the page receives it
+  // an admin with the team key: both groups, in the table's order, each with its link and its button
+  const admin = JSON.parse(JSON.stringify(NA.view(ADMIN, { opensRecords: true })));   // as the page receives it
   let out = page.draw(admin);
   const groups = [...out.matchAll(/data-na-kind="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(groups, ['paid-not-signed', 'followup-due', 'followup-no-date'], 'Urgent first, then the two To-do groups');
@@ -560,15 +758,32 @@ test('the Summary page draws the two groups: the heading, the client, a link to 
   assert.deepEqual([...out.matchAll(/data-na-kind="([^"]+)"/g)].map((m) => m[1]), ['followup-due', 'followup-no-date']);
   assert.ok(!out.includes('Mark handled') && !out.includes('naAskHandled'));
   assert.equal(out.split('<span class="na-auto">Leaves this list once the follow-up date or the outcome is changed.</span>').length - 1, 2);
-  assert.match(out, /<a class="na-ref" href="\/admin\/consultation\/L1\?from=retainers"/);
+  // …and NO link: the record page opens with the team key only (it would throw them to the sign-in page). The label is plain words.
+  assert.ok(!out.includes('href=') && !out.includes('/admin/consultation/') && !out.includes('No case number'));
+  assert.equal(out.split('<li class="na-item" data-na-key="').length - 1, 2);
+  assert.match(out, /<li class="na-item" data-na-key="NA-[0-9a-f]{10}" data-na-on="record"><div class="na-who"><span class="na-noref">Client record<\/span><span class="na-client">Dana Example<\/span>/);
+  assert.ok(out.includes('<span class="na-todo-lbl">What to do:</span> Tell the person who does the retainers. They call Dana Example back, then set a new follow-up date or change the outcome on the client\'s record;'));
 
-  // only the client's record page is ever made into a link, and only when the server names it
+  // a Monday sign-in that sees every case, in a tab WITHOUT the team key: Mark handled, the plain label, no link
+  out = page.draw(JSON.parse(JSON.stringify(NA.view(SEES_ALL))));
+  const dueNoKey = out.slice(out.indexOf('data-na-kind="followup-due"'), out.indexOf('data-na-kind="followup-no-date"'));
+  assert.match(dueNoKey, /data-na-on="record"><div class="na-who"><span class="na-noref">Client record<\/span><span class="na-client">Dana Example<\/span>/);
+  assert.ok(!dueNoKey.includes('href=') && !dueNoKey.includes('na-auto'));
+  assert.match(dueNoKey, /<span class="na-act"><button type="button" class="na-btn" onclick="naAskHandled\(this\)">Mark handled<\/button><\/span>/);
+  assert.ok(dueNoKey.includes('What to do:</span> Tell the person who does the retainers.'));
+
+  // only the client's record page is ever made into a link, and only when the server sends it; a record line without a usable link is the plain label
   const itemOf = (e) => page.ctx.naItemHtml({ key: 'NA-0000000000', client: 'Dana Example', why: 'w', todo: 't', since: '', ...e });
   assert.ok(itemOf({ link: '/admin/consultation/L1', linkLabel: 'Client record' }).includes('href="/admin/consultation/L1"'));
-  for (const bad of [{ link: 'https://example.com/x', linkLabel: 'Client record' }, { link: 'javascript:alert(1)', linkLabel: 'Client record' }, { link: '/admin/consultation/L1' }, { linkLabel: 'Client record' }, {}]) {
+  for (const bad of [{ link: 'https://example.com/x', linkLabel: 'Client record' }, { link: 'javascript:alert(1)', linkLabel: 'Client record' }, { link: '//example.com/admin/consultation/L1', linkLabel: 'Client record' }, { linkLabel: 'Client record' }]) {
     const h = itemOf(bad);
-    assert.ok(h.includes('No case number') && !h.includes('href='), JSON.stringify(bad));
+    assert.ok(h.includes('<span class="na-noref">Client record</span>') && h.includes('data-na-on="record"') && !h.includes('href=') && !h.includes('No case number'), JSON.stringify(bad));
   }
+  for (const bad of [{ link: '/admin/consultation/L1' }, {}]) {
+    const h = itemOf(bad);
+    assert.ok(h.includes('No case number') && !h.includes('href=') && !h.includes('data-na-on'), JSON.stringify(bad));
+  }
+  assert.ok(itemOf({ linkLabel: '<i>x</i>' }).includes('<span class="na-noref">&lt;i&gt;x&lt;/i&gt;</span>'), 'the plain label is escaped too');
   // a case line keeps its case link even if a record link rides along (paid, no signed date — on a case)
   const onCase = itemOf({ caseRef: '2026-SV-050', link: '/admin/consultation/L1?from=retainers', linkLabel: 'Client record' });
   assert.ok(onCase.includes('href="/admin/case/2026-SV-050"') && !onCase.includes('/admin/consultation/') && !onCase.includes('data-na-on'));
@@ -626,7 +841,7 @@ test('the Summary page says where the "Mark handled" note goes — the client\'s
   for (const field of ['e.caseRef', 'e.client', 'e.why', 'e.todo', 'e.key', 'e.link', 'e.linkLabel']) assert.ok(fn.includes('escHtml(' + field + ')'), field + ' is escaped');
   // the script sits inside the page's template literal: no backtick, no dollar-brace, no backslash in what was added
   const added = page.src.slice(page.src.indexOf('// A line about a client record, not a case'), page.src.indexOf('// The header, the note and the Check now button'));
-  assert.ok(added.includes('function naIsRecord(e)') && added.includes('function naItemHtml(e)'));
+  assert.ok(added.includes('function naIsRecord(e)') && added.includes('function naRecordLink(e)') && added.includes('function naItemHtml(e)'));
   assert.ok(!added.includes('`') && !added.includes('${') && !added.includes('\\'));
   const file = fs.readFileSync(require.resolve('../src/routes/adminDashboard.js'), 'utf8');
   const raw = file.slice(file.indexOf('// A line about a client record, not a case'), file.indexOf('// The header, the note and the Check now button'));
@@ -641,7 +856,10 @@ test('the routes: the list, Check now and Mark handled answer every signed-in st
   const routes = server.slice(a, b);
   assert.equal(routes.split('const viewer = resolveViewer(req);').length - 1, 3);
   assert.equal(routes.split("if (!viewer) return res.status(401).json({ error: 'Sign in required', loginUrl: SUMMARY_LOGIN_URL });").length - 1, 3, 'nobody signed in: no list');
-  assert.ok(routes.includes("require('./services/needsAttentionService').view(viewer, { ensure: true })"));
+  assert.ok(routes.includes("require('./services/needsAttentionService').view(viewer, { ensure: true, opensRecords: hasAdminKey(req) })"), 'the link to a client record only for a request that came with the team key');
+  assert.ok(server.includes("app.use('/api', requireApiKey)"), 'the record page\'s data: the team key only');
+  const recordPage = fs.readFileSync(require.resolve('../src/routes/adminConsultation.js'), 'utf8');
+  assert.ok(/getKey\(\)/.test(recordPage) && !/peekKey\(\)/.test(recordPage), 'the record page itself asks for the team key (a tab without it is sent to the sign-in page) — the reason the link follows the key');
   assert.ok(routes.includes("require('./services/needsAttentionService').markHandled({ key, viewer, actor })"));
   assert.ok(routes.includes("if (err.status) return res.status(err.status).json({ error: err.message });"), 'the 403 reaches the page with its words');
 });

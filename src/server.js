@@ -720,7 +720,8 @@ const SUMMARY_LOGIN_URL = '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard%2Fsummar
 app.get('/admin/needs-attention', (req, res) => {
   const viewer = resolveViewer(req);
   if (!viewer) return res.status(401).json({ error: 'Sign in required', loginUrl: SUMMARY_LOGIN_URL });
-  res.json(require('./services/needsAttentionService').view(viewer, { ensure: true }));
+  // opensRecords: the client's record page opens with the team key only — a follow-up line carries its link for such a tab, and for no other
+  res.json(require('./services/needsAttentionService').view(viewer, { ensure: true, opensRecords: hasAdminKey(req) }));
 });
 
 app.post('/admin/needs-attention/refresh', (req, res) => {

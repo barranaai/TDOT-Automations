@@ -62,7 +62,7 @@ const FETCH_COLS = [...new Set([...Object.values(COL), ...caseAccess.PEOPLE_COLU
 const EXEC_REF_COL = 'text_mm0z2cck';            // Documents board: the case reference
 // Board groups that are not live cases — the one list shared with the document
 // reminders (src/utils/caseGroups.js), so both ignore the same rows.
-const { TEST_GROUP_ID, NOT_CASE_GROUPS } = require('../utils/caseGroups');
+const { TEST_GROUP_ID, NOT_CASE_GROUPS, isTestGroup } = require('../utils/caseGroups');
 // The document reminders' record on a case (block 2): the claim / failure notes and their hidden markers.
 const docReminders = require('./docReminderService');
 // The Reminder Templates board's state (block 2, §3b): a row the reminders could not use is listed here (review 2026-11-07 [23]).
@@ -88,6 +88,7 @@ const normMemberType = (t) => String(t || '').toLowerCase().replace(/\s*\/.*$/, 
 const isAccompanyingType = (t) => ['spouse', 'common-law partner', 'dependent child'].includes(normMemberType(t));
 const NOTES_LIMIT = 50;                          // notes read per case (newest first)
 const DEEP_NOTES_LIMIT = 200;                    // for a case whose window may hide a "handled" note
+const LEAD_NOTES_PARALLEL = 3;                   // the notes of the listed client records: this many queries (10 records each) at a time
 
 const DCS = 'Document Collection Started';
 // Before onboarding: a paid case here should get its checklist at DCS.
@@ -170,6 +171,19 @@ const kindInfo = (kind) => KINDS[kind] || CLIENT_KINDS[kind] || null;
 const isForAllStaff = (entry) => !!(entry && CLIENT_KINDS[entry.kind] && !entry.rows.length);
 /** Admins, the team key, and staff who see every case. */
 const seesEveryCase = (viewer) => !!(viewer && (viewer.isAdmin || viewer.scope === 'all'));
+/**
+ * "What to do" on a follow-up line for a viewer who CANNOT open the client's record. The record page
+ * (/admin/consultation/…) opens with the team key only, so a Monday sign-in alone — limited to their own
+ * cases or not — would be sent to the sign-in page by the link, and told to change a date on a page they
+ * cannot reach (review 2026-11-23). They get no link and these words; the name and the date stay.
+ */
+function followUpTodoWithoutRecord(entry) {
+  const who = s(entry.client) || 'the client';
+  const then = 'on the client\'s record; the line leaves this list at the next check after that (07:00, or Check now).';
+  return entry.kind === 'followup-no-date'
+    ? `Tell the person who does the retainers, or the consultant. They choose the day to call ${who} back, or change the outcome, ${then}`
+    : `Tell the person who does the retainers. They call ${who} back, then set a new follow-up date or change the outcome ${then}`;
+}
 
 // ─── The notes it reads (Monday text_body: tags stripped) ────────────────────
 // Matched on the stable bold heads the services write, never on whole sentences.
@@ -706,7 +720,7 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
   //                     (switched off, nobody is asked for dates yet).
   // Only the outcome Follow-Up (or the old label that reads as it): a date left on a Newsletter or
   // Not Wanted client is nobody's call to make. Never a retained client (the Retained tab's own rule),
-  // never a test record. ONE item per client record, keyed on the record and the date (or "none"):
+  // never a test record — but a client whose case row is in the Cancel or Leads group IS listed. ONE item per client record, keyed on the record and the date (or "none"):
   // a new date or a changed outcome drops the old item at the next check, and a "handled" mark covers
   // that one date — a later date that is missed is a new item.
   const today = torontoDayOf(now);
@@ -720,7 +734,10 @@ function detect({ cases, checklist = new Map(), folders = null, workFolders = ne
     const name = s(lead.fullName || lead.name);
     if (TEST_NAME_RE.test(name)) continue;
     const c = caseById.get(s(lead.clientMasterItemId)) || null;
-    if (c && isTestCase(c)) continue;                                    // its case sits in a group that is not a live case (TEST, Leads, Cancel)
+    // A TEST record only (its case sits in the TEST group, or is named as one). NOT the rule of 9b: a client whose
+    // case row was moved to "Cancel / Did not retained" or kept in "Leads" is a real person, still on the Follow-Up
+    // tab of Retainers & follow-ups, and exactly who is to be called back (review 2026-11-23).
+    if (c && (isTestGroup({ id: c.groupId, title: c.groupTitle }) || TEST_NAME_RE.test(c.name))) continue;
     const id = s(lead.id);
     if (followUpSeen.has(id)) continue;                                  // one item per client record
     const raw = s(lead.followUpDate), day = raw.slice(0, 10);
@@ -1053,16 +1070,20 @@ const io = {
     } while (cursor);
     return all;
   },
-  /** Up to DEEP_NOTES_LIMIT notes per case, 10 cases a query; a failed batch costs only its own cases. */
-  async readDeepNotes(itemIds) {
+  /**
+   * Up to DEEP_NOTES_LIMIT notes per case, 10 cases a query; a failed batch costs only its own cases.
+   * `parallel`: how many of those queries run at a time (1 = one after another, as it always was).
+   */
+  async readDeepNotes(itemIds, { parallel = 1 } = {}) {
     const notes = new Map(), failed = [];
-    for (let i = 0; i < itemIds.length; i += 10) {
-      const ids = itemIds.slice(i, i + 10);
+    const batches = [];
+    for (let i = 0; i < itemIds.length; i += 10) batches.push(itemIds.slice(i, i + 10));
+    await eachLimited(batches, Math.max(1, Number(parallel) || 1), async (ids) => {
       try {
         const d = await mondayApi.query(`query($ids:[ID!]){ items(ids:$ids, limit:${ids.length}){ id updates(limit:${DEEP_NOTES_LIMIT}){ id created_at text_body } } }`, { ids });
         for (const it of (d && d.items) || []) notes.set(s(it.id), it.updates || []);
       } catch (_) { failed.push(...ids); }
-    }
+    });
     return { notes, failed };
   },
   /** When the case's newest checklist row was made (ms), or 0 when it has none. */
@@ -1123,6 +1144,8 @@ const io = {
   listRootFolders: () => require('./oneDriveService').listCaseFoldersInRoot(),
   /** The client records (Lead Board) — the shared, cached list the pages use (leadSnapshot); never a board read of its own. */
   leads: () => require('./leadSnapshot').leads(),
+  /** When the list io.leads() just gave was read (ms), if it is an OLDER copy handed out because the Lead Board could not be re-read; 0 = current. */
+  leadsOldCopyAt: (list) => require('./leadSnapshot').servedStale(list),
   /** The Reminder Templates board's problems: [{ row, reason, board }] — board: true = the board itself (not found / unreadable / no Subject or Body column), row = '' then. No read at all when the board env is unset; otherwise the templates' own cached load (half an hour; a few minutes after a read failure). */
   async reminderTemplateProblems() {
     if (!s(process.env.MONDAY_REMINDER_TEMPLATES_BOARD_ID)) return [];
@@ -1237,8 +1260,14 @@ async function buildSnapshot() {
   // line of its own (partialAlso — the page shows both), so no item is silently missing.
   let leads = [];
   const partialAlso = [];
-  try { leads = (await io.leads()) || []; }
-  catch (err) {
+  try {
+    leads = (await io.leads()) || [];
+    // The Lead Board could not be re-read and an older copy was handed out (the shared list does that
+    // rather than fail): the two rules run on it — an old list is better than none — and the page is
+    // told, instead of a list that reads as checked (review 2026-11-23).
+    const oldCopyAt = io.leadsOldCopyAt(leads);
+    if (oldCopyAt) partial.push(`The client records could not be read just now, so an older copy (from ${torontoTime(oldCopyAt)}) was used: a payment without a signed date or a follow-up date changed since then may be missing, or still listed.`);
+  } catch (err) {
     partial.push(`The client records could not be checked for a payment without a signed date (${oneLine(err.message, 120)}).`);
     partialAlso.push('Follow-up dates could not be checked either, so a missed follow-up may be missing from the list.');
   }
@@ -1265,7 +1294,11 @@ async function buildSnapshot() {
   const leadOnly = [...new Set(stillOpen.map((e) => e.leadId))];
   const movedCases = [...new Set(stillOpen.map((e) => (!e.rows.length && e.linkedCaseId) || '').filter(Boolean))];
   if (leadOnly.length) {
-    const { notes: more, failed } = await io.readDeepNotes(leadOnly);
+    // Every follow-up line is such an item and stays for days, so this read grows with the list (one query
+    // per 10 records, at every check): the queries run LEAD_NOTES_PARALLEL at a time, not one after another
+    // (review 2026-11-23). The notes are still read as far back as for a case — a "handled" note must be
+    // found however many notes followed it.
+    const { notes: more, failed } = await io.readDeepNotes(leadOnly, { parallel: LEAD_NOTES_PARALLEL });
     for (const [, ups] of more) for (const k of handledKeys(caseNotes(ups))) handled.add(k);
     if (movedCases.length) {
       // best-effort: the case may be deleted (nothing comes back) — never a warning of its own
@@ -1341,13 +1374,22 @@ function visibleRows(entry, viewer) {
  * (one number on two cases, a folder) shown to someone who may see only some of
  * them names only those — never the other client.
  */
-function shapeFor(entry, viewer) {
+function shapeFor(entry, viewer, { opensRecords = false } = {}) {
   const { rows: _all, ...out } = entry;
   // A follow-up line (CLIENT_KINDS): every signed-in staff member — the owner's decision (2026-11-23).
   // It carries the client's name and the date, nothing else. A viewer limited to their own cases gets
   // it without "Mark handled" (noHandle: they cannot open the record to check, and a mark hides the
   // line from everybody; it leaves the list by itself once the date or the outcome is changed).
-  if (isForAllStaff(entry)) return viewer ? (seesEveryCase(viewer) ? out : { ...out, noHandle: true }) : null;
+  // The link to the client's record, and the words that send the reader there, go ONLY to a viewer whose
+  // tab opens that page (opensRecords: the request came with the team key — the route says so). Everyone
+  // else gets the line with its label, no link, and what they can do: tell the person who does the retainers.
+  if (isForAllStaff(entry)) {
+    if (!viewer) return null;
+    const shaped = seesEveryCase(viewer) ? out : { ...out, noHandle: true };
+    if (opensRecords) return shaped;
+    const { link: _link, ...noLink } = shaped;
+    return { ...noLink, todo: followUpTodoWithoutRecord(entry) };
+  }
   // An item about no case (a Reminder Templates board row): admins and viewers who see every case.
   if (!entry.rows.length) return viewer && (viewer.isAdmin || viewer.scope === 'all') ? out : null;
   const rows = visibleRows(entry, viewer);
@@ -1368,12 +1410,13 @@ function shapeFor(entry, viewer) {
 
 /**
  * What the page shows this viewer. With `ensure`, a first view after a restart
- * starts the check (the page then polls).
+ * starts the check (the page then polls). `opensRecords`: this viewer's tab can open
+ * a client's record page (it holds the team key) — only then a follow-up line carries its link.
  */
-function view(viewer, { ensure = false } = {}) {
+function view(viewer, { ensure = false, opensRecords = false } = {}) {
   if (ensure && !_snap && !_running && !waitMs()) kick('first view');
   const entries = _snap
-    ? _snap.entries.filter((e) => !_handledHere.has(e.key)).map((e) => shapeFor(e, viewer)).filter(Boolean)
+    ? _snap.entries.filter((e) => !_handledHere.has(e.key)).map((e) => shapeFor(e, viewer, { opensRecords })).filter(Boolean)
     : [];
   return {
     running: !!_running,

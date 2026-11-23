@@ -105,6 +105,8 @@ let _gen = 0;              // bumped by every invalidate()
 let _invalidatedAt = 0;    // the generation of the latest invalidation (0 = none outstanding)
 let _staleGen = 0;         // the generation of the latest BACKGROUND change (a soft mark: serve the copy, refresh behind it)
 let _lastViewAt = 0;       // when getLeadSnapshot was last called (warm() skips while nobody looks)
+/** A list handed out although the board could NOT be re-read → when that copy was read (ms). See servedStale(). */
+const _servedStale = new WeakMap();
 /** Marks work started by the scheduler: its lead writes only mark the copy stale (decision 7). */
 const _background = new AsyncLocalStorage();
 
@@ -213,7 +215,7 @@ async function getLeadSnapshot({ fresh = false } = {}) {
       // not be read), is better than no page — even after a write, where the copy
       // may still show the old state. Only a caller that insisted on fresh data,
       // or no copy at all, gets the error.
-      if (_copy && !fresh) { console.warn(`[LeadSnapshot] refresh failed, serving the copy from ${Math.round(age / 1000)} s ago: ${err.message}`); return { leads: _copy.leads, at: _copy.at, ageMs: age, stale: true }; }
+      if (_copy && !fresh) { console.warn(`[LeadSnapshot] refresh failed, serving the copy from ${Math.round(age / 1000)} s ago: ${err.message}`); _servedStale.set(_copy.leads, _copy.at); return { leads: _copy.leads, at: _copy.at, ageMs: age, stale: true }; }
       throw err;
     }
   }
@@ -242,6 +244,14 @@ function peek() {
 
 /** Just the leads (the common call). */
 async function leads(opts) { return (await getLeadSnapshot(opts)).leads; }
+
+/**
+ * For a caller that takes just the list (leads()) and still has to say so when it is an OLDER copy
+ * (the Summary page's "Needs attention" check, review 2026-11-23): when THIS list was read (ms) if it was
+ * handed out because the Lead Board could not be re-read — the `stale: true` of getLeadSnapshot — else 0.
+ * A list once handed out that way is never handed out as current again: every good read makes a new list.
+ */
+function servedStale(list) { return (list && typeof list === 'object' && _servedStale.get(list)) || 0; }
 
 /**
  * After a lead write. A staff member's own write (a request): the next read waits for data read
@@ -292,4 +302,4 @@ async function contactIndex(opts) {
 function _reset() { _copy = null; _inFlight = null; _gen = 0; _invalidatedAt = 0; _staleGen = 0; _lastViewAt = 0; }
 function _state() { return { gen: _gen, invalidatedAt: _invalidatedAt, copyGen: _copy ? _copy.gen : null, inFlight: !!_inFlight, staleGen: _staleGen }; }
 
-module.exports = { getLeadSnapshot, leads, peek, contactIndex, invalidate, runInBackground, warm, io, CONTACT, GATE, gateFactsOf, SERVER_ONLY_KEYS, FETCH_IDS, SNAPSHOT_KEYS, SNAPSHOT_IDS, TTL_MS, HARD_MAX_MS, JOIN_MS, IDLE_MS, _reset, _state };
+module.exports = { getLeadSnapshot, leads, servedStale, peek, contactIndex, invalidate, runInBackground, warm, io, CONTACT, GATE, gateFactsOf, SERVER_ONLY_KEYS, FETCH_IDS, SNAPSHOT_KEYS, SNAPSHOT_IDS, TTL_MS, HARD_MAX_MS, JOIN_MS, IDLE_MS, _reset, _state };

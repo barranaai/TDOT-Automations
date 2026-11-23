@@ -2975,10 +2975,15 @@ function naSince(iso) {
   };
 }
 
-// A line about a client record, not a case (a follow-up date, 2026-11-23): the server names its link
-// (linkLabel) and the link is the client's record page — nothing else is ever made into a link here.
+// A line about a client record, not a case (a follow-up date, 2026-11-23): the server names it (linkLabel).
 function naIsRecord(e) {
-  return !e.caseRef && !!e.linkLabel && String(e.link || '').indexOf('/admin/consultation/') === 0;
+  return !e.caseRef && !!e.linkLabel;
+}
+
+// Its link: the client's record page — nothing else is ever made into a link here. The server sends the link
+// only to a tab that can open that page (it holds the team key); without it the label is drawn as plain words.
+function naRecordLink(e) {
+  return naIsRecord(e) && String(e.link || '').indexOf('/admin/consultation/') === 0;
 }
 
 // Where a "Mark handled" note is written, in words: the case number, or the client's record.
@@ -2992,9 +2997,11 @@ function naItemHtml(e) {
   var rec = naIsRecord(e);
   var who = e.caseRef
     ? '<a class="na-ref" href="/admin/case/' + encodeURIComponent(e.caseRef) + '" title="Open the case page">' + escHtml(e.caseRef) + '</a>'
-    : rec
+    : naRecordLink(e)
       ? '<a class="na-ref" href="' + escHtml(e.link) + '" title="Open the client record">' + escHtml(e.linkLabel) + '</a>'
-      : '<span class="na-noref">No case number</span>';
+      : rec
+        ? '<span class="na-noref">' + escHtml(e.linkLabel) + '</span>'
+        : '<span class="na-noref">No case number</span>';
   var meta = [];
   if (e.stage) meta.push(e.stage);
   if (e.manager) meta.push('Case manager: ' + e.manager);
