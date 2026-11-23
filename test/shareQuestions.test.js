@@ -316,6 +316,7 @@ test('the page: thank-you header, the follow-up group first, one plain heading b
     '<li>A reason is now required whenever a consultation fee is waived or a consultation is added as free.</li>',
     'The fee sheet template is ready and is going to Asmita to fill in.',
     '<b>Five answers need one more word from you.</b> They are at the top of this page.',
+    'Nothing changes in the app on these five points until you answer.',
     'The <b>suggested</b> answer is marked; “Use the suggestion” picks it in one click.',
     'Add a note wherever you want to explain or change something.',
     'Your answers save as you go.',
