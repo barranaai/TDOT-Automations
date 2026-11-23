@@ -17,7 +17,7 @@ const { REFERRAL_CSS, REFERRAL_UI_JS, referralFieldsHtml, sourceOptionsHtml } = 
 const { ATTACH_CSS, ATTACH_UI_JS, attachFieldHtml } = require('./attachUi');   // Shafoli's screenshot attachments (2026-11-04)
 const { deadlineBoxHtml, DEADLINE_BOX_JS, DEADLINE_BOX_CSS } = require('./deadlineBox');   // the deadline box (2026-11-05)
 const { LEAD_OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
-const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
+const { OUTCOME_NOT_WANTED, OUTCOME_FOLLOW_UP } = require('../../config/outcomes');
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS, STAFF_OPTS, COUNTRY_OPTS, DIALOG_UI_JS, REPORTING_LINK_HTML } = require('./adminShared');
 
@@ -675,6 +675,8 @@ ${DEADLINE_BOX_JS}
 var LEAD_ID=${jsLit(String(leadId))};
 var OUTCOMES=${jsLit(LEAD_OUTCOME_LABELS)};   /* the four, and Webinar — a lead-only outcome (2026-11-11) */
 var OUTCOME_NOT_WANTED=${jsLit(OUTCOME_NOT_WANTED)};
+var OUTCOME_FOLLOW_UP=${jsLit(OUTCOME_FOLLOW_UP)};
+var LEAD_DETAIL=null;   /* the lead as last loaded: the Follow-Up button reads from it whether the follow-up date is required, and the saved date */
 var REMARKS=${jsLit(REMARK_PRESETS)};
 ${BLACKLIST_UI_JS}
 ${REMARKS_JS}
@@ -701,6 +703,8 @@ tdotRemarksMount({ prefix:'rmk', leadId: LEAD_ID, presets: REMARKS, updatesPrefi
       };
       // "Not Wanted" asks for the reason first — it goes on the lead and on the Not Wanted list.
       if(label===OUTCOME_NOT_WANTED){ tdotOpenNotWantedModal({ name:document.getElementById('c-name').textContent||'', onConfirm:function(reason){ run(JSON.stringify({label:label, reason:reason})); } }); return; }
+      // "Follow-Up" asks for the follow-up date first — only when the loaded lead says the date is required (read at the click: these buttons are built before the lead arrives). Pressed again, the box opens with the saved date. Otherwise one click, as before.
+      if(label===OUTCOME_FOLLOW_UP && LEAD_DETAIL && LEAD_DETAIL.followUpDateRequired===true){ tdotOpenFollowUpModal({ name:String(LEAD_DETAIL.name||'').trim(), saved:LEAD_DETAIL.followUpDate||'', onConfirm:function(day){ run(JSON.stringify({label:label, followUpDate:day})); } }); return; }
       run(label);
     };
     box.appendChild(b);
@@ -725,6 +729,7 @@ window.tdotEditEmail=function(){
 function kv(k,v){ return '<div class="kv"><div class="k">'+escHtml(k)+'</div><div class="v">'+escHtml(v)+'</div></div>'; }
 
 function render(d){
+  LEAD_DETAIL=d;
   WANTS_TO=d.wantsTo||'';
   var la=document.getElementById('lead-address');
   if(la && !ADDR_DIRTY && document.activeElement!==la) la.value=d.address||'';   // never overwrite what the staffer is typing
@@ -805,6 +810,10 @@ function render(d){
   if(d.bookingReminders) st+=kv('Booking reminders', d.bookingReminders);
   st+=kv('Pre-consult', d.preConsultSubmitted?'Submitted':'Pending');
   if(d.outcome) st+=kv('Outcome', d.outcome);
+  /* The follow-up date (2026-11-23): shown whenever there is one. "not set" only while the server says the date is
+     required and this lead's outcome is Follow-Up — press Follow-Up to choose it. */
+  if(d.followUpDate) st+=kv('Follow-up date', d.followUpDate);
+  else if(d.followUpDateRequired===true && d.outcome===OUTCOME_FOLLOW_UP) st+=kv('Follow-up date', 'not set');
   Array.prototype.forEach.call(document.querySelectorAll('.obtn'),function(b){ b.classList.toggle('active', b.getAttribute('data-outcome')===(d.outcome||'')); });
   if(d.consultant) st+=kv('Consultant', d.consultant);
   st+=kv('Source / Reference', d.sourceChannel||'—');

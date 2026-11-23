@@ -1371,6 +1371,36 @@ const BLACKLIST_UI_JS = DIALOG_UI_JS + `
     };
     setTimeout(function(){ ta.focus(); }, 30);
   }
+  /* ── "Follow-Up needs a date" (2026-11-23). The switch FOLLOWUP_DATE_REQUIRED lives on the server; each page is told
+     by what it loads (followUpDateRequired) and opens this pop-up only then. Never decided here. ── */
+  function tdotIsDay(s){ return /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(String(s == null ? '' : s)); }
+  /* Today as the Toronto day (YYYY-MM-DD), whatever the computer's own clock zone; '' if this browser cannot say (then only the server checks). */
+  function tdotTorontoDay(){
+    try { var s = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); return tdotIsDay(s) ? s : ''; }
+    catch (e) { return ''; }
+  }
+  /* "Follow-Up" asks for the day to call the client back, then the page saves the outcome WITH the date (one save).
+     o: { name, saved, onConfirm(day) } — saved = the date already on the record: filled in unless it is already past. */
+  function tdotOpenFollowUpModal(o){
+    var d = blOverlay(), today = tdotTorontoDay(), saved = String(o.saved || '').trim();
+    d.box.innerHTML = '<h3 id="blm-title">Outcome: Follow-Up</h3>' +
+      '<p>Choose the day to call <b>' + blEsc(o.name || 'this client') + '</b> back.</p>' +
+      '<label for="blm-fu-date">Follow-up date (required)</label><input id="blm-fu-date" type="date"' + (today ? ' min="' + today + '"' : '') + ' max="9999-12-31">' +
+      '<div class="blm-err" role="alert"></div>' +
+      '<div class="blm-actions"><button type="button" class="blm-btn" data-x>Cancel</button><button type="button" class="blm-btn primary" data-go>Save Follow-Up</button></div>';
+    d.box.querySelector('[data-x]').onclick = d.close;
+    var inp = d.box.querySelector('#blm-fu-date'), err = d.box.querySelector('.blm-err'), go = d.box.querySelector('[data-go]');
+    if (tdotIsDay(saved) && (!today || saved >= today)) inp.value = saved;   /* a date that has passed is not offered again */
+    go.onclick = function(){
+      var day = String(inp.value || '').trim();
+      if (!day) { err.textContent = 'Choose the follow-up date. Follow-Up cannot be saved without it.'; inp.focus(); return; }
+      if (!tdotIsDay(day)) { err.textContent = 'Follow-up date must be YYYY-MM-DD.'; inp.focus(); return; }
+      if (today && day < today) { err.textContent = 'The follow-up date cannot be in the past. Choose today or a later day.'; inp.focus(); return; }
+      d.close(); o.onConfirm(day);
+    };
+    inp.onkeydown = function(e){ if (e && e.key === 'Enter') { if (e.preventDefault) e.preventDefault(); go.onclick(); } };
+    setTimeout(function(){ inp.focus(); }, 30);
+  }
 `;
 
 // Option lists built on the server (never in a page script): the staff roster

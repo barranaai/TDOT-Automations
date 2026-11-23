@@ -12,11 +12,11 @@
 const express = require('express');
 const router  = express.Router();
 const { SHARED_CSS_VARS, NAV_CSS, buildNavHeader, SHARED_AUTH_JS, DELETE_UI_CSS, DELETE_UI_JS, PAYMENT_UI_CSS, PAYMENT_UI_JS, BLACKLIST_UI_CSS, BLACKLIST_UI_JS, DIALOG_UI_JS, REPORTING_LINK_HTML } = require('./adminShared');
-const { OUTCOME_NOT_WANTED } = require('../../config/outcomes');
+const { OUTCOME_NOT_WANTED, OUTCOME_FOLLOW_UP } = require('../../config/outcomes');
 const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./updatesWidget');
 const { CONSULT_NOTES_CSS, consultNotesHtml, CONSULT_NOTES_JS } = require('./consultNotesWidget');   // the Consultation notes box (2026-11-10)
 const { OTTER_MATCH_CSS, otterMatchHtml, OTTER_MATCH_JS } = require('./otterMatchWidget');   // "Otter recordings to match" (2026-11-14)
-const { OUTCOME_LABELS, REMARK_PRESETS, RETAINER_TABS, RETAINED_TAB } = require('../services/consultantPortalService');
+const { OUTCOME_LABELS, REMARK_PRESETS, RETAINER_TABS, RETAINED_TAB, FOLLOW_UP_DATE_KEPT } = require('../services/consultantPortalService');
 const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
 const { REFERRAL_CSS, REFERRAL_UI_JS, referralFieldsHtml, sourceOptionsHtml } = require('./referralPicker');   // the walk-in form's Source / Reference (2026-11-04)
 const { ATTACH_CSS, ATTACH_UI_JS, attachFieldHtml } = require('./attachUi');   // Shafoli's screenshot attachments (2026-11-04)
@@ -240,6 +240,15 @@ function outcomeCell(c){
   if(c.followUpDate) h+=' '+qpill(c.followUpDate<=todayStr()?'amber':'grey','follow-up '+c.followUpDate);
   return h;
 }
+/* "no follow-up date" (2026-11-23): an amber pill beside the outcome of a Follow-Up client who has no follow-up date —
+   never on the Retained tab. Drawn only while the server's switch FOLLOWUP_DATE_REQUIRED is on: the board's answer
+   says so (followUpDateRequired) and each page's load() hands it to fuDateRule(). Switched off, the cell is the one
+   above, letter for letter. It is added AROUND the cell (the cell's own text is kept as it was — a test compares it
+   with a frozen copy), so every list that draws the outcome gets it. */
+var FU_DATE_RULE=false;
+function fuDateRule(d){ FU_DATE_RULE=!!(d && d.followUpDateRequired===true); }
+function fuMissingPill(c){ return (FU_DATE_RULE && c && c.outcome==='Follow-Up' && !c.followUpDate && !c.retained)?' '+qpill('amber','no follow-up date'):''; }
+if(!outcomeCell.plain){ (function(plain){ outcomeCell=function(c){ return plain(c)+fuMissingPill(c); }; outcomeCell.plain=plain; })(outcomeCell); }
 function bindRowClicks(root,suffix){
   Array.prototype.forEach.call(root.querySelectorAll('tr.row'),function(tr){
     /* a link inside the row (the Retained tab's case number) goes where it says, not to the record */
@@ -891,6 +900,7 @@ function load(force){
   fetch('/api/consultations-board?completed=1'+(force?'&fresh=1':''),{headers:{'X-Api-Key':key}})
    .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } if(!r.ok){ return r.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.error||('HTTP '+r.status)); }); } return r.json(); })
    .then(function(d){
+     fuDateRule(d);   /* "no follow-up date" beside a Follow-Up with no date: only while the server says the date is required */
      ALLROWS=(d.consultations||[]).concat(d.completed||[]);   /* the completed ones carry done:true — their own month groups */
      ConsultTable.setRows(ALLROWS); showAge(d);   // the filters stay as they were (a refresh never clears them)
      document.getElementById('loading').style.display='none';
@@ -972,6 +982,7 @@ function load(force){
   fetch('/api/consultations-board?retained=1'+(force?'&fresh=1':''),{headers:{'X-Api-Key':key}})
    .then(function(r){ if(r.status===401||r.status===403){ window.location.href='/admin'; throw new Error('x'); } if(!r.ok){ return r.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.error||('HTTP '+r.status)); }); } return r.json(); })
    .then(function(d){
+     fuDateRule(d);   /* "no follow-up date" beside a Follow-Up with no date: only while the server says the date is required */
      RETAINERS=(d.retainers||[]).concat(d.retained||[]);   /* the Retained tab's rows ride along (kept apart from All) */
      RetainerTable.setRows(RETAINERS); showAge(d);   // the filters stay as they were (a refresh never clears them)
      document.getElementById('loading').style.display='none';
@@ -1452,6 +1463,8 @@ ${UPDATES_WIDGET_JS}
 ${CONSULT_NOTES_JS}
 var OUTCOMES=${jsLit(OUTCOME_LABELS)};
 var OUTCOME_NOT_WANTED=${jsLit(OUTCOME_NOT_WANTED)};
+var OUTCOME_FOLLOW_UP=${jsLit(OUTCOME_FOLLOW_UP)};
+var FOLLOW_UP_DATE_KEPT=${jsLit(FOLLOW_UP_DATE_KEPT)};
 var REMARKS=${jsLit(REMARK_PRESETS)};
 ${REMARKS_JS}
 var ICONS=${jsLit({ video: I.video, file: I.file, disc: I.disc, mail: I.mail, userCheck: I.userCheck, clock: I.clock, check: I.check, dollar: I.dollar })};
@@ -2062,6 +2075,22 @@ function doAction(action,value,confirmMsg,staffNameOverride,confirmed){
      if(action==='retainerFee'){ RP_FEE_SET=true; PERSISTED_FEE=String(value==null?'':value); }
      load(); // refresh consultation state (pills, status, outcome highlight) — render() re-locks + resets amend
    }).catch(function(e){ disableActions(false); setMsg(netErr(e),'err'); if(action==='saveDeadline') cdMsg(netErr(e),'err'); });
+}
+
+/* ── The follow-up date (2026-11-23) ── */
+/* Is the date required at Follow-Up? The server's switch, as the loaded record says it — false until the record has arrived. */
+function fuDateRequired(){ return !!(LAST_DETAIL && LAST_DETAIL.followUpDateRequired===true); }
+/* "Save attribution" with the date box emptied: the shared pop-up asks. done('remove') = remove the date (the only answer
+   that sends the mark); done('keep') = save the other boxes, the date stays; done('') = closed (x, Escape): nothing is saved. */
+function askRemoveFollowUpDate(day, done){
+  var answer='';
+  var dlg=tdotDialogNew({ cls:'dqt tdlg-narrow', labelledBy:'fur-title', onClosed:function(){ done(answer); } });
+  dlg.box.innerHTML='<h3 id="fur-title">Remove the follow-up date?</h3><p>Remove the follow-up date <b>'+escHtml(day)+'</b> from this client?</p>'+
+    '<p class="muted">Lead owner, Booked by and Payment reviewed by are saved either way.</p>'+
+    '<div class="tdlg-actions"><button type="button" class="tdlg-btn" data-x>Keep the date</button><button type="button" class="tdlg-btn primary" data-go>Remove the date</button></div>';
+  dlg.box.querySelector('[data-x]').onclick=function(){ answer='keep'; if(!dlg.tryClose('cancel')) answer=''; };
+  dlg.box.querySelector('[data-go]').onclick=function(){ answer='remove'; dlg.close(true); };
+  setTimeout(function(){ var b=dlg.box.querySelector('[data-x]'); if(b) b.focus(); },30);
 }
 
 /* ── Direct consultation (step 2): the shared pop-up (dialogUi.js tdotDialogNew) for "asks first" and "Change time" ── */
@@ -2693,6 +2722,8 @@ function initActions(){
     // "Not Wanted" asks for the reason first — it goes on the lead and on the Not Wanted list.
     b.onclick=function(){
       if(label===OUTCOME_NOT_WANTED){ tdotOpenNotWantedModal({ name:(LAST_DETAIL&&LAST_DETAIL.name)||'', onConfirm:function(reason){ doAction('outcome', JSON.stringify({label:label, reason:reason})); } }); return; }
+      // "Follow-Up" asks for the follow-up date first — only when the record says the date is required (read at the click: these buttons are built before the record arrives). Otherwise one click, as before.
+      if(label===OUTCOME_FOLLOW_UP && fuDateRequired()){ tdotOpenFollowUpModal({ name:(LAST_DETAIL&&LAST_DETAIL.name)||'', saved:(LAST_DETAIL&&LAST_DETAIL.followUpDate)||'', onConfirm:function(day){ doAction('outcome', JSON.stringify({label:label, followUpDate:day})); } }); return; }
       doAction('outcome',label);
     };
     obtns.appendChild(b);
@@ -2798,7 +2829,26 @@ function initActions(){
       : 'Send the client ONE consultation email now — booking details, meeting link, the pre-consultation form, and the consultation agreement (sent for e-signature when e-sign is enabled) — with a note to complete both before the consultation? Preview the agreement first and make sure the client\\'s address is filled in.');
   };
   document.getElementById('btn-attr-save').onclick=function(){
-    doAction('saveAttribution', JSON.stringify({ followUpDate: document.getElementById('at-followup').value, leadOwner: document.getElementById('at-owner').value, bookedBy: document.getElementById('at-bookedby').value, paymentReviewedBy: document.getElementById('at-reviewer').value }), null);
+    var fuBox=document.getElementById('at-followup');
+    /* day = what goes for the date ('' = nothing: the server then leaves the date as it is); remove = the explicit mark, sent ONLY after the question below. */
+    var send=function(day,remove){
+      var o={ followUpDate: day, leadOwner: document.getElementById('at-owner').value, bookedBy: document.getElementById('at-bookedby').value, paymentReviewedBy: document.getElementById('at-reviewer').value };
+      if(remove===true) o.removeFollowUpDate=true;
+      doAction('saveAttribution', JSON.stringify(o), null);
+    };
+    /* An EMPTIED "Follow-up date" box (2026-11-23): only when the loaded record had a date — never before the record has
+       arrived, never for a half-typed date — the page asks first. Any other save goes as before. */
+    var had=String((LAST_DETAIL&&LAST_DETAIL.followUpDate)||'').trim();
+    var halfTyped=!!(fuBox.validity&&fuBox.validity.badInput);
+    if(!had || fuBox.value || halfTyped){ send(fuBox.value,false); return; }
+    /* The date is required and this client's outcome is Follow-Up: the server would refuse — say so at once, nothing is sent. */
+    if(fuDateRequired() && LAST_DETAIL.outcome===OUTCOME_FOLLOW_UP){ fuBox.value=had; setMsg(FOLLOW_UP_DATE_KEPT,'err'); return; }
+    askRemoveFollowUpDate(had,function(answer){
+      if(answer==='remove'){ send('',true); return; }
+      fuBox.value=had;   /* the date stays: back in the box */
+      if(answer==='keep') send('',false);   /* nothing is sent for the date; the other three boxes are saved */
+      else setMsg('Nothing was saved.','info');
+    });
   };
   // Consultation fee: record / change / remove — the dialog collects the facts, doAction posts them.
   document.getElementById('btn-cp-record').onclick=function(){ openConsultPaymentModal(LAST_DETAIL||{}, false); };
