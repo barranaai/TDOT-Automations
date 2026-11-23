@@ -1,6 +1,7 @@
 'use strict';
 
-// Gauri's 19 questions at a private no-sign-in link (Faran 2026-11-19): the form, its two answer calls and the
+// Gauri's questions at a private no-sign-in link (Faran 2026-11-19; five follow-up questions added on the same link
+// 2026-11-23, shown first — 24 in all, the 19 earlier ones pinned as she answered them): the form, its two answer calls and the
 // named-admin read — against a FAKE OneDrive file. A wrong token is the ordinary 404 on all three public routes;
 // only the token's hash is in the code; the page is a complete document whose one inline script runs by its hash;
 // the page's questions equal the server's ONE list; validation, write limits, eTag conflict retry, storage
@@ -26,7 +27,10 @@ const sha256hex = (s) => crypto.createHash('sha256').update(s).digest('hex');
 // A made-up token: the real one is not in the repo, so tests run their own instance on this one's hash.
 const TOKEN = 'made-up-token-for-tests-0001';
 const BASE = `/share/questions/${TOKEN}`;
-const SPEC_IDS = ['G1', 'H1', 'H2', 'H3', 'H4', 'A1', 'B1', 'B2', 'B3', 'B4', 'B5', 'F1', 'F2', 'F3', 'F4', 'D1', 'R1', 'R2', 'O1'];
+// The five follow-up questions (23 November) come first; the 19 after them are the ones answered on 19 November.
+const NEW_IDS = ['B3x', 'A1x', 'B2x', 'F1x', 'O1x'];
+const OLD_IDS = ['G1', 'H1', 'H2', 'H3', 'H4', 'A1', 'B1', 'B2', 'B3', 'B4', 'B5', 'F1', 'F2', 'F3', 'F4', 'D1', 'R1', 'R2', 'O1'];
+const SPEC_IDS = [...NEW_IDS, ...OLD_IDS];
 const WRONG_TOKENS = [undefined, '', 'x', 'questions', 'A'.repeat(24), '../../etc/passwd', 'a b c d e f g h i j k l', 'Z'.repeat(200), `${TOKEN}x`, TOKEN.slice(0, -1)];
 
 function fakeRes() {
@@ -95,14 +99,14 @@ function harness({ file = null, limits } = {}) {
   return h;
 }
 
-/** GROUPS and QUESTIONS as the page's own inline script declares them. */
+/** GROUPS, QUESTIONS and the one divider heading (EARLIER) as the page's own inline script declares them. */
 function pageLists() {
   const script = /<script>([\s\S]*?)<\/script>/.exec(svc.page())[1];
   const from = script.indexOf('var GROUPS = ['), to = script.indexOf('var TOTAL');
   assert.ok(from > 0 && to > from, 'the page declares GROUPS and QUESTIONS');
   const box = {};
-  vm.runInNewContext(`${script.slice(from, to)}\nthis.G = GROUPS; this.Q = QUESTIONS;`, box);
-  return { groups: JSON.parse(JSON.stringify(box.G)), questions: JSON.parse(JSON.stringify(box.Q)) };
+  vm.runInNewContext(`${script.slice(from, to)}\nthis.G = GROUPS; this.Q = QUESTIONS; this.E = EARLIER;`, box);
+  return { groups: JSON.parse(JSON.stringify(box.G)), questions: JSON.parse(JSON.stringify(box.Q)), earlier: JSON.parse(JSON.stringify(box.E)) };
 }
 
 // ─── The token ────────────────────────────────────────────────────────────────
@@ -207,20 +211,125 @@ test('the headers sent with the page: the CSP runs the inline script by its hash
 
 test("the page's questions, options and suggestions are the server's ONE list", () => {
   const { groups, questions } = pageLists();
-  assert.deepEqual(svc.IDS, SPEC_IDS, 'the 19 ids, in order');
+  assert.deepEqual(svc.IDS, SPEC_IDS, 'the 24 ids, in order: the five follow-ups, then the 19');
+  assert.equal(svc.IDS.length, 24);
+  assert.equal(new Set(svc.IDS).size, 24, 'no id is used twice');
   assert.equal(svc.QUESTIONS, list.QUESTIONS, 'the service validates against the shared list itself');
   assert.deepEqual(questions.map((q) => ({ id: q.id, title: q.title, sug: q.sug, opts: q.opts })), JSON.parse(JSON.stringify(list.QUESTIONS)));
   // the page numbers the questions group by group: that is the list's own order
   const shown = groups.flatMap((g) => questions.filter((q) => q.group === g.id).map((q) => q.id));
   assert.deepEqual(shown, SPEC_IDS);
-  assert.equal(groups.length, 8);
+  assert.equal(groups.length, 9);
   for (const q of list.QUESTIONS) {
     const keys = q.opts.map((o) => o[0]);
     assert.ok(keys.includes(q.sug), `${q.id}: the suggestion is one of its options`);
     assert.equal(new Set(keys).size, keys.length, `${q.id}: option keys are unique`);
     assert.ok(!keys.includes('other') && !keys.includes(''), `${q.id}: "other" and "" are reserved`);
   }
-  assert.ok(svc.page().includes('<b>19 decisions</b>') && svc.page().includes('0 of 19 answered'));
+  assert.ok(svc.page().includes('<b>all 19 questions</b>') && svc.page().includes('0 of 24 answered'));
+  assert.ok(!svc.page().includes('19 decisions') && !/of 19 answered/.test(svc.page()), 'the old count is gone');
+  // the counts come from the list itself, not from a typed number
+  assert.ok(svc.page().includes('var TOTAL = QUESTIONS.length;'));
+  assert.ok(svc.page().includes('var lines = ["Answers to the " + TOTAL + " questions ("'));
+});
+
+// ─── The follow-up of 23 November: five new questions, the 19 earlier ones untouched ─────────────
+
+// Each earlier question's option keys and its suggestion, and the SHA-256 of the 19 as they stood at e5fc7fd (the
+// commit that was live when Gauri answered them): the server's list (id, title, sug, opts), the page's own copy
+// (with group, ctx, sugText and the note prompt) and the page's eight groups. Her answers are stored under these
+// ids and keys, so none of it may change.
+const OLD_PIN = { G1: 'abc:b', H1: 'abc:b', H2: 'abc:b', H3: 'abc:a', H4: 'abc:a', A1: 'abc:a', B1: 'abcd:a', B2: 'abc:a', B3: 'abcd:d', B4: 'abc:a',
+  B5: 'abc:a', F1: 'abcd:a', F2: 'ab:a', F3: 'abc:a', F4: 'ab:a', D1: 'abcde:a', R1: 'abc:b', R2: 'abc:a', O1: 'abc:a' };
+const OLD_SHA = {
+  server: 'dd074fc1d48c104c686434fb846342f47dd1f126901625e4efa4cdcc5bbf0b1f',
+  page: '807b12defecb35d4281efb73db20f66c41dfd91932118cfbf21a512485ce28a1',
+  groups: '18d75cb204779de729f9953eb79f9baf3e53c354a9963237057c159178dd22a2',
+};
+// The five follow-ups: keys a, b, c each, and the suggestion of each; their texts as first published (id, title, sug, opts).
+const NEW_PIN = { B3x: 'abc:b', A1x: 'abc:a', B2x: 'abc:c', F1x: 'abc:a', O1x: 'abc:a' };
+const NEW_SHA = 'dc4fcad9d328b734a5c5e2f14be12d1ca9473987f753f8b98873e1eadb215109';
+const keysAndSug = (qs) => Object.fromEntries(qs.map((q) => [q.id, `${q.opts.map((o) => o[0]).join('')}:${q.sug}`]));
+const serverShape = (q) => ({ id: q.id, title: q.title, sug: q.sug, opts: q.opts });
+const pin = (v) => sha256hex(JSON.stringify(v));
+
+test('the 19 earlier questions are byte for byte what they were when Gauri answered them (pinned at e5fc7fd)', () => {
+  const old = JSON.parse(JSON.stringify(list.QUESTIONS.slice(NEW_IDS.length)));
+  assert.deepEqual(old.map((q) => q.id), OLD_IDS, 'the same 19 ids, in the same order, after the five new ones');
+  assert.deepEqual(keysAndSug(old), OLD_PIN, 'the same option keys and suggestions');
+  assert.equal(pin(old.map(serverShape)), OLD_SHA.server, "the server's 19: ids, titles, suggestions, option keys and option texts");
+  const { groups, questions } = pageLists();
+  const pageOld = questions.slice(NEW_IDS.length);
+  assert.deepEqual(pageOld.map((q) => q.id), OLD_IDS);
+  assert.equal(pin(pageOld.map((q) => ({ id: q.id, group: q.group, title: q.title, ctx: q.ctx, opts: q.opts, sug: q.sug, sugText: q.sugText, ask: q.ask === undefined ? null : q.ask }))),
+    OLD_SHA.page, "the page's 19: also the group, the context, the suggestion line and the note prompt");
+  assert.equal(pin(groups.slice(1).map((g) => ({ id: g.id, title: g.title, sub: g.sub }))), OLD_SHA.groups, 'the eight earlier groups');
+  // the pin itself is honest: one changed letter, key or id changes the hash
+  const bent = old.map(serverShape);
+  bent[8] = { ...bent[8], opts: bent[8].opts.map((o) => (o[0] === 'd' ? ['e', o[1]] : o)) };
+  assert.notEqual(pin(bent), OLD_SHA.server);
+});
+
+test('the five follow-up questions: new ids that collide with none of the 19, keys a, b and c, the agreed suggestions', () => {
+  const fresh = JSON.parse(JSON.stringify(list.QUESTIONS.slice(0, NEW_IDS.length)));
+  assert.deepEqual(fresh.map((q) => q.id), NEW_IDS, 'first in the list, in the order of the approved text');
+  for (const id of NEW_IDS) assert.ok(!OLD_IDS.includes(id), `${id} is not one of the 19`);
+  assert.deepEqual(keysAndSug(fresh), NEW_PIN);
+  assert.deepEqual(fresh.map((q) => q.title), [
+    'Free consultations: which ones does the consultant confirm afterwards?',
+    'Agreement or form still missing at the consultation time',
+    'Early slot: should the app hold the time while the client pays?',
+    'Who approves a big discount?',
+    'The sentence about recording, for the consultation agreement',
+  ]);
+  assert.equal(pin(fresh.map(serverShape)), NEW_SHA, 'the titles and option texts as first published (an answer is stored as a key of these)');
+  for (const q of fresh) for (const o of q.opts) assert.ok(!/suggested/i.test(o[1]), `${q.id} (${o[0]}): the option text carries no "(suggested)" mark — the page adds its own`);
+  // on the page: all five in the new group, each with its context, a suggestion line that names the suggested letter, and the plain note prompt
+  const { questions } = pageLists();
+  for (const q of questions.slice(0, NEW_IDS.length)) {
+    assert.equal(q.group, 'followup', q.id);
+    assert.ok(q.ctx.length > 40 && /\?$/.test(q.ctx.split('\n\n')[q.id === 'F1x' ? 1 : q.ctx.split('\n\n').length - 1]), `${q.id}: the context ends on the question (F1x: then the "One more point" paragraph)`);
+    assert.ok(q.sugText.startsWith(`(${q.sug})`), `${q.id}: the suggestion line starts with the suggested letter`);
+    assert.equal(q.ask, undefined, `${q.id}: the note box keeps "Note (optional)"`);
+  }
+  assert.ok(questions[3].ctx.split('\n\n')[2].startsWith('One more point, so you know: '), 'F1x: the extra point is the last paragraph of its context');
+  assert.equal(questions[4].sugText, '(a), if these words are fine as they are.');
+});
+
+test('the page: thank-you header, the follow-up group first, one plain heading before the 19 earlier answers', () => {
+  const html = svc.page();
+  const { groups, questions, earlier } = pageLists();
+  assert.deepEqual(groups[0], { id: 'followup', title: 'Five follow-up questions', sub: '23 November. One more word on five of your answers.' });
+  assert.deepEqual(groups.slice(1).map((g) => g.id), ['who', 'handoff', 'ready', 'booking', 'fees', 'deadlines', 'reminders', 'recording']);
+  assert.deepEqual(earlier, { before: 'who', title: 'Your 19 earlier answers', sub: 'You can still change any of them.' });
+  assert.equal(earlier.before, groups[1].id, 'the heading stands before the first earlier group');
+  assert.equal(questions.filter((q) => q.group === 'followup').length, 5);
+  assert.equal(questions.length - 5, 19, 'the heading counts the earlier questions truly');
+  // the header: thanks, what is already in the app, the fee sheet, the five at the top, how to answer, the 19 below
+  const head = /<header[^>]*>([\s\S]*?)<\/header>/.exec(html)[1];
+  for (const words of [
+    'Thank you for answering <b>all 19 questions</b>.',
+    'the first ones are already in the app:',
+    '<li>The Deadlines tab now shows “Whole firm: N of 20” for each half-month window, and “Full” at 20 or more.</li>',
+    '<li>The Consultations page now shows which upcoming consultations are “Ready”, and what is missing for the others.</li>',
+    '<li>A consultation with no payment recorded now shows “Not paid” in red.</li>',
+    '<li>A reason is now required whenever a consultation fee is waived or a consultation is added as free.</li>',
+    'The fee sheet template is ready and is going to Asmita to fill in.',
+    '<b>Five answers need one more word from you.</b> They are at the top of this page.',
+    'The <b>suggested</b> answer is marked; “Use the suggestion” picks it in one click.',
+    'Add a note wherever you want to explain or change something.',
+    'Your answers save as you go.',
+    'Your 19 earlier answers are below, and you can still change any of them.',
+  ]) assert.ok(head.includes(words), words);
+  assert.equal((head.match(/<li>/g) || []).length, 4);
+  assert.ok(!head.includes('decisions we need from you'), 'the old opening paragraph is gone');
+  // the context and the suggestion line may hold more than one paragraph: their line breaks show
+  assert.match(html, /\n\.ctx\{[^}]*white-space:pre-line\}/);
+  assert.match(html, /\n\.sugline\{[^}]*white-space:pre-line\}/);
+  // words for a manager: no switch names, no file names, nothing about credits
+  const shown = [head, ...groups.flatMap((g) => [g.title, g.sub]), earlier.title, earlier.sub,
+    ...questions.slice(0, 5).flatMap((q) => [q.title, q.ctx, q.sugText, ...q.opts.map((o) => o[1])])].join('\n');
+  assert.deepEqual(shown.match(/credit|[A-Z]{3,}_[A-Z_]+|\.(?:js|json|html|xlsx)\b|OneDrive|switch name/gi) || [], []);
 });
 
 // ─── Validation ───────────────────────────────────────────────────────────────
@@ -293,6 +402,42 @@ test('validation: what is accepted, and how a note is cleaned', async () => {
   assert.deepEqual(h.file.data.answers.B3, { choice: 'd', note: 'ok', at: '2026-11-19T15:00:00.000Z' });
 });
 
+test('validation: the five follow-up ids take a, b, c, "other" and "" — and refuse a key they do not have', async () => {
+  const h = harness();
+  // (each batch from its own address: a refusal counts toward the per-address write limit)
+  for (const id of NEW_IDS) {
+    for (const choice of ['a', 'b', 'c', 'other', '']) {
+      assert.deepEqual(svc.validate(putReq(id, { choice, note: 'n' })), { ok: true, qid: id, choice, note: 'n' }, `${id} ${choice}`);
+    }
+    for (const choice of ['d', 'e', 'A', 'x', 'ab', 'a ', 'Other', 'suggested', 0, null, ['a']]) {
+      const res = await h.put(id, { choice, note: 'kept out' }, { ip: `198.51.100.${NEW_IDS.indexOf(id)}` });
+      assert.equal(res.statusCode, 400, `${id} ${String(choice)}`);
+      assert.deepEqual(res.body, { error: 'Unknown answer.' }, `${id} ${String(choice)}`);
+    }
+  }
+  // a new id does not lend its keys to the question it follows up, nor borrow that one's
+  assert.equal(svc.validate(putReq('B3', { choice: 'd' })).ok, true, 'B3 still has (d)');
+  assert.deepEqual(svc.validate(putReq('B3x', { choice: 'd' })), { ok: false, error: 'Unknown answer.' });
+  assert.equal(svc.validate(putReq('F1', { choice: 'd' })).ok, true, 'F1 still has (d)');
+  assert.deepEqual(svc.validate(putReq('F1x', { choice: 'd' })), { ok: false, error: 'Unknown answer.' });
+  // the id check is as strict as before: only the exact 24 ids
+  for (const qid of ['b3x', 'B3X', 'B3xx', 'B3x ', ' B3x', 'B3-x', 'G1x', 'H1x', 'D1x', 'X', 'x', 'B3x/..', 'followup']) {
+    const res = await h.put(qid, { choice: 'a' }, { ip: '198.51.100.50' });
+    assert.equal(res.statusCode, 400, qid);
+    assert.deepEqual(res.body, { error: 'Unknown question.' }, qid);
+  }
+  assert.equal(h.reads + h.tried, 0, 'a refused answer never reaches the file');
+  // and a real save lands under the new id, in the same file shape
+  const res = await h.put('B2x', { choice: 'c', note: ' two hours ' }, { ip: '198.51.100.60' });
+  assert.deepEqual(res.body, { ok: true, at: '2026-11-19T15:00:00.000Z' });
+  assert.deepEqual(h.file.data, {
+    version: 1,
+    answers: { B2x: { choice: 'c', note: 'two hours', at: '2026-11-19T15:00:00.000Z' } },
+    history: [{ qid: 'B2x', choice: 'c', noteLen: 9, at: '2026-11-19T15:00:00.000Z' }],
+  });
+  assert.deepEqual(h.logs, ['[ShareQuestions] B2x saved (choice 1, note 9)']);
+});
+
 // ─── Storage ──────────────────────────────────────────────────────────────────
 
 test('saving: the first answer creates the file, later ones merge one question each, history keeps the last 200', async () => {
@@ -330,7 +475,7 @@ test('saving: the first answer creates the file, later ones merge one question e
   for (let i = 0; i < 205; i++) { h.clock.t += 1000; await h.svc.save('D1', i % 2 ? 'a' : 'b', ''); }
   assert.equal(h.file.data.history.length, svc.HISTORY_MAX);
   assert.equal(h.file.data.history[199].qid, 'D1');
-  // what GET hands the page: the 19 known questions only, strings only
+  // what GET hands the page: the known questions only, strings only
   h.file.data.answers.ZZ = { choice: 'a', note: 'not a question', at: 'x' };
   h.file.data.answers.H1 = { choice: 'q', note: 5, at: 7 };            // a key the list does not have, wrong types
   h.file.data.answers.H2 = 'nonsense';
@@ -569,20 +714,21 @@ test('the admin read: named admins only, private no-store, every question with i
   assert.equal(h.reads, reads + 1, 'always a fresh read, never the 15-second cache');
   const out = res.body;
   assert.equal(out.answered, 3);
-  assert.equal(out.total, 19);
+  assert.equal(out.total, 24);
   assert.equal(out.withNote, 3);
   assert.equal(out.savedAt, '2026-11-19T15:05:00.000Z');
   assert.deepEqual(out.questions.map((q) => q.id), SPEC_IDS);
   assert.deepEqual(out.questions.map((q) => q.n), SPEC_IDS.map((_, i) => i + 1));
   const by = Object.fromEntries(out.questions.map((q) => [q.id, q]));
-  assert.deepEqual(by.G1, { n: 1, id: 'G1', title: 'Should everyone sign in with their own Monday account?', choice: 'b',
+  assert.deepEqual(by.B3x, { n: 1, id: 'B3x', title: 'Free consultations: which ones does the consultant confirm afterwards?', choice: '', answer: '', suggested: false, note: '', at: null });
+  assert.deepEqual(by.G1, { n: 6, id: 'G1', title: 'Should everyone sign in with their own Monday account?', choice: 'b',
     answer: "(b) Keep today's mix, and require Monday sign-in for each new “who did it” action (fee approval, waivers, hand-off)", suggested: true,
     note: 'Mahesh and Deeksha\nshare one', at: '2026-11-19T15:00:00.000Z' });
   assert.equal(by.F1.answer, '(a) You only');
   assert.equal(by.D1.answer, 'Something else (see note)');
   assert.equal(by.D1.suggested, false);
-  assert.deepEqual(by.R2, { n: 18, id: 'R2', title: 'How should a red item reach the person?', choice: '', answer: '', suggested: false, note: 'will think about it', at: '2026-11-19T15:05:00.000Z' });
-  assert.deepEqual(by.O1, { n: 19, id: 'O1', title: list.QUESTIONS[18].title, choice: '', answer: '', suggested: false, note: '', at: null });
+  assert.deepEqual(by.R2, { n: 23, id: 'R2', title: 'How should a red item reach the person?', choice: '', answer: '', suggested: false, note: 'will think about it', at: '2026-11-19T15:05:00.000Z' });
+  assert.deepEqual(by.O1, { n: 24, id: 'O1', title: list.QUESTIONS[23].title, choice: '', answer: '', suggested: false, note: '', at: null });
 
   // ?format=text: the same, as a plain list
   res = await ask(admin, { format: 'Text' });
@@ -590,13 +736,14 @@ test('the admin read: named admins only, private no-store, every question with i
   assert.equal(res.kind, 'text/plain');
   assert.equal(res.headers['Cache-Control'], 'private, no-store');
   const text = res.body;
-  assert.ok(text.startsWith("Gauri's answers: 3 of 19 answered\nLast saved: "), text.slice(0, 80));
+  assert.ok(text.startsWith("Gauri's answers: 3 of 24 answered\nLast saved: "), text.slice(0, 80));
   assert.match(text, /Last saved: Nov\.? 19, 2026, 10:05 a\.m\. \(Toronto\)/);
-  assert.ok(text.includes("1. Should everyone sign in with their own Monday account? [G1]\n   Answer: (b) Keep today's mix, and require Monday sign-in for each new “who did it” action (fee approval, waivers, hand-off) (the suggestion)\n   Note: Mahesh and Deeksha\n         share one\n   Saved: "));
-  assert.ok(text.includes('16. What is the limit per half-month window? [D1]\n   Answer: Something else (see note)\n   Note: 22 for the firm\n'));
-  assert.ok(text.includes('18. How should a red item reach the person? [R2]\n   Answer: (not answered)\n   Note: will think about it\n'));
-  assert.ok(text.endsWith('\n\n19. How is the client told the consultation is recorded and transcribed, and what if they say no? [O1]\n   Answer: (not answered)\n'));
-  assert.equal((text.match(/^\d+\. /gm) || []).length, 19);
+  assert.ok(text.includes('\n\n1. Free consultations: which ones does the consultant confirm afterwards? [B3x]\n   Answer: (not answered)\n\n2. Agreement or form still missing at the consultation time [A1x]\n'));
+  assert.ok(text.includes("\n\n6. Should everyone sign in with their own Monday account? [G1]\n   Answer: (b) Keep today's mix, and require Monday sign-in for each new “who did it” action (fee approval, waivers, hand-off) (the suggestion)\n   Note: Mahesh and Deeksha\n         share one\n   Saved: "));
+  assert.ok(text.includes('\n21. What is the limit per half-month window? [D1]\n   Answer: Something else (see note)\n   Note: 22 for the firm\n'));
+  assert.ok(text.includes('\n23. How should a red item reach the person? [R2]\n   Answer: (not answered)\n   Note: will think about it\n'));
+  assert.ok(text.endsWith('\n\n24. How is the client told the consultation is recorded and transcribed, and what if they say no? [O1]\n   Answer: (not answered)\n'));
+  assert.equal((text.match(/^\d+\. /gm) || []).length, 24);
   assert.equal((await ask(admin, { format: 'json' })).statusCode, 200);
   res = await ask(admin, { format: 'csv' });
   assert.equal(res.statusCode, 400);
@@ -606,7 +753,7 @@ test('the admin read: named admins only, private no-store, every question with i
   const empty = harness();
   const r0 = fakeRes();
   await empty.svc.adminAnswers({ query: { format: 'text' }, headers: {} }, r0, deps(admin));
-  assert.ok(r0.body.startsWith("Gauri's answers: 0 of 19 answered\nNothing saved yet.\n"));
+  assert.ok(r0.body.startsWith("Gauri's answers: 0 of 24 answered\nNothing saved yet.\n"));
 
   // the file cannot be read → 503 in plain words, still private no-store
   h.failRead = new Error('down');
@@ -956,17 +1103,17 @@ test('the page script: loads the saved answers, saves each change to the server,
   assert.equal(b.els.get('r-G1-c').checked, true, 'the stored choice is shown');
   assert.equal(b.els.get('n-G1').value, 'from before');
   assert.match(b.status('G1'), /^Saved · /);
-  assert.equal(b.text('count'), '1 of 19 answered');
+  assert.equal(b.text('count'), '1 of 24 answered');
   assert.equal(b.puts().length, 0, 'nothing to send after a plain load');
-  assert.equal(b.els.size, 7 + 8 + 19 * 4 + list.QUESTIONS.reduce((n, q) => n + q.opts.length + 1, 0), 'every question, option, note box and status is on the page');
+  assert.equal(b.els.size, 7 + 9 + 1 + 24 * 4 + list.QUESTIONS.reduce((n, q) => n + q.opts.length + 1, 0), 'every group, the one divider heading, and every question, option, note box and status is on the page');
 
   // a choice saves at once
   await b.pick('F1', 'b');
   assert.deepEqual(b.puts().map((c) => [c.url, c.body, c.cache, c.credentials]), [[`${BASE}/answers/F1`, '{"choice":"b","note":""}', 'no-store', 'omit']]);
   assert.equal(b.status('F1'), 'Saved');
   assert.equal(h.file.data.answers.F1.choice, 'b');
-  assert.equal(b.text('count'), '2 of 19 answered');
-  assert.equal(b.els.get('meter').style.width, '11%');
+  assert.equal(b.text('count'), '2 of 24 answered');
+  assert.equal(b.els.get('meter').style.width, '8%');
   assert.deepEqual(JSON.parse(b.store['gauri-q-drafts-v1']).F1, { choice: 'b', note: '' }, 'the draft is on the device too');
   assert.deepEqual(JSON.parse(b.store['gauri-q-unsaved-v1']), {}, 'and nothing is marked unsaved');
 
@@ -1015,8 +1162,9 @@ test('the page script: loads the saved answers, saves each change to the server,
   // "Copy my answers" still works from what is on the page
   b.els.get('copyBtn').fire('click');
   await b.settle();
-  assert.ok(b.copied.includes('12. Who approves a fee more than $500 below the minimum?\n   Answer: (b) You or Asmita\n   Note: You only, please\n'));
-  assert.ok(b.copied.includes('2. Who is on the retainer team, and who may send agreements?\n   Answer: (not answered)\n'));
+  assert.ok(b.copied.startsWith('Answers to the 24 questions ('), b.copied.slice(0, 40));
+  assert.ok(b.copied.includes('\n17. Who approves a fee more than $500 below the minimum?\n   Answer: (b) You or Asmita\n   Note: You only, please\n'));
+  assert.ok(b.copied.includes('\n7. Who is on the retainer team, and who may send agreements?\n   Answer: (not answered)\n'));
 });
 
 test('the page script: a save that fails is retried and the answer stays on the device, even across a reload', async () => {
@@ -1096,7 +1244,7 @@ test('the page script: when the saved answers cannot be loaded it shows the draf
   assert.equal(b.els.get('notice').hidden, true);
   assert.equal(b.els.get('r-A1-a').checked, true);
   assert.deepEqual(h.file.data.answers.B1, { choice: 'c', note: 'typed on the train', at: h.file.data.answers.B1.at });
-  assert.equal(b.text('count'), '2 of 19 answered');
+  assert.equal(b.text('count'), '2 of 24 answered');
   // a retired link (the ordinary 404) reads the same as unreachable; the draft stays on the device
   const gone = browser(Object.assign(harness(), { svc: svc.create({ tokenSha256: sha256hex('another-token-entirely-0002'), io: { now: () => 0 } }) }), { drafts: { G1: { choice: 'a', note: '' } } });
   await gone.settle();
@@ -1181,7 +1329,7 @@ test('the page script: a change made before the saved answers have loaded keeps 
   assert.equal(b.status('G1'), 'Saved');
   assert.deepEqual(b.kept().unsaved, {});
   assert.deepEqual(b.kept().sync.touched, {});
-  assert.equal(b.text('count'), '1 of 19 answered');
+  assert.equal(b.text('count'), '1 of 24 answered');
 
   // the other way round: a note typed before the load keeps the saved choice
   const h2 = harness({ file: SAVED_G1 });
@@ -1194,7 +1342,7 @@ test('the page script: a change made before the saved answers have loaded keeps 
   await b2.open();
   assert.deepEqual(b2.puts().map((c) => c.body), ['{"choice":"c","note":"typed early"}']);
   assert.equal(b2.els.get('r-G1-c').checked, true);
-  assert.equal(b2.text('count'), '1 of 19 answered');
+  assert.equal(b2.text('count'), '1 of 24 answered');
   await b2.runTimers();
   assert.equal(b2.puts().length, 1, 'the typing pause has nothing left to send');
 
@@ -1227,7 +1375,7 @@ test('the page script: a note typed while the saved answers cannot be reached ke
   await b.runTimers(2000);                       // the typing pause; the next try at loading is 10 s away
   assert.equal(b.puts().length, 0, 'held: nothing is sent while the saved answer is unknown');
   assert.equal(b.status('G1'), 'Saved on this device');
-  assert.equal(b.text('count'), '0 of 19 answered');
+  assert.equal(b.text('count'), '0 of 24 answered');
   // storage is back
   h.failRead = null;
   h.clock.t += svc.FAIL_MS;
@@ -1236,7 +1384,7 @@ test('the page script: a note typed while the saved answers cannot be reached ke
   assert.deepEqual(b.puts().map((c) => c.body), ['{"choice":"c","note":"my new thought"}']);
   assert.deepEqual({ choice: h.file.data.answers.G1.choice, note: h.file.data.answers.G1.note }, { choice: 'c', note: 'my new thought' });
   assert.equal(b.els.get('r-G1-c').checked, true);
-  assert.equal(b.text('count'), '1 of 19 answered');
+  assert.equal(b.text('count'), '1 of 24 answered');
   assert.equal(b.status('G1'), 'Saved');
 });
 
@@ -1268,7 +1416,7 @@ test('the page script: a tab that is shown or used again reads the saved answers
   assert.equal(tabB.els.get('r-G1-a').checked, true);
   assert.equal(tabB.els.get('n-G1').value, 'first note');
   assert.match(tabB.status('G1'), /^Saved · /);
-  assert.equal(tabB.text('count'), '2 of 19 answered');
+  assert.equal(tabB.text('count'), '2 of 24 answered');
   assert.equal(tabB.puts().length, 0, 'a re-read sends nothing by itself');
   // a note typed in tab B now keeps tab A's choice
   tabB.type('G1', 'one more thought');
@@ -1565,4 +1713,158 @@ test("the page script: an unsaved change left on the device is not thrown away b
   await b6.settle();
   assert.equal(b6.els.get('r-G1-c').checked, true);
   assert.equal(b6.puts().length, 0);
+});
+
+test('the page script: the follow-up group is drawn first, then the one plain heading, then the eight earlier groups', async () => {
+  const h = harness();
+  const b = browser(h);
+  await b.settle();
+  const { questions } = pageLists();
+  const parts = b.els.get('groups').children;
+  assert.deepEqual(parts.map((e) => e.tag), ['section', 'div', 'section', 'section', 'section', 'section', 'section', 'section', 'section', 'section']);
+  // 1) the five follow-up questions, numbered 1 to 5
+  const first = parts[0];
+  assert.equal(first.attrs['aria-labelledby'], 'g-followup');
+  assert.equal(first.children[0].tag, 'h2');
+  assert.equal(first.children[0].textContent, 'Five follow-up questions');
+  assert.equal(first.children[1].textContent, '23 November. One more word on five of your answers.');
+  const cards = first.children.slice(2);
+  assert.deepEqual(cards.map((c) => c.attrs.id), NEW_IDS.map((id) => `q-${id}`));
+  assert.deepEqual(cards.map((c) => c.children[0].children[0].textContent), ['1.', '2.', '3.', '4.', '5.']);
+  cards.forEach((c, i) => {
+    const q = questions[i];
+    // the same six parts as every other card: head, context, options, suggestion line, note, row
+    assert.deepEqual(c.children.map((x) => x.tag), ['div', 'p', 'fieldset', 'p', 'label', 'div'], q.id);
+    assert.equal(c.children[0].children[1].textContent, q.title);
+    assert.equal(c.children[1].className, 'ctx');
+    assert.equal(c.children[1].textContent, q.ctx);
+    const labels = c.children[2].children.slice(1);                                  // after the hidden legend
+    assert.deepEqual(labels.map((l) => l.children[1].textContent), [...q.opts.map((o) => `(${o[0]}) ${o[1]}`), 'Something else (write it in the note)'], q.id);
+    assert.deepEqual(labels.filter((l) => l.attrs['data-sug'] === '1').map((l) => l.attrs.for), [`r-${q.id}-${q.sug}`], `${q.id}: one option carries the Suggested mark`);
+    assert.equal(labels.find((l) => l.attrs['data-sug'] === '1').children[1].children[0].textContent, 'Suggested');
+    assert.equal(c.children[3].className, 'sugline');
+    assert.equal(c.children[3].children[0].textContent, 'Suggested: ');
+    assert.equal(c.children[3].children[1].text, q.sugText);
+    assert.equal(c.children[4].textContent, 'Note (optional)');
+  });
+  // 2) the divider: a heading and one line, nothing to click
+  const div = parts[1];
+  assert.equal(div.className, 'earlier');
+  assert.deepEqual(div.children.map((x) => [x.tag, x.textContent]), [['h2', 'Your 19 earlier answers'], ['p', 'You can still change any of them.']]);
+  assert.equal(b.els.get('earlier'), div.children[0]);
+  assert.deepEqual(Object.keys(div.listeners).concat(Object.keys(div.children[0].listeners)), [], 'no behaviour on it');
+  // 3) the eight earlier groups, unchanged, numbered on from 6 to 24
+  assert.deepEqual(parts.slice(2).map((s) => s.children[0].textContent),
+    ['Who did what', 'Consultant hand-off to the retainer team', 'Agreement and form before the consultation', 'Bookings, waivers and cash',
+      'Fee approvals and the minimum-fee sheet', 'Deadlines', 'Reminders that chase staff until fixed', 'Recording consultations']);
+  const oldCards = parts.slice(2).flatMap((s) => s.children.slice(2));
+  assert.deepEqual(oldCards.map((c) => c.attrs.id), OLD_IDS.map((id) => `q-${id}`));
+  assert.deepEqual(oldCards.map((c) => c.children[0].children[0].textContent), OLD_IDS.map((_, i) => `${i + 6}.`));
+  assert.equal(b.text('count'), '0 of 24 answered');
+
+  // a follow-up answer saves like any other: the choice at once, the note after the pause, "other" with a note
+  await b.pick('A1x', 'a');
+  b.type('A1x', 'on the spot is fine');
+  await b.runTimers(2000);
+  await b.pick('O1x', 'other');
+  b.type('O1x', 'Shafoli will send her wording');
+  b.els.get('n-O1x').fire('blur');
+  await b.settle();
+  assert.deepEqual(h.file.data.answers, {
+    A1x: { choice: 'a', note: 'on the spot is fine', at: '2026-11-19T15:00:00.000Z' },
+    O1x: { choice: 'other', note: 'Shafoli will send her wording', at: '2026-11-19T15:00:00.000Z' },
+  });
+  assert.equal(b.status('A1x'), 'Saved');
+  assert.equal(b.text('count'), '2 of 24 answered');
+  assert.deepEqual(b.kept().drafts.O1x, { choice: 'other', note: 'Shafoli will send her wording' }, 'the draft is kept on the device under the new id');
+  // "Copy my answers" lists the five first, then the 19, numbered as on the page
+  b.els.get('copyBtn').fire('click');
+  await b.settle();
+  const lines = b.copied.split('\n');
+  assert.match(lines[0], /^Answers to the 24 questions \(/);
+  assert.ok(b.copied.includes('\n1. Free consultations: which ones does the consultant confirm afterwards?\n   Answer: (not answered)\n\n2. Agreement or form still missing at the consultation time\n   Answer: (a) Yes. The team chases the client the day before'));
+  assert.ok(b.copied.includes('\n5. The sentence about recording, for the consultation agreement\n   Answer: Something else (see note)\n   Note: Shafoli will send her wording\n\n6. Should everyone sign in with their own Monday account?\n   Answer: (not answered)\n'));
+  assert.deepEqual(lines.filter((l) => /^\d+\. /.test(l)).map((l) => l.split('.')[0]), SPEC_IDS.map((_, i) => String(i + 1)));
+  // a later visit reads them back
+  const again = browser(h);
+  await again.settle();
+  assert.equal(again.els.get('r-A1x-a').checked, true);
+  assert.equal(again.els.get('n-O1x').value, 'Shafoli will send her wording');
+  assert.equal(again.text('count'), '2 of 24 answered');
+  assert.equal(again.puts().length, 0);
+});
+
+/** The answers file as it stood before the follow-up: the 19 earlier answers only (every choice and note invented here). */
+function oldOnlyFile() {
+  const answers = {};
+  OLD_IDS.forEach((id, i) => {
+    const keys = OLD_PIN[id].split(':')[0].split('');
+    answers[id] = { choice: i % 5 === 4 ? 'other' : keys[i % keys.length], note: i % 3 === 0 ? `a note on ${id}\nsecond line` : '', at: new Date(Date.parse('2026-11-19T16:00:00.000Z') + i * 60000).toISOString() };
+  });
+  return { version: 1, answers, history: OLD_IDS.map((id) => ({ qid: id, choice: answers[id].choice, noteLen: answers[id].note.length, at: answers[id].at })) };
+}
+
+test('an answers file that holds only the 19 earlier answers reads exactly as before: 19 of 24, the five new ones empty', async () => {
+  const before = oldOnlyFile();
+  const h = harness({ file: before });
+  // GET: the same 19 answers, each exactly as stored, in the same order; nothing for the five new ones
+  const got = (await h.get()).body;
+  assert.deepEqual(Object.keys(got.answers), OLD_IDS);
+  assert.deepEqual(got.answers, before.answers);
+  assert.equal(got.savedAt, before.answers.O1.at);
+  for (const id of NEW_IDS) assert.ok(!(id in got.answers), id);
+  // the admin read: 24 listed, the five new ones first and empty, the 19 with the stored choice in plain words
+  const res = fakeRes();
+  await h.svc.adminAnswers({ query: {}, headers: {} }, res, { staff: () => ({ name: 'The Boss', email: 'boss@tdotimm.com' }), isAdminEmail: (e) => e === 'boss@tdotimm.com' });
+  const out = res.body;
+  assert.equal(out.answered, 19);
+  assert.equal(out.total, 24);
+  assert.equal(out.withNote, OLD_IDS.filter((id) => before.answers[id].note).length);
+  assert.equal(out.savedAt, before.answers.O1.at);
+  assert.deepEqual(out.questions.map((q) => q.id), SPEC_IDS);
+  assert.deepEqual(out.questions.slice(0, 5).map((q) => ({ n: q.n, choice: q.choice, answer: q.answer, suggested: q.suggested, note: q.note, at: q.at })),
+    [1, 2, 3, 4, 5].map((n) => ({ n, choice: '', answer: '', suggested: false, note: '', at: null })));
+  out.questions.slice(5).forEach((x, i) => {
+    const q = list.QUESTIONS[5 + i], a = before.answers[x.id];
+    const text = a.choice === 'other' ? 'Something else (see note)' : `(${a.choice}) ${q.opts.find((o) => o[0] === a.choice)[1]}`;
+    assert.deepEqual(x, { n: 6 + i, id: OLD_IDS[i], title: q.title, choice: a.choice, answer: text, suggested: a.choice === OLD_PIN[x.id].split(':')[1], note: a.note, at: a.at }, x.id);
+  });
+  assert.ok(svc.reportText(out).startsWith("Gauri's answers: 19 of 24 answered\nLast saved: "));
+  // the page: the 19 shown as saved, the five new ones blank, and opening it sends nothing
+  const b = browser(h);
+  await b.settle();
+  assert.equal(b.text('count'), '19 of 24 answered');
+  assert.equal(b.els.get('meter').style.width, '79%');
+  for (const id of OLD_IDS) {
+    assert.equal(b.els.get(`r-${id}-${before.answers[id].choice}`).checked, true, id);
+    assert.equal(b.els.get(`n-${id}`).value, before.answers[id].note, id);
+    assert.match(b.status(id), /^Saved · /, id);
+    assert.equal(b.els.get(`q-${id}`).attrs['data-answered'], '1', id);
+  }
+  for (const id of NEW_IDS) {
+    for (const key of ['a', 'b', 'c', 'other']) assert.equal(b.els.get(`r-${id}-${key}`).checked, false, `${id} ${key}`);
+    assert.equal(b.els.get(`r-${id}-d`), undefined, `${id} has no (d)`);
+    assert.equal(b.els.get(`n-${id}`).value, '', id);
+    assert.equal(b.status(id), '', id);
+    assert.equal(b.els.get(`q-${id}`).attrs['data-answered'], '0', id);
+  }
+  assert.equal(b.puts().length, 0, 'a plain load sends nothing');
+  assert.equal(h.tried, 0, 'and nothing was written');
+  assert.deepEqual(h.file.data, before, 'the file is as it was');
+  // answering a follow-up adds ONE answer under its own id; the 19 stay exactly as they were
+  await b.pick('B3x', 'b');
+  b.els.get('use-B2x').fire('click');
+  await b.settle();
+  assert.deepEqual(b.puts().map((c) => [c.url, c.body]), [[`${BASE}/answers/B3x`, '{"choice":"b","note":""}'], [`${BASE}/answers/B2x`, '{"choice":"c","note":""}']]);
+  assert.equal(b.text('count'), '21 of 24 answered');
+  assert.deepEqual(Object.keys(h.file.data.answers), [...OLD_IDS, 'B3x', 'B2x']);
+  for (const id of OLD_IDS) assert.deepEqual(h.file.data.answers[id], before.answers[id], id);
+  assert.equal(h.file.data.version, 1);
+  assert.deepEqual(h.file.data.history.slice(0, 19), before.history);
+  assert.deepEqual(h.file.data.history.slice(19).map((x) => [x.qid, x.choice, x.noteLen]), [['B3x', 'b', 0], ['B2x', 'c', 0]]);
+  // and the 19 can still be changed
+  await b.pick('G1', 'c');
+  assert.equal(h.file.data.answers.G1.choice, 'c');
+  assert.equal(h.file.data.answers.G1.note, before.answers.G1.note, 'the note she wrote stays with the changed choice');
+  assert.equal(b.text('count'), '21 of 24 answered');
 });

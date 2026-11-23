@@ -8,7 +8,7 @@
 <title>Questions for Gauri</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
-/* Layout: one reading column; a sticky progress bar; questions grouped by the feature they unlock, each a card with options, the suggestion marked, and a note box. */
+/* Layout: one reading column; a sticky progress bar; the five follow-up questions first, then one plain heading and the earlier questions grouped by the feature they unlock; each question a card with options, the suggestion marked, and a note box. */
 :root{
   --bg:#f3f5f7; --panel:#ffffff; --fg:#17212b; --muted:#5a6672; --rule:#d8dee4; --soft:#eef2f5;
   --accent:#0f4c75; --accent-fg:#ffffff;
@@ -39,6 +39,7 @@ h1{font-family:var(--display);font-weight:700;font-size:1.9rem;line-height:1.2;m
 h2{font-family:var(--display);font-weight:600;font-size:1.25rem;margin:18px 0 0;text-wrap:balance}
 .lede{margin:0;color:var(--muted);max-width:65ch}
 .lede b{color:var(--fg)}
+ul.lede{padding-left:1.3em}
 .bar{position:sticky;top:env(safe-area-inset-top, 0px);z-index:5;background:var(--bg);padding-block:10px;border-bottom:1px solid var(--rule);display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px}
 .meter{flex:1 1 220px;min-width:0;height:8px;border-radius:99px;background:var(--soft);overflow:hidden}
 .meter i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s ease}
@@ -47,12 +48,13 @@ h2{font-family:var(--display);font-weight:600;font-size:1.25rem;margin:18px 0 0;
 .notice{border:1px solid var(--warn-rule);background:var(--warn-bg);color:var(--warn-fg);border-radius:8px;padding:10px 14px;font-size:.92rem}
 .notice[data-kind="err"]{border-color:var(--err-fg);background:var(--err-bg);color:var(--err-fg)}
 .group-sub{margin:2px 0 0;color:var(--muted);font-size:.9rem}
+.earlier{margin-top:24px;border-top:1px solid var(--rule)}
 .q{background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:18px 18px 16px;display:flex;flex-direction:column;gap:12px}
 .q[data-answered="1"]{border-color:color-mix(in srgb, var(--accent) 45%, var(--rule))}
 .qhead{display:flex;gap:12px;align-items:baseline}
 .qnum{font-variant-numeric:tabular-nums;font-weight:600;color:var(--accent);min-width:2.2em}
 .qtitle{font-weight:600;font-size:1.05rem;margin:0;min-width:0}
-.ctx{margin:0;color:var(--muted);font-size:.93rem;max-width:68ch}
+.ctx{margin:0;color:var(--muted);font-size:.93rem;max-width:68ch;white-space:pre-line}
 .opts{display:flex;flex-direction:column;gap:8px;border:0;margin:0;padding:0;min-width:0}
 .opt{display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border:1px solid var(--rule);border-radius:8px;cursor:pointer;background:var(--panel)}
 .opt:hover{background:var(--soft)}
@@ -61,7 +63,7 @@ h2{font-family:var(--display);font-weight:600;font-size:1.25rem;margin:18px 0 0;
 .opt[data-sug="1"]{border-color:var(--sug-rule)}
 .opt:has(input:checked){border-color:var(--accent);background:color-mix(in srgb, var(--accent) 9%, var(--panel))}
 .chip{display:inline-block;margin-left:6px;padding:0 7px;border-radius:99px;background:var(--sug-bg);color:var(--sug-fg);font-size:.72rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;vertical-align:1px}
-.sugline{margin:0;font-size:.9rem;background:var(--sug-bg);color:var(--sug-fg);border-radius:8px;padding:8px 12px}
+.sugline{margin:0;font-size:.9rem;background:var(--sug-bg);color:var(--sug-fg);border-radius:8px;padding:8px 12px;white-space:pre-line}
 .sugline b{font-weight:600}
 label.note{display:flex;flex-direction:column;gap:4px;font-size:.88rem;color:var(--muted)}
 textarea{font:inherit;font-size:.95rem;color:var(--fg);background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:8px 10px;min-height:64px;resize:vertical;width:100%}
@@ -82,11 +84,19 @@ button:disabled{opacity:.5;cursor:default}
 <div class="wrap">
   <header style="display:flex;flex-direction:column;gap:10px">
     <h1>Questions for Gauri</h1>
-    <p class="lede">These are the <b>19 decisions</b> we need from you before we can build the next parts of the app. For each one, pick an answer. The <b>suggested</b> answer is marked; "Use the suggestion" picks it in one click. Add a note wherever you want to explain or change something. Your answers save as you go, and you can come back to change them.</p>
+    <p class="lede">Thank you for answering <b>all 19 questions</b>. Most of your answers were clear, and the first ones are already in the app:</p>
+    <ul class="lede">
+      <li>The Deadlines tab now shows “Whole firm: N of 20” for each half-month window, and “Full” at 20 or more.</li>
+      <li>The Consultations page now shows which upcoming consultations are “Ready”, and what is missing for the others.</li>
+      <li>A consultation with no payment recorded now shows “Not paid” in red.</li>
+      <li>A reason is now required whenever a consultation fee is waived or a consultation is added as free.</li>
+    </ul>
+    <p class="lede">The fee sheet template is ready and is going to Asmita to fill in.</p>
+    <p class="lede"><b>Five answers need one more word from you.</b> They are at the top of this page. For each one, pick an answer. The <b>suggested</b> answer is marked; “Use the suggestion” picks it in one click. Add a note wherever you want to explain or change something. Your answers save as you go. Your 19 earlier answers are below, and you can still change any of them.</p>
   </header>
 
   <div class="bar" role="status" aria-live="polite">
-    <span class="count" id="count">0 of 19 answered</span>
+    <span class="count" id="count">0 of 24 answered</span>
     <div class="meter" aria-hidden="true"><i id="meter"></i></div>
     <span class="conn" id="conn">Connecting…</span>
   </div>
@@ -107,7 +117,9 @@ button:disabled{opacity:.5;cursor:default}
 (function () {
   "use strict";
 
+  // The follow-up group (23 November) is shown first; the eight groups after it are the questions answered on 19 November.
   var GROUPS = [
+    { id: "followup", title: "Five follow-up questions", sub: "23 November. One more word on five of your answers." },
     { id: "who", title: "Who did what", sub: "Without this, the app can't tell who approved, waived or handed off." },
     { id: "handoff", title: "Consultant hand-off to the retainer team", sub: "Point 6." },
     { id: "ready", title: "Agreement and form before the consultation", sub: "Point 3." },
@@ -118,7 +130,35 @@ button:disabled{opacity:.5;cursor:default}
     { id: "recording", title: "Recording consultations", sub: "Before the notes from recordings go further." }
   ];
 
+  // One plain heading above the first of the earlier groups.
+  var EARLIER = { before: "who", title: "Your 19 earlier answers", sub: "You can still change any of them." };
+
   var QUESTIONS = [
+    { id: "B3x", group: "followup", title: "Free consultations: which ones does the consultant confirm afterwards?",
+      ctx: "You said: whoever makes a consultation free writes a reason, and after the consultation the consultant who did the consultation confirms it was right to make it free.\n\nWhich free consultations need that confirmation?",
+      opts: [["a","Every free consultation, including existing clients asking about their current file, and follow-ups."],["b","Only a consultation on a new matter, the kind that normally has a fee."],["c","Only when someone other than the consultant made it free."]],
+      sug: "b", sugText: "(b). Why we ask: many consultations are free, so (a) would mean a lot of confirmations for the consultants every month." },
+
+    { id: "A1x", group: "followup", title: "Agreement or form still missing at the consultation time",
+      ctx: "You said: both the signed agreement and the filled form are required, otherwise the consultation is rebooked with the fee carried over to the new time.\n\nIf a client turns up, or joins the call, with one of them still missing, may they finish it on the spot and go ahead?",
+      opts: [["a","Yes. The team chases the client the day before, using the “Not ready” list on the Consultations page. A client who still has something missing when they arrive or join the call may finish it then and go ahead. Staff rebook, with the fee carried over, only if the client does not finish it then."],["b","No. Both must be done 24 hours before. If not, staff rebook the day before."],["c","The app moves the consultation by itself at the 24-hour mark and emails the client a link to pick a new time."]],
+      sug: "a", sugText: "(a). Why we ask: your answer did not say whether a client may finish on the spot.\nWhy we suggest (a): with (b), a client who has already paid is moved the day before, even if only a signature is missing and they could finish it in a few minutes at the start. We do not suggest (c), because the app should never move a paid consultation by itself." },
+
+    { id: "B2x", group: "followup", title: "Early slot: should the app hold the time while the client pays?",
+      ctx: "Your tick said “Pay first, as today”. Your note added that the slot is held “maybe for few hours or mins” and goes away if they do not pay.\n\nToday the app holds a time by itself only when a client books online. When staff book for a client, the time is saved together with the payment record, and it does not free itself. In a few cases staff can still save a time before the money is in. The rule that closes this (a new client pays first, from your other answer) is built and waits to be switched on.\n\nShould we also build a hold for staff bookings?",
+      opts: [["a","No hold. A new client's time is saved only once the payment is recorded. This needs the “new client pays first” rule switched on."],["b","Yes. Hold the time for 30 minutes, then free it."],["c","Yes. Hold the time for 2 hours, then free it."]],
+      sug: "c", sugText: "(c). Why we suggest (c): an e-transfer can take more than 30 minutes. The hold would always end before the consultation starts." },
+
+    { id: "F1x", group: "followup", title: "Who approves a big discount?",
+      ctx: "Your tick said “You or Asmita”. Your note said “Gauri or Shafoli”. The note from the 8 October meeting was to keep Shafoli out of fee approval.\n\nUntil your discount matrix is ready, who may approve a fee that is more than $500 below the lowest price?\n\nOne more point, so you know: until your matrix says otherwise, a fee between the usual price and the lowest price would not be stopped. It would only show in a monthly report. The fee check and the monthly report are not built yet. They can only be built after Asmita's filled fee sheet is back, because the app takes the usual and lowest prices from it.",
+      opts: [["a","Gauri or Asmita. Shafoli stays out."],["b","Gauri or Shafoli. Asmita approves only up to $500."],["c","Gauri, Asmita or Shafoli."]],
+      sug: "a", sugText: "(a). Why we suggest (a): it matches your tick and the 8 October note. Shafoli is the consultant on most retainers, so she would mostly be approving discounts for her own clients." },
+
+    { id: "O1x", group: "followup", title: "The sentence about recording, for the consultation agreement",
+      ctx: "You chose: one line in the consultation agreement, plus a spoken notice at the start. The line cannot go in until the words are approved.\n\nWhich words do we use?",
+      opts: [["a","“The consultation may be recorded and transcribed, including by AI note-taking tools, for the client's file. The client may decline at the start of the consultation.”"],["b","You or the consultants send your own wording."],["c","A lawyer words it first."]],
+      sug: "a", sugText: "(a), if these words are fine as they are." },
+
     { id: "G1", group: "who", title: "Should everyone sign in with their own Monday account?",
       ctx: "Today the shared team key still opens every page. Monday sign-in is needed only for some actions (Assign, Change deadline, adding case notes, the Emails tab, deletes, undoing a payment), and it fills “Added by” on new leads. On 10 Nov you said we are over the Monday seat limit and the India team shares one login; the app's Monday sign-in accepts only tdotimm.com addresses.",
       opts: [["a","Yes, everyone, once each person has a Monday seat or another way to sign in is agreed"],["b","Keep today's mix, and require Monday sign-in for each new “who did it” action (fee approval, waivers, hand-off)"],["c","Keep the shared key as it is"]],
@@ -322,6 +362,12 @@ button:disabled{opacity:.5;cursor:default}
     root.textContent = "";
     var n = 0;
     GROUPS.forEach(function (g) {
+      if (g.id === EARLIER.before) {
+        var div = el("div", { class: "earlier" });
+        div.appendChild(el("h2", { id: "earlier" }, EARLIER.title));
+        div.appendChild(el("p", { class: "group-sub" }, EARLIER.sub));
+        root.appendChild(div);
+      }
       var qs = QUESTIONS.filter(function (q) { return q.group === g.id; });
       if (!qs.length) return;
       var sec = el("section", { "aria-labelledby": "g-" + g.id });
@@ -534,7 +580,7 @@ button:disabled{opacity:.5;cursor:default}
   }
 
   function copyAnswers() {
-    var lines = ["Answers to the 19 questions (" + new Date().toLocaleDateString() + ")", ""];
+    var lines = ["Answers to the " + TOTAL + " questions (" + new Date().toLocaleDateString() + ")", ""];
     var n = 0;
     GROUPS.forEach(function (g) {
       QUESTIONS.filter(function (q) { return q.group === g.id; }).forEach(function (q) {

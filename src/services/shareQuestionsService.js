@@ -1,7 +1,8 @@
 'use strict';
 
 /**
- * Gauri's 19 questions, answered on a private link that needs no sign-in (Faran 2026-11-19).
+ * Gauri's questions, answered on a private link that needs no sign-in (Faran 2026-11-19): the 19 of
+ * 19 November and, on the same link since 23 November, five follow-up questions shown first — 24 in all.
  *
  *   GET /share/questions/<token>                 → src/share/questions.html (the form)
  *   GET /share/questions/<token>/answers         → { answers: { <qid>: { choice, note, at } }, savedAt }
@@ -182,7 +183,7 @@ function answerOf(q, raw) {
   return { choice, note: typeof raw.note === 'string' ? raw.note.slice(0, NOTE_MAX) : '', at: typeof raw.at === 'string' ? raw.at : '' };
 }
 
-/** GET answers: only the 19 known questions, and when the newest one was saved. */
+/** GET answers: only the known questions (the list's 24), and when the newest one was saved. */
 function view(data) {
   const answers = {};
   let savedAt = null;

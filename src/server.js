@@ -159,7 +159,7 @@ app.get('/admin/guide/data', (req, res) => {
 // a wrong token is a plain 404. See src/services/shareChecklistService.js.
 app.get('/share/checklist/:token', (req, res, next) => require('./services/shareChecklistService').serve(req, res, next));
 
-// ── Gauri's 19 questions, answered at a private link (no sign-in) ───────────
+// ── Gauri's 24 questions, answered at a private link (no sign-in) ───────────
 // (Faran 2026-11-19.) The form, and its two answer calls under the same token. Never linked from any page;
 // a wrong token is a plain 404 on all three. Validation, write limits and the OneDrive file are in
 // src/services/shareQuestionsService.js. The named-admin read of the answers is further down, by the client-mail checks.
@@ -910,7 +910,7 @@ app.get('/admin/client-mail/check', (req, res) => require('./routes/clientMailRo
 // Old no-reply replies (Faran 2026-11-19, "start with #1"): ONE read-only list of the cases and leads who wrote to the
 // old no-reply inbox, and whether info@ answered after. NAMED admins only; JSON, or ?format=csv as a download.
 app.get('/admin/client-mail/old-replies', (req, res) => require('./routes/clientMailRoutes').oldReplies(req, res, { staff: tryStaffAuth, isAdminEmail: caseAccess.isAdminEmail }));
-// Gauri's answers to the 19 questions (Faran 2026-11-19): NAMED admins only, read-only, private no-store.
+// Gauri's answers to the 24 questions (19 of 2026-11-19 + 5 follow-ups of 2026-11-23): NAMED admins only, read-only, private no-store.
 // Each question's title with the chosen option in plain words, plus counts; ?format=text → the same as a plain list.
 app.get('/admin/share/questions/answers', (req, res) => require('./services/shareQuestionsService').adminAnswers(req, res, { staff: tryStaffAuth, isAdminEmail: caseAccess.isAdminEmail }));
 

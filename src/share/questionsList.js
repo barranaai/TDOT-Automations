@@ -1,8 +1,12 @@
 'use strict';
 
 /**
- * The 19 questions of the shared questions page (questions.html, beside this file): ids, titles, the
- * suggested option and each option's key + text, in the order the page shows them.
+ * The 24 questions of the shared questions page (questions.html, beside this file): ids, titles, the
+ * suggested option and each option's key + text, in the order the page shows them — the five follow-up
+ * questions of 23 November first (ids ending in "x"), then the 19 answered on 19 November.
+ *
+ * The 19 earlier ids, their option keys and their texts must stay exactly as they are: the stored answers
+ * are kept under those ids and keys (the feature's test pins them).
  *
  * ONE list for the server: the answers API validates against it (a question id or an option key
  * that is not here is refused) and the admin read turns a stored key into plain words with it.
@@ -11,6 +15,16 @@
  */
 
 const QUESTIONS = Object.freeze([
+  { id: "B3x", title: "Free consultations: which ones does the consultant confirm afterwards?", sug: "b",
+    opts: [["a","Every free consultation, including existing clients asking about their current file, and follow-ups."], ["b","Only a consultation on a new matter, the kind that normally has a fee."], ["c","Only when someone other than the consultant made it free."]] },
+  { id: "A1x", title: "Agreement or form still missing at the consultation time", sug: "a",
+    opts: [["a","Yes. The team chases the client the day before, using the “Not ready” list on the Consultations page. A client who still has something missing when they arrive or join the call may finish it then and go ahead. Staff rebook, with the fee carried over, only if the client does not finish it then."], ["b","No. Both must be done 24 hours before. If not, staff rebook the day before."], ["c","The app moves the consultation by itself at the 24-hour mark and emails the client a link to pick a new time."]] },
+  { id: "B2x", title: "Early slot: should the app hold the time while the client pays?", sug: "c",
+    opts: [["a","No hold. A new client's time is saved only once the payment is recorded. This needs the “new client pays first” rule switched on."], ["b","Yes. Hold the time for 30 minutes, then free it."], ["c","Yes. Hold the time for 2 hours, then free it."]] },
+  { id: "F1x", title: "Who approves a big discount?", sug: "a",
+    opts: [["a","Gauri or Asmita. Shafoli stays out."], ["b","Gauri or Shafoli. Asmita approves only up to $500."], ["c","Gauri, Asmita or Shafoli."]] },
+  { id: "O1x", title: "The sentence about recording, for the consultation agreement", sug: "a",
+    opts: [["a","“The consultation may be recorded and transcribed, including by AI note-taking tools, for the client's file. The client may decline at the start of the consultation.”"], ["b","You or the consultants send your own wording."], ["c","A lawyer words it first."]] },
   { id: "G1", title: "Should everyone sign in with their own Monday account?", sug: "b",
     opts: [["a","Yes, everyone, once each person has a Monday seat or another way to sign in is agreed"], ["b","Keep today's mix, and require Monday sign-in for each new “who did it” action (fee approval, waivers, hand-off)"], ["c","Keep the shared key as it is"]] },
   { id: "H1", title: "Who is on the retainer team, and who may send agreements?", sug: "b",
