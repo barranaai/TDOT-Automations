@@ -356,6 +356,42 @@ test('the question itself: the shared pop-up, "Remove the follow-up date <date> 
   assert.ok(!/window\.confirm\([^)]*follow-up date/i.test(js));
 });
 
+test('the question, a double-click on "Save attribution": the second click of the double-click that opened the question never answers "Remove the date" — only a click of its own (or the keyboard) does', () => {
+  const js = firstScript(ac.buildDetailHTML('555'));
+  function ask() {
+    const els = {}, q = { answers: [], opts: null };
+    const box = { innerHTML: '', querySelector: (sel) => els[sel] || (els[sel] = { onclick: null, focus() {} }) };
+    let open = true;
+    const dlg = { box, close() { if (!open) return false; open = false; q.opts.onClosed(); return true; }, tryClose() { return dlg.close(); } };
+    const ctx = { setTimeout: (f) => f(), tdotDialogNew: (o) => { q.opts = o; return dlg; }, escHtml: (x) => String(x) };
+    vm.createContext(ctx);
+    vm.runInContext(pickFn(js, 'askRemoveFollowUpDate'), ctx);
+    ctx.askRemoveFollowUpDate(LATER, (a) => q.answers.push(a));
+    q.isOpen = () => open; q.remove = (e) => box.querySelector('[data-go]').onclick(e); q.keep = (e) => box.querySelector('[data-x]').onclick(e);
+    return q;
+  }
+  // the browser counts the clicks of one double-click in detail: 1 opened the question, 2 lands on whatever is now under the pointer
+  let q = ask();
+  q.remove({ detail: 2 });
+  assert.deepEqual([q.answers, q.isOpen()], [[], true], 'the second click of a double-click: no answer, the question stays open');
+  q.remove({ detail: 3 });
+  assert.deepEqual([q.answers, q.isOpen()], [[], true], 'a third quick click: the same');
+  // the person then reads it and answers with a click of their own
+  q.remove({ detail: 1 });
+  assert.deepEqual([q.answers, q.isOpen()], [['remove'], false]);
+  // Enter or Space on the focused button is a click with detail 0
+  q = ask(); q.remove({ detail: 0 }); assert.deepEqual(q.answers, ['remove'], 'the keyboard still answers');
+  // an ignored second click leaves the other ways out as they were
+  q = ask(); q.remove({ detail: 2 }); q.keep({ detail: 1 }); assert.deepEqual(q.answers, ['keep']);
+  q = ask(); q.remove({ detail: 2 }); q.opts.onClosed(); assert.deepEqual(q.answers, [''], 'closed after an ignored click: no answer, nothing is saved');
+  // through the page's own "Save attribution": with the question still open, nothing has been sent
+  const r = attributionSave({ detail: { name: 'Test Client', outcome: 'Newsletter', followUpDate: LATER, followUpDateRequired: false } });
+  assert.deepEqual([r.asked, r.sent], [[LATER], []]);
+  // the shared dialog has the same rule for its backdrop — this is that rule, not a new timer
+  assert.ok(require('../src/routes/dialogUi').DIALOG_UI_JS.includes('if (e.detail > 1) return;'));
+  assert.ok(!/setTimeout\([^)]*300/.test(pickFn(js, 'askRemoveFollowUpDate')));
+});
+
 /* ── the lead page ── */
 
 /** The lead page's own click handler for one outcome button, against fakes. */
@@ -515,6 +551,62 @@ test('Consultations list row, drawn by the page\'s own code: the same pill in th
   assert.equal(on, off.replace('<span class="pill amber">Follow-Up</span>', '<span class="pill amber">Follow-Up</span>' + NO_DATE_PILL), 'the row is the old one plus the pill');
   assert.equal(on.split('no follow-up date').length - 1, 1);
   assert.equal(ctx.rowHtml({ ...row, followUpDate: LATER }, ''), (ctx.fuDateRule({}), ctx.rowHtml({ ...row, followUpDate: LATER }, '')), 'a row with its date is the same either way');
+});
+
+test('a retained client never shows "no follow-up date": on the Consultations page the completed row says Retained only in its "Now" column, and that is enough', () => {
+  for (const html of [ac.buildQueueHTML(), ac.buildRetainersHTML()]) {
+    const { ctx } = listCode(html);
+    const cell = (c) => ctx.outcomeCell(c), plain = (c) => ctx.outcomeCell.plain(c);
+    const RETAINED = { outcome: 'Follow-Up', followUpDate: '', done: true, now: 'Retained', nowTone: 'green' };
+    assert.equal(cell(RETAINED), plain(RETAINED), 'off: the old cell');
+    ctx.fuDateRule({ followUpDateRequired: true });
+    assert.equal(cell(RETAINED), '<span class="pill amber">Follow-Up</span>', 'on: no pill for a retained client');
+    assert.equal(cell({ outcome: 'Follow-Up', now: 'Retained' }), '<span class="pill amber">Follow-Up</span>', 'no date field at all');
+    // every other "Now" still asks for the date — the client is not retained yet
+    for (const now of ['Following up', 'Retainer to send', 'Retainer sent', 'Retainer signed', 'Retainer paid', '', undefined]) {
+      assert.equal(cell({ outcome: 'Follow-Up', followUpDate: '', done: true, now }), '<span class="pill amber">Follow-Up</span>' + NO_DATE_PILL, 'Now: ' + now);
+    }
+    // the old "follow-up <date>" pill of a completed row is not touched by this
+    assert.equal(cell({ outcome: 'Follow-Up', followUpDate: LATER, done: true, now: 'Retained' }), plain({ outcome: 'Follow-Up', followUpDate: LATER, done: true, now: 'Retained' }));
+  }
+});
+
+test('Consultations page, from the board\'s real answer: a client set to Follow-Up with no date who later signed and paid (Retained) shows no pill on the Completed list; the client still being followed up does', async () => {
+  const snap = require('../src/services/leadSnapshot');
+  const leads = [
+    { id: '101', fullName: 'Test Client', bookingStatus: 'Booked', bookedSlot: '2026-10-01 10:00', outcome: 'Follow-Up', followUpDate: '', conversionStatus: 'Retained', retainerSent: '2026-10-02', retainerSigned: '2026-10-20', retainerPaid: '2026-10-21' },
+    { id: '102', fullName: 'Test Client Two', bookingStatus: 'Booked', bookedSlot: '2026-10-01 11:00', outcome: 'Follow-Up', followUpDate: '' },
+  ];
+  const dash = require('../src/services/dashboardService');
+  const orig = [snap.io.fetchLeads, dash.fetchAllItems, process.env.FOLLOWUP_DATE_REQUIRED];
+  snap.io.fetchLeads = async () => JSON.parse(JSON.stringify(leads)); dash.fetchAllItems = async () => [];
+  process.env.FOLLOWUP_DATE_REQUIRED = '1';
+  let board, tab;
+  try {
+    snap._reset(); board = await portal.getConsultationsBoard({ now: new Date(NOON), withCompleted: true });
+    snap._reset(); tab = await portal.getConsultationsBoard({ now: new Date(NOON), withRetained: true });
+  } finally {
+    snap.io.fetchLeads = orig[0]; dash.fetchAllItems = orig[1];
+    if (orig[2] === undefined) delete process.env.FOLLOWUP_DATE_REQUIRED; else process.env.FOLLOWUP_DATE_REQUIRED = orig[2];
+    snap._reset();
+  }
+  assert.strictEqual(board.followUpDateRequired, true);
+  const byId = Object.fromEntries(board.completed.map((r) => [r.id, r]));
+  // what the page is given for the retained client: Follow-Up, no date, "Now: Retained" — and no key that says retained
+  assert.deepEqual([byId['101'].outcome, byId['101'].followUpDate, byId['101'].now, 'retained' in byId['101']], ['Follow-Up', '', 'Retained', false]);
+  assert.deepEqual([byId['102'].outcome, byId['102'].followUpDate, byId['102'].now], ['Follow-Up', '', 'Following up']);
+  const { ctx, js } = listCode(ac.buildQueueHTML());
+  ctx.TDOT_DEL_SVG = '<svg/>';
+  vm.runInContext(['dParts', 'dAdd', 'dLabel', 'dateCell', 'timeCell', 'directPill', 'nowCell', 'readyPill', 'rowHtml'].map((n) => pickFn(js, n)).join('\n'), ctx);
+  const offRows = board.completed.map((r) => ctx.rowHtml(r, ''));
+  ctx.fuDateRule(board);
+  const drawn = Object.fromEntries(board.completed.map((r) => [r.id, ctx.rowHtml(r, '')]));
+  assert.ok(drawn['101'].includes('>Retained</span>') && !drawn['101'].includes('no follow-up date'), 'Now: Retained, and no call-back cue');
+  assert.equal(drawn['101'], offRows[board.completed.indexOf(byId['101'])], 'the retained client\'s row is the old row, letter for letter');
+  assert.equal(drawn['102'].split('no follow-up date').length - 1, 1, 'the client still being followed up keeps the pill');
+  // the same client on the Retained tab of Retainers & follow-ups: no pill there either (as before)
+  const rt = listCode(ac.buildRetainersHTML()).ctx; rt.fuDateRule(tab);
+  assert.deepEqual(tab.retained.map((r) => [r.id, r.retained, rt.outcomeCell(r).includes('no follow-up date')]), [['101', true, false]]);
 });
 
 test('the shared list code can be on a page twice without the cell wrapping itself twice', () => {

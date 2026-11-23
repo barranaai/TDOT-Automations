@@ -244,10 +244,12 @@ function outcomeCell(c){
    never on the Retained tab. Drawn only while the server's switch FOLLOWUP_DATE_REQUIRED is on: the board's answer
    says so (followUpDateRequired) and each page's load() hands it to fuDateRule(). Switched off, the cell is the one
    above, letter for letter. It is added AROUND the cell (the cell's own text is kept as it was — a test compares it
-   with a frozen copy), so every list that draws the outcome gets it. */
+   with a frozen copy), so every list that draws the outcome gets it.
+   A retained client never shows it: the Retained tab's rows say retained, and on the Consultations page a completed
+   row of a retained client says so only in its "Now" column (now: 'Retained' — the server's completedConsultation). */
 var FU_DATE_RULE=false;
 function fuDateRule(d){ FU_DATE_RULE=!!(d && d.followUpDateRequired===true); }
-function fuMissingPill(c){ return (FU_DATE_RULE && c && c.outcome==='Follow-Up' && !c.followUpDate && !c.retained)?' '+qpill('amber','no follow-up date'):''; }
+function fuMissingPill(c){ return (FU_DATE_RULE && c && c.outcome==='Follow-Up' && !c.followUpDate && !c.retained && c.now!=='Retained')?' '+qpill('amber','no follow-up date'):''; }
 if(!outcomeCell.plain){ (function(plain){ outcomeCell=function(c){ return plain(c)+fuMissingPill(c); }; outcomeCell.plain=plain; })(outcomeCell); }
 function bindRowClicks(root,suffix){
   Array.prototype.forEach.call(root.querySelectorAll('tr.row'),function(tr){
@@ -2081,7 +2083,10 @@ function doAction(action,value,confirmMsg,staffNameOverride,confirmed){
 /* Is the date required at Follow-Up? The server's switch, as the loaded record says it — false until the record has arrived. */
 function fuDateRequired(){ return !!(LAST_DETAIL && LAST_DETAIL.followUpDateRequired===true); }
 /* "Save attribution" with the date box emptied: the shared pop-up asks. done('remove') = remove the date (the only answer
-   that sends the mark); done('keep') = save the other boxes, the date stays; done('') = closed (x, Escape): nothing is saved. */
+   that sends the mark); done('keep') = save the other boxes, the date stays; done('') = closed (x, Escape): nothing is saved.
+   The pop-up opens inside the click on "Save attribution", so the second click of a double-click can land on its
+   buttons: "Remove the date" ignores that click (detail > 1), the same rule the shared dialog has for its backdrop —
+   the date is removed only by a click of its own (a keyboard press has detail 0). */
 function askRemoveFollowUpDate(day, done){
   var answer='';
   var dlg=tdotDialogNew({ cls:'dqt tdlg-narrow', labelledBy:'fur-title', onClosed:function(){ done(answer); } });
@@ -2089,7 +2094,7 @@ function askRemoveFollowUpDate(day, done){
     '<p class="muted">Lead owner, Booked by and Payment reviewed by are saved either way.</p>'+
     '<div class="tdlg-actions"><button type="button" class="tdlg-btn" data-x>Keep the date</button><button type="button" class="tdlg-btn primary" data-go>Remove the date</button></div>';
   dlg.box.querySelector('[data-x]').onclick=function(){ answer='keep'; if(!dlg.tryClose('cancel')) answer=''; };
-  dlg.box.querySelector('[data-go]').onclick=function(){ answer='remove'; dlg.close(true); };
+  dlg.box.querySelector('[data-go]').onclick=function(e){ if(e && e.detail>1) return; answer='remove'; dlg.close(true); };
   setTimeout(function(){ var b=dlg.box.querySelector('[data-x]'); if(b) b.focus(); },30);
 }
 
