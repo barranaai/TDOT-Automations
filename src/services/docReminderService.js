@@ -1226,7 +1226,11 @@ async function emailFromPrepared({ overview, core, level, subject, body, extra, 
   let email;
   try { email = await buildReminderEmail(staffEmailOptions({ overview, p: core, level: v.lv, lastDay: v.last, subject, body, extra, actor, accessToken: PREVIEW_TOKEN })); }
   catch (err) { return viewProblem(err.message); }
-  return { ok: true, html: previewSafeHtml(email.html, { token: overview.accessToken }), subject: email.subject, warnings: email.warnings || [], problems: [] };
+  // the client-number line the send adds (microsoftMailService → clientIdDisplay.mailBody), shown here too (ux review #10)
+  const D = require('./clientIdDisplay');
+  // the same lookup the send makes (the case's Client Master copy; no column yet / a slow read = no line)
+  const withLine = D.addMailLine(email.html, await D.idForMail({ caseItemId: overview.itemId, kind: 'doc-reminder' }).catch(() => ''));
+  return { ok: true, html: previewSafeHtml(withLine, { token: overview.accessToken }), subject: email.subject, warnings: email.warnings || [], problems: [] };
 }
 
 /**

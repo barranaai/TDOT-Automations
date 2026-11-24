@@ -15,11 +15,16 @@
  *
  *   node scripts/backfill-client-ids.js --apply --decisions <answered.xlsx> \
  *        --admin <your ADMIN_EMAILS address> --automations-checked --confirm "GIVE <N> CLIENT IDS"
- *       APPLY. Refused unless: CLIENT_IDS is not 'on' (live minting off for the apply),
- *       the Client ID columns are set up, the admin is on ADMIN_EMAILS, the answered
- *       sheet reads cleanly, no "same person" group changed since the sheet was made,
- *       and the typed phrase names the number of new IDs (a wrong phrase prints the
- *       right one and stops before any write). --automations-checked says you looked:
+ *       APPLY. Refused unless: CLIENT_IDS is not 'on' ON THIS MACHINE, the Client ID
+ *       columns are set up, the admin is on ADMIN_EMAILS, the answered sheet reads
+ *       cleanly (every answer Y, N or blank), no "same person" group changed since the
+ *       sheet was made, and the typed phrase names the number of new IDs (a wrong
+ *       phrase prints the right one and stops before any write).
+ *       The live server's switch cannot be seen from here, so before its first write the
+ *       apply puts a LOCK in the Client ID counter file (clientIdAllocator.setBackfillLock):
+ *       while it is there no server gives a number and the hourly check writes nothing,
+ *       whatever their CLIENT_IDS says. The apply clears it at the end; after a crash, run
+ *       the apply again (it resumes) or `--unlock --admin <you>`. --automations-checked says you looked:
  *       no Monday automation watches the "Client ID" columns, "Client account (system)"
  *       (text_mm5xmeka) or the Client relation (board_relation_mm5xd2bh) — review #16.
  *       Run it in a quiet window.
@@ -35,11 +40,19 @@
  *      relation) and each consultation record (linkLead). A box that did not come
  *      back in the read is never written; a consultation record that points at
  *      ANOTHER client record is left alone.
- * Every step is saved in a checkpoint (resume = run the same command again) and an
+ * Every step is saved in a checkpoint (resume = run the same command again — the phrase
+ * it was started with still counts, as long as no more people get a number than it said) and an
  * apply log (one JSON line per record made and per cell written — the rollback list:
  * archive, never delete). Safe to run again: what is done is skipped.
  *
  * Options: --out <dir> (default ./backfill-client-ids), --placeholder-names <n> (default 3).
+ *
+ *   node scripts/backfill-client-ids.js --unlock --admin <your ADMIN_EMAILS address>
+ *       Only takes the backfill lock out of the counter file (after an apply that was stopped).
+ *
+ * Gauri may sort and filter the sheet: the numbers are read back from "Proposed ID", never
+ * from the row order. A record findOrCreate finds that belongs to ANOTHER person of the check
+ * list is never used for this one (the sheet kept them apart) — that person is left for the admin.
  */
 
 'use strict';
@@ -55,6 +68,7 @@ const PAGE = 100;
 
 const s = (v) => String(v == null ? '' : v).trim();
 const stamp = (ms) => new Date(ms).toISOString().replace(/[:.]/g, '-');
+const { torontoTime } = require('../src/utils/torontoTime');
 
 /** --flag value / --flag → { flag: value|true } */
 function parseArgs(argv) {
@@ -114,6 +128,8 @@ function realIo() {
     readLeads: (cfg) => { const lc = leadBoard.columns; return pageAll(leadBoard.boardId, `id name created_at column_values(ids:${colIds([lc.fullName, lc.email, lc.phone, lc.clientMasterItemId, lc.clientAccountId, lc.retainerSigned, lc.residentialAddress, (cfg.leadLinkColumns || {}).clientId])}){ id text }`); },
     peekCounter: () => allocator.peekCounter(),
     allocateBlock: (k) => allocator.allocateBlock(k),
+    lockCounter: (by) => allocator.setBackfillLock({ by }),
+    unlockCounter: () => allocator.clearBackfillLock(),
     findOrCreate: (p) => accounts.findOrCreate(p),
     linkCase: (accountId, o) => accounts.linkCase(accountId, o),
     linkLead: (accountId, leadId, o) => accounts.linkLead(accountId, leadId, o),
@@ -144,17 +160,19 @@ function realIo() {
 
 function writeWorkbook(io, file, plan, { madeAt, counter }) {
   const XLSX = io.xlsx();
-  const sheet = (rows, widths) => {
+  const sheet = (rows, widths, { filter = false } = {}) => {
     const ws = {};
     rows.forEach((r, ri) => r.forEach((v, ci) => { ws[XLSX.utils.encode_cell({ r: ri, c: ci })] = typeof v === 'number' ? { t: 'n', v } : { t: 's', v: String(v == null ? '' : v).slice(0, 32000) }; }));
     const cols = Math.max(1, ...rows.map((r) => r.length));
     ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(0, rows.length - 1), c: cols - 1 } });
     if (widths) ws['!cols'] = widths.map((wch) => ({ wch }));
+    if (filter) ws['!autofilter'] = { ref: ws['!ref'] };   // a filter button on every header
     return ws;
   };
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, sheet([planner.SHEET_HEADERS, ...planner.sheetRows(plan)], [16, 9, 30, 28, 18, 28, 14, 40, 22, 6, 18, 60, 12, 12, 60]), 'People');
-  XLSX.utils.book_append_sheet(wb, sheet(planner.summaryRows(plan, { madeAt, counter }), [32, 100]), 'Summary');
+  // "Summary" (how to answer) opens first; "People" has a filter on every column (ux review #2).
+  XLSX.utils.book_append_sheet(wb, sheet(planner.summaryRows(plan, { madeAt, counter }), [32, 110]), 'Summary');
+  XLSX.utils.book_append_sheet(wb, sheet([planner.SHEET_HEADERS, ...planner.sheetRows(plan)], planner.SHEET_HEADERS.map((h) => planner.SHEET_WIDTHS[h] || 16), { filter: true }), 'People');
   XLSX.utils.book_append_sheet(wb, sheet(planner.leftOutRows(plan), [26, 30, 18, 80]), 'Left out');
   io.fs.mkdirSync(path.dirname(file), { recursive: true });
   io.fs.writeFileSync(file, XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
@@ -196,16 +214,25 @@ async function run({ argv = process.argv.slice(2), io = null, log = console.log 
   const configured = !!(s((cfg.columns || {}).clientId) && s((cfg.cmLinkColumns || {}).clientId));
   const placeholderNames = Number.isFinite(Number(args['placeholder-names'])) && args['placeholder-names'] !== true ? Number(args['placeholder-names']) : undefined;
 
-  let decisions = null, order = [], sheetProblems = [];
+  if (args.unlock) {
+    const admin = s(args.admin === true ? '' : args.admin);
+    if (!admin || !x.isAdminEmail(admin)) return refuse('not-admin', 'Name yourself with --admin <your address>; it must be on ADMIN_EMAILS.');
+    const r = await x.unlockCounter();
+    if (!r || !r.ok) return refuse('unlock', `The lock could not be taken out (${(r && r.message) || 'no answer'}).`);
+    log(r.cleared ? 'The backfill lock is out of the counter file — the live app gives Client IDs again.' : 'There was no backfill lock in the counter file — nothing to do.');
+    return { ok: true, mode: 'unlock', cleared: !!r.cleared };
+  }
+
+  let decisions = null, order = [], proposed = null, sheetProblems = [];
   if (apply) {
     log('Mode: APPLY (writes to Monday)');
-    if (x.clientIdsMode() === 'on') return refuse('live-on', 'CLIENT_IDS is "on". Turn live minting off (CLIENT_IDS=report or off) for the apply, then run again.');
+    if (x.clientIdsMode() === 'on') return refuse('live-on', 'CLIENT_IDS is "on" on this machine. Turn live minting off on the live server AND here (CLIENT_IDS=report or off) for the apply, then run again. (The apply also locks the counter, so the live server gives no number while it runs.)');
     if (!configured) return refuse('not-configured', 'The Client ID columns are not set up yet (run scripts/add-client-id-columns.js --apply first).');
     const admin = s(args.admin === true ? '' : args.admin);
     if (!admin || !x.isAdminEmail(admin)) return refuse('not-admin', 'Name yourself with --admin <your address>; it must be on ADMIN_EMAILS.');
     if (!s(args.decisions === true ? '' : args.decisions)) return refuse('no-decisions', 'Give the answered check list with --decisions <file.xlsx>.');
     if (!args['automations-checked']) return refuse('automations', 'First check that no Monday automation watches the "Client ID" columns, "Client account (system)" (text_mm5xmeka) or the Client relation (board_relation_mm5xd2bh) on Client Master, the Clients board or the Lead Board. Then add --automations-checked.');
-    try { ({ decisions, order, problems: sheetProblems } = readWorkbook(x, path.resolve(String(args.decisions)))); }
+    try { ({ decisions, order, proposed, problems: sheetProblems } = readWorkbook(x, path.resolve(String(args.decisions)))); }
     catch (err) { return refuse('bad-decisions', `The answered check list cannot be read: ${err.message}`); }
     if (!order.length) return refuse('bad-decisions', 'The answered check list has no rows.');
     for (const p of sheetProblems) log(`  ! ${p}`);
@@ -237,7 +264,7 @@ async function run({ argv = process.argv.slice(2), io = null, log = console.log 
   const now = x.now();
   const plan = planner.buildPlan(rows, {
     now, counterLast: counter.state === 'ok' ? counter.last : null,
-    decisions, order, placeholderNames,
+    decisions, order, proposed, placeholderNames,
   });
   const c = plan.counts;
   log(`  ${c.clientsRows} client records · ${c.caseRows} Client Master rows (${c.eligibleCases} counted) · ${c.leadRows} consultation records`);
@@ -248,145 +275,192 @@ async function run({ argv = process.argv.slice(2), io = null, log = console.log 
 
   if (!apply) {
     const file = path.join(outDir, `client-ids-check-list-${stamp(now)}.xlsx`);
-    writeWorkbook(x, file, plan, { madeAt: new Date(now).toISOString(), counter: counterText });
+    writeWorkbook(x, file, plan, { madeAt: `${torontoTime(now)} (Toronto)`, counter: counterText });
     log(`Check list → ${file}`);
     log(`(Dry run. Gauri answers the ${c.amberQuestions} AMBER and ${c.buckets['NO-CASE']} NO-CASE rows; then run --apply with the answered file.)`);
     return { ok: true, mode: 'dry-run', plan, file };
   }
 
   // ── apply: the guards that need the plan ──
-  for (const g of plan.ignored) log(`  ! ${g.key}: ${g.why}`);
+  // An answer that is not Y, N or blank ("Yes, same", "Y.", "same") is never read as blank:
+  // a blank means two people, and two permanent IDs (ux review #3). Correct it and run again.
+  if (plan.ignored.length) {
+    for (const g of plan.ignored) log(`  ✗ ${g.key}: ${g.why}`);
+    return refuse('unclear-answers', `${plan.ignored.length} answer(s) are not Y or N: ${plan.ignored.slice(0, 10).map((g) => `${g.key}${g.name ? ` (${g.name})` : ''}`).join(', ')}${plan.ignored.length > 10 ? '…' : ''}. Write Y, N or leave it blank, then run again — nothing was written.`);
+  }
   if (plan.changed.length) {
     for (const ch of plan.changed) log(`  ✗ ${ch.key}: ${ch.why}`);
     return refuse('changed', `${plan.changed.length} answered group(s) changed since the check list was made. Make a new check list (dry run) and answer it again — nothing was written.`);
   }
-  const want = confirmPhrase(c.newIds);
-  if (s(args.confirm === true ? '' : args.confirm) !== want) return refuse('confirm', `To go ahead, type exactly: --confirm "${want}" — nothing was written.`);
-
-  x.fs.mkdirSync(outDir, { recursive: true });
   const cpFile = path.join(outDir, 'apply-checkpoint.json');
   const logFile = path.join(outDir, 'apply-log.jsonl');
-  const cp = loadCheckpoint(x, cpFile) || { startedAt: new Date(now).toISOString(), admin: s(args.admin), blocks: [], given: {}, accountFor: {}, byAccount: {}, done: {} };
+  let prior;
+  try { prior = loadCheckpoint(x, cpFile); }
+  catch (err) { return refuse('checkpoint', err.message); }
+  const want = confirmPhrase(c.newIds);
+  const typed = s(args.confirm === true ? '' : args.confirm);
+  // Resume (review 2026-11-25): the phrase the apply was started with still counts — as long as the
+  // people numbered so far plus those still to number are no more than it said.
+  const newAnchors = plan.takers.filter((p) => !(prior && prior.given && prior.given[p.anchor])).length;
+  const resumeOk = !!(prior && Number.isSafeInteger(prior.confirmedNewIds) && typed === confirmPhrase(prior.confirmedNewIds)
+    && Object.keys(prior.given || {}).length + newAnchors <= prior.confirmedNewIds);
+  if (typed !== want && !resumeOk) return refuse('confirm', `To go ahead, type exactly: --confirm "${want}" — nothing was written.`);
+
+  x.fs.mkdirSync(outDir, { recursive: true });
+  const cp = prior || { startedAt: new Date(now).toISOString(), admin: s(args.admin), confirmedNewIds: c.newIds, blocks: [], given: {}, accountFor: {}, byAccount: {}, done: {} };
+  if (!Number.isSafeInteger(cp.confirmedNewIds)) cp.confirmedNewIds = c.newIds;
   cp.runs = (cp.runs || 0) + 1;
-  const entry = (o) => x.fs.appendFileSync(logFile, `${JSON.stringify({ at: new Date(x.now()).toISOString(), admin: s(args.admin), ...o })}\n`);
-  const save = () => saveCheckpoint(x, cpFile, cp);
-  entry({ kind: 'start', run: cp.runs, newIds: c.newIds });
 
-  // Numbers: those already reserved in the checkpoint, then one block for the rest.
-  const usedNs = new Set(Object.values(cp.given));
-  const pool = [];
-  for (const b of cp.blocks) for (let n = b.first; n <= b.last; n++) if (!usedNs.has(n)) pool.push(n);
-  const needNew = plan.takers.filter((p) => !cp.done[p.anchor] && !cp.given[p.anchor] && !(p.accountId && cp.byAccount[p.accountId])).length;
-  if (needNew > pool.length) {
-    const r = await x.allocateBlock(needNew - pool.length);
-    if (!r || !r.ok) return refuse('block', `No numbers could be reserved (${(r && r.message) || 'the counter refused'}) — nothing was written.`);
-    cp.blocks.push({ first: r.first, last: r.last });
-    for (let n = r.first; n <= r.last; n++) pool.push(n);
-    save();
-    entry({ kind: 'reserve', first: r.first, last: r.last });
-    log(`  Reserved numbers ${r.first}–${r.last}`);
+  // The lock: from here on no live server gives a number (whatever its CLIENT_IDS) until it is cleared.
+  const lk = await x.lockCounter(s(args.admin));
+  if (!lk || !lk.ok) return refuse('lock', `The Client ID counter could not be locked for the apply (${(lk && lk.message) || 'no answer'}) — nothing was written.`);
+  log(lk.already ? '  The counter was locked already (a resumed apply) — kept.' : '  The counter is locked: the live app gives no Client ID until the apply ends.');
+  try {
+    return await applyAll();
+  } finally {
+    const un = await x.unlockCounter().catch((err) => ({ ok: false, message: err.message }));
+    if (un && un.ok) log('  The counter lock is cleared.');
+    else log(`  ! The counter lock could not be cleared (${(un && un.message) || 'no answer'}) — run: node scripts/backfill-client-ids.js --unlock --admin <you>`);
   }
-  const takeNumber = () => pool.shift();
 
-  const done = { records: 0, ids: 0, kept: 0, cases: 0, leads: 0, copies: 0, skipped: [] };
-  const lb = leadCols;
-  const leadCopyCol = s((cfg.leadLinkColumns || {}).clientId);
-  const ordered = [...plan.people].sort((a, b) => (a.gets ? a.order : Infinity) - (b.gets ? b.order : Infinity) || a.minItem - b.minItem);
+  async function applyAll() {
+    const entry = (o) => x.fs.appendFileSync(logFile, `${JSON.stringify({ at: new Date(x.now()).toISOString(), admin: s(args.admin), ...o })}\n`);
+    const save = () => saveCheckpoint(x, cpFile, cp);
+    entry({ kind: 'start', run: cp.runs, newIds: c.newIds });
 
-  for (const p of ordered) {
-    if (cp.done[p.anchor]) continue;
-    if (p.bucket === 'NO-CASE' && p.give !== 'Y') continue;   // NO-CASE without a Y: nothing at all
-    if (p.idBlocked) { done.skipped.push(`${p.name}: its Client ID box is unreadable or holds something else`); continue; }
-
-    // 1. the client record
-    let accountId = p.accountId || cp.accountFor[p.anchor] || '';
-    if (!accountId) {
-      let r;
-      try { r = await x.findOrCreate({ email: p.email, phone: p.phone, fullName: p.name, residentialAddress: p.residentialAddress, source: 'backfill' }); }
-      catch (err) { done.skipped.push(`${p.name}: no client record could be made (${err.message})`); continue; }
-      if (!r || !r.clientId) { done.skipped.push(`${p.name}: no client record could be made`); continue; }
-      accountId = String(r.clientId);
-      cp.accountFor[p.anchor] = accountId; save();
-      entry({ kind: r.created ? 'create-record' : 'found-record', person: p.anchor, board: cfg.boardId, item: accountId, name: p.name });
-      if (r.created) done.records++;
-      await x.sleep(150);
+    // Numbers: those already reserved in the checkpoint, then one block for the rest.
+    const usedNs = new Set(Object.values(cp.given));
+    const pool = [];
+    for (const b of cp.blocks) for (let n = b.first; n <= b.last; n++) if (!usedNs.has(n)) pool.push(n);
+    const needNew = plan.takers.filter((p) => !cp.done[p.anchor] && !cp.given[p.anchor] && !(p.accountId && cp.byAccount[p.accountId])).length;
+    if (needNew > pool.length) {
+      const r = await x.allocateBlock(needNew - pool.length);
+      if (!r || !r.ok) return refuse('block', `No numbers could be reserved (${(r && r.message) || 'the counter refused'}) — nothing was written.`);
+      cp.blocks.push({ first: r.first, last: r.last });
+      for (let n = r.first; n <= r.last; n++) pool.push(n);
+      save();
+      entry({ kind: 'reserve', first: r.first, last: r.last });
+      log(`  Reserved numbers ${r.first}–${r.last}`);
     }
+    const takeNumber = () => pool.shift();
 
-    // 2. the Client ID on the record — never renumbered, never over a value, never after a failed read
-    const cell = await x.readIdCell(cfg, accountId);
-    if (cell.state !== 'ok') { done.skipped.push(`${p.name}: the client record is ${cell.state} — left for the next run`); continue; }
-    let clientIdText = '';
-    if (cell.text) {
-      if (!isClientId(cell.text)) { done.skipped.push(`${p.name}: its Client ID box holds "${cell.text.slice(0, 40)}" — never typed over`); continue; }
-      clientIdText = cell.text; done.kept++;
-    } else {
-      let n = cp.given[p.anchor] || cp.byAccount[accountId];
-      if (!n) {
-        n = takeNumber();
-        if (!n) { done.skipped.push(`${p.name}: no number left in the reserved block — run again`); continue; }
-        cp.given[p.anchor] = n; cp.byAccount[accountId] = n; save();
+    const done = { records: 0, ids: 0, kept: 0, cases: 0, leads: 0, copies: 0, skipped: [] };
+    const lb = leadCols;
+    const leadCopyCol = s((cfg.leadLinkColumns || {}).clientId);
+    const ordered = [...plan.people].sort((a, b) => (a.gets ? a.order : Infinity) - (b.gets ? b.order : Infinity) || a.minItem - b.minItem);
+    // Every client record the check list already gives to a person (or keeps out): findOrCreate
+    // may find one of them by an exact match on a CLEANED name — the sheet kept those people
+    // apart, so it is never used for another person (review 2026-11-25).
+    const claimed = new Map();
+    for (const q of plan.people) if (q.accountId) claimed.set(String(q.accountId), q.anchor);
+    for (const x2 of plan.excluded) if (x2.kind !== 'case' && x2.id) claimed.set(String(x2.id), 'left-out');
+    for (const m of plan.merged || []) if (m.id) claimed.set(String(m.id), 'merged');
+    for (const [anchor, id] of Object.entries(cp.accountFor)) if (!claimed.has(String(id))) claimed.set(String(id), anchor);
+    const nameOfAnchor = (a) => { const q = plan.people.find((pp) => pp.anchor === a); return q ? q.name : 'another client'; };
+
+    for (const p of ordered) {
+      if (cp.done[p.anchor]) continue;
+      if (p.bucket === 'NO-CASE' && p.give !== 'Y') continue;   // NO-CASE without a Y: nothing at all
+      if (p.idBlocked) { done.skipped.push(`${p.name}: its Client ID box is unreadable or holds something else`); continue; }
+
+      // 1. the client record
+      let accountId = p.accountId || cp.accountFor[p.anchor] || '';
+      if (!accountId) {
+        let r;
+        try { r = await x.findOrCreate({ email: p.email, phone: p.phone, fullName: p.name, residentialAddress: p.residentialAddress, source: 'backfill' }); }
+        catch (err) { done.skipped.push(`${p.name}: no client record could be made (${err.message})`); continue; }
+        if (!r || !r.clientId) { done.skipped.push(`${p.name}: no client record could be made`); continue; }
+        const owner = claimed.get(String(r.clientId));
+        if (!r.created && owner && owner !== p.anchor) {
+          const whose = owner === 'left-out' ? 'a record the check list leaves out' : owner === 'merged' ? 'a Merged record' : `${nameOfAnchor(owner)}'s client record`;
+          done.skipped.push(`${p.name}: matches ${whose} exactly, but the check list says they are different people — left for the admin (no record, no Client ID)`);
+          entry({ kind: 'skip-claimed', person: p.anchor, item: String(r.clientId), owner });
+          continue;
+        }
+        accountId = String(r.clientId);
+        claimed.set(accountId, p.anchor);
+        cp.accountFor[p.anchor] = accountId; save();
+        entry({ kind: r.created ? 'create-record' : 'found-record', person: p.anchor, board: cfg.boardId, item: accountId, name: p.name });
+        if (r.created) done.records++;
+        await x.sleep(150);
       }
-      const value = formatClientId(p.year, n);
-      try { await x.writeIdCell(cfg, accountId, value); }
-      catch (err) { done.skipped.push(`${p.name}: ${value} could not be written (${err.message}) — tried again on the next run`); continue; }
-      entry({ kind: 'cell', person: p.anchor, board: cfg.boardId, item: accountId, column: cfg.columns.clientId, from: '', to: value });
-      const back = await x.readIdCell(cfg, accountId);
-      clientIdText = back.state === 'ok' && isClientId(back.text) ? back.text : value;
-      if (clientIdText !== value) entry({ kind: 'note', person: p.anchor, item: accountId, text: `the record holds ${clientIdText}; ${value} is left unused` });
-      else done.ids++;
-      await x.sleep(150);
+
+      // 2. the Client ID on the record — never renumbered, never over a value, never after a failed read
+      const cell = await x.readIdCell(cfg, accountId);
+      if (cell.state !== 'ok') { done.skipped.push(`${p.name}: the client record is ${cell.state} — left for the next run`); continue; }
+      let clientIdText = '';
+      if (cell.text) {
+        if (!isClientId(cell.text)) { done.skipped.push(`${p.name}: its Client ID box holds "${cell.text.slice(0, 40)}" — never typed over`); continue; }
+        clientIdText = cell.text; done.kept++;
+      } else {
+        let n = cp.given[p.anchor] || cp.byAccount[accountId];
+        if (!n) {
+          n = takeNumber();
+          if (!n) { done.skipped.push(`${p.name}: no number left in the reserved block — run again`); continue; }
+          cp.given[p.anchor] = n; cp.byAccount[accountId] = n; save();
+        }
+        const value = formatClientId(p.year, n);
+        try { await x.writeIdCell(cfg, accountId, value); }
+        catch (err) { done.skipped.push(`${p.name}: ${value} could not be written (${err.message}) — tried again on the next run`); continue; }
+        entry({ kind: 'cell', person: p.anchor, board: cfg.boardId, item: accountId, column: cfg.columns.clientId, from: '', to: value });
+        const back = await x.readIdCell(cfg, accountId);
+        clientIdText = back.state === 'ok' && isClientId(back.text) ? back.text : value;
+        if (clientIdText !== value) entry({ kind: 'note', person: p.anchor, item: accountId, text: `the record holds ${clientIdText}; ${value} is left unused` });
+        else done.ids++;
+        await x.sleep(150);
+      }
+
+      // 3. the copies — cases, then consultation records
+      // (the plan gives a person only cases / consultation records whose box is blank or names
+      // this person's record — directly or through a Merged one — so a different id here is a link to make)
+      for (const cs of p.cases) {
+        if (cs.accountId !== accountId) {
+          try { await x.linkCase(accountId, { cmItemId: cs.id, clientIdText }); }
+          catch (err) { done.skipped.push(`${cs.caseRef || cs.name}: could not be linked (${err.message})`); continue; }
+          entry({ kind: 'link-case', person: p.anchor, board: cfg.clientMasterBoardId, item: cs.id, from: cs.accountId || '', to: accountId, clientId: clientIdText, caseRef: cs.caseRef });
+          done.cases++;
+        } else if (cs.copy !== undefined && cs.copy !== null && cs.copy !== clientIdText) {
+          try {
+            await x.writeText(cfg.clientMasterBoardId, cs.id, cfg.cmLinkColumns.clientId, clientIdText);
+            entry({ kind: 'cell', person: p.anchor, board: cfg.clientMasterBoardId, item: cs.id, column: cfg.cmLinkColumns.clientId, from: cs.copy, to: clientIdText });
+            done.copies++;
+          } catch (err) { done.skipped.push(`${cs.caseRef || cs.name}: the Client ID copy could not be written (${err.message})`); }
+        } else continue;
+        await x.sleep(150);
+      }
+      for (const l of p.leads) {
+        if (l.accountId === null) continue;    // its box did not come back: never written
+        if (l.accountId !== accountId) {
+          try { await x.linkLead(accountId, l.id, { clientIdText }); }
+          catch (err) { done.skipped.push(`lead ${l.id}: could not be linked (${err.message})`); continue; }
+          entry({ kind: 'link-lead', person: p.anchor, board: lb.boardId, item: l.id, from: l.accountId || '', to: accountId, clientId: clientIdText });
+          done.leads++;
+        } else if (leadCopyCol && l.copy !== undefined && l.copy !== null && l.copy !== clientIdText) {
+          try {
+            await x.writeText(lb.boardId, l.id, leadCopyCol, clientIdText);
+            entry({ kind: 'cell', person: p.anchor, board: lb.boardId, item: l.id, column: leadCopyCol, from: l.copy, to: clientIdText });
+            done.copies++;
+          } catch (err) { done.skipped.push(`lead ${l.id}: the Client ID copy could not be written (${err.message})`); }
+        } else continue;
+        await x.sleep(150);
+      }
+
+      cp.done[p.anchor] = { accountId, clientId: clientIdText };
+      save();
     }
 
-    // 3. the copies — cases, then consultation records
-    // (the plan gives a person only cases / consultation records whose box is blank or names
-    // this person's record — directly or through a Merged one — so a different id here is a link to make)
-    for (const cs of p.cases) {
-      if (cs.accountId !== accountId) {
-        try { await x.linkCase(accountId, { cmItemId: cs.id, clientIdText }); }
-        catch (err) { done.skipped.push(`${cs.caseRef || cs.name}: could not be linked (${err.message})`); continue; }
-        entry({ kind: 'link-case', person: p.anchor, board: cfg.clientMasterBoardId, item: cs.id, from: cs.accountId || '', to: accountId, clientId: clientIdText, caseRef: cs.caseRef });
-        done.cases++;
-      } else if (cs.copy !== undefined && cs.copy !== null && cs.copy !== clientIdText) {
-        try {
-          await x.writeText(cfg.clientMasterBoardId, cs.id, cfg.cmLinkColumns.clientId, clientIdText);
-          entry({ kind: 'cell', person: p.anchor, board: cfg.clientMasterBoardId, item: cs.id, column: cfg.cmLinkColumns.clientId, from: cs.copy, to: clientIdText });
-          done.copies++;
-        } catch (err) { done.skipped.push(`${cs.caseRef || cs.name}: the Client ID copy could not be written (${err.message})`); }
-      } else continue;
-      await x.sleep(150);
-    }
-    for (const l of p.leads) {
-      if (l.accountId === null) continue;    // its box did not come back: never written
-      if (l.accountId !== accountId) {
-        try { await x.linkLead(accountId, l.id, { clientIdText }); }
-        catch (err) { done.skipped.push(`lead ${l.id}: could not be linked (${err.message})`); continue; }
-        entry({ kind: 'link-lead', person: p.anchor, board: lb.boardId, item: l.id, from: l.accountId || '', to: accountId, clientId: clientIdText });
-        done.leads++;
-      } else if (leadCopyCol && l.copy !== undefined && l.copy !== null && l.copy !== clientIdText) {
-        try {
-          await x.writeText(lb.boardId, l.id, leadCopyCol, clientIdText);
-          entry({ kind: 'cell', person: p.anchor, board: lb.boardId, item: l.id, column: leadCopyCol, from: l.copy, to: clientIdText });
-          done.copies++;
-        } catch (err) { done.skipped.push(`lead ${l.id}: the Client ID copy could not be written (${err.message})`); }
-      } else continue;
-      await x.sleep(150);
-    }
-
-    cp.done[p.anchor] = { accountId, clientId: clientIdText };
+    const unused = pool.slice();
+    if (unused.length) entry({ kind: 'unused-numbers', numbers: unused });
+    cp.finishedAt = new Date(x.now()).toISOString();
     save();
+    entry({ kind: 'end', ...done, skipped: done.skipped.length });
+    log(`Done: ${done.records} client record(s) made · ${done.ids} Client ID(s) given · ${done.kept} kept · ${done.cases} case(s) linked · ${done.leads} consultation record(s) linked · ${done.copies} copy(ies) fixed`);
+    if (unused.length) log(`  ${unused.length} reserved number(s) were not needed (left unused: ${unused.slice(0, 10).join(', ')}${unused.length > 10 ? '…' : ''}) — gaps are normal`);
+    for (const sk of done.skipped) log(`  ! ${sk}`);
+    log(`Apply log → ${logFile} (the rollback list: archive, never delete). Checkpoint → ${cpFile}`);
+    log(`Next: check /admin/client-ids/audit; then set CLIENT_IDS_HEAL_SINCE to ${cp.startedAt} (when this apply STARTED — people who came while it ran are then given theirs by the hourly check) and CLIENT_IDS=on.`);
+    return { ok: true, mode: 'apply', plan, done, unused, logFile, checkpoint: cpFile };
   }
-
-  const unused = pool.slice();
-  if (unused.length) entry({ kind: 'unused-numbers', numbers: unused });
-  cp.finishedAt = new Date(x.now()).toISOString();
-  save();
-  entry({ kind: 'end', ...done, skipped: done.skipped.length });
-  log(`Done: ${done.records} client record(s) made · ${done.ids} Client ID(s) given · ${done.kept} kept · ${done.cases} case(s) linked · ${done.leads} consultation record(s) linked · ${done.copies} copy(ies) fixed`);
-  if (unused.length) log(`  ${unused.length} reserved number(s) were not needed (left unused: ${unused.slice(0, 10).join(', ')}${unused.length > 10 ? '…' : ''}) — gaps are normal`);
-  for (const sk of done.skipped) log(`  ! ${sk}`);
-  log(`Apply log → ${logFile} (the rollback list: archive, never delete). Checkpoint → ${cpFile}`);
-  log('Next: check /admin/client-ids/audit; then set CLIENT_IDS_HEAL_SINCE to now and CLIENT_IDS=on.');
-  return { ok: true, mode: 'apply', plan, done, unused, logFile, checkpoint: cpFile };
 }
 
 module.exports = { run, parseArgs, confirmPhrase, writeWorkbook, readWorkbook, OUT_DEFAULT };

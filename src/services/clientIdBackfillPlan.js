@@ -264,7 +264,8 @@ function readAnswer(v) {
  * @param {number} [opts.now]          ms (default Date.now())
  * @param {number|null} [opts.counterLast]  the counter's last number (null/undefined = not read: the highest typed number is used)
  * @param {Map<string,{same:string,give:string}>|object} [opts.decisions]  answers by sheet key
- * @param {string[]} [opts.order]      sheet keys in the dry run's order (the apply keeps that order; people new since go last)
+ * @param {string[]} [opts.order]      sheet keys in the dry run's number order (readDecisions; people new since go last)
+ * @param {Map<string,Array<number|null>>|object} [opts.proposed]  each key's proposed numbers from the answered sheet (readDecisions) — the apply's order
  * @param {number} [opts.placeholderNames]
  */
 function buildPlan({ clients = [], cases = [], leads = [] } = {}, opts = {}) {
@@ -644,6 +645,24 @@ function buildPlan({ clients = [], cases = [], leads = [] } = {}, opts = {}) {
     for (const t of toks) if (tokenRank.has(t)) r = Math.min(r, tokenRank.get(t));
     return r;
   };
+  // The number each person was PROPOSED on the answered sheet (ux review #1): the apply hands
+  // the numbers out in that order, so a sheet sorted or filtered in Excel changes nothing.
+  // A split AMBER row lists one number per person (in the same order as its people); a
+  // joined one takes the lowest of them. No number on the sheet → after everyone who had one.
+  const proposedMap = opts.proposed instanceof Map ? opts.proposed : new Map(Object.entries(opts.proposed || {}));
+  const sheetN = new Map();
+  for (const row of rows) {
+    const nums = proposedMap.get(row.key);
+    if (!Array.isArray(nums) || !nums.length) continue;
+    const finite = nums.filter((n) => Number.isSafeInteger(n) && n > 0);
+    if (!finite.length) continue;
+    const lowest = Math.min(...finite);
+    row.people.forEach((p, i) => {
+      const own = nums.length === row.people.length ? nums[i] : null;
+      sheetN.set(p, Number.isSafeInteger(own) && own > 0 ? own : lowest);
+    });
+  }
+  const sheetNOf = (p) => (sheetN.has(p) ? sheetN.get(p) : Infinity);
   for (const row of rows) {
     for (const p of row.people) {
       p.key = row.key;
@@ -652,7 +671,7 @@ function buildPlan({ clients = [], cases = [], leads = [] } = {}, opts = {}) {
     }
   }
   const takers = people.filter((p) => p.gets).sort((a, b) =>
-    (rankOf(a) - rankOf(b)) || (a.year - b.year)
+    (sheetNOf(a) - sheetNOf(b) || 0) || (rankOf(a) - rankOf(b) || 0) || (a.year - b.year)
     || ((a.firstSeenAt == null ? Infinity : a.firstSeenAt) - (b.firstSeenAt == null ? Infinity : b.firstSeenAt))
     || (a.minItem - b.minItem));
   const used = new Set();
@@ -670,7 +689,11 @@ function buildPlan({ clients = [], cases = [], leads = [] } = {}, opts = {}) {
   const ignored = [];
   const rowKeys = new Map(rows.map((r) => [r.key, r]));
   for (const [key, a] of decisions) {
-    if (a.same === '?' || a.give === '?') ignored.push({ key, why: 'the answer is not Y or N — read as blank' });
+    if (a.same === '?' || a.give === '?') {
+      const r = rowKeys.get(key);
+      const who = r ? uniq(r.people.map((p) => p.name)).join(' / ') : '';
+      ignored.push({ key, name: who, why: `the answer is not Y or N${who ? ` (${who})` : ''} — write Y, N or leave it blank` });
+    }
     if (a.same === 'Y') {
       const r = rowKeys.get(key);
       if (r && r.bucket === 'AMBER') continue;
@@ -722,14 +745,24 @@ function buildPlan({ clients = [], cases = [], leads = [] } = {}, opts = {}) {
 
 /* ───────────────────────────── the review sheet ───────────────────────────── */
 
-const SHEET_HEADERS = ['Key', 'Bucket', 'Proposed ID', 'Name', 'Name from', 'Email', 'Phone', 'Cases', 'Groups', 'Year', 'Year from', 'Why', 'Same person? (Y/N)', 'Give a Client ID? (Y/N)', 'Notes'];
+// The two answer columns sit right after the key and bucket, beside the question itself (ux review #2).
+// readDecisions reads by header name, so the column order may change; the header WORDS may not.
+const SHEET_HEADERS = ['Key', 'Bucket', 'Same person? (Y/N)', 'Give a Client ID? (Y/N)', 'Why', 'Name', 'Proposed ID', 'Name from', 'Email', 'Phone', 'Cases', 'Groups', 'Year', 'Year from', 'Notes'];
+const SHEET_WIDTHS = { Key: 16, Bucket: 9, 'Same person? (Y/N)': 12, 'Give a Client ID? (Y/N)': 12, Why: 60, Name: 28, 'Proposed ID': 30, 'Name from': 18, Email: 28, Phone: 14, Cases: 40, Groups: 22, Year: 6, 'Year from': 18, Notes: 60 };
+const QUESTION_BUCKETS = new Set(['AMBER', 'NO-CASE']);
 
 const caseText = (p) => p.cases.map((c) => `${c.caseRef || '(no case number)'} · ${c.standing}`).join('; ');
 const groupText = (p) => uniq(p.cases.map((c) => c.group)).join('; ');
 
-/** PURE — the "People" sheet: one row per sheet key, in number order (AMBER and NO-CASE questions included). */
+/**
+ * PURE — the "People" sheet: one row per sheet key. The questions (AMBER, NO-CASE) come first,
+ * then everyone else; each part in number order. Sorting or filtering it in Excel changes
+ * nothing: the apply reads the numbers from the "Proposed ID" column, not the row order.
+ */
 function sheetRows(plan) {
   const rowOrder = [...plan.rows].sort((a, b) => {
+    const qa = QUESTION_BUCKETS.has(a.bucket) ? 0 : 1, qb = QUESTION_BUCKETS.has(b.bucket) ? 0 : 1;
+    if (qa !== qb) return qa - qb;
     const oa = Math.min(...a.people.map((p) => (p.gets ? p.order : Infinity)));
     const ob = Math.min(...b.people.map((p) => (p.gets ? p.order : Infinity)));
     if (oa !== ob) return oa - ob;
@@ -740,19 +773,22 @@ function sheetRows(plan) {
     const idText = ps.map((p) => p.existingId ? `${p.existingId} (has it)` : p.proposedId || (r.bucket === 'NO-CASE' ? 'only with a Y' : p.idBlocked ? 'none this run' : '')).join(' / ');
     const many = ps.length > 1;
     const pick = (f) => uniq(ps.map(f)).join(' / ');
-    return [
-      r.key, r.bucket, idText,
-      many ? pick((p) => p.name) : ps[0].name,
-      pick((p) => p.nameFrom),
-      pick((p) => p.email), pick((p) => p.phone),
-      ps.map(caseText).filter(Boolean).join(' / '),
-      uniq(ps.map(groupText)).join(' / '),
-      pick((p) => String(p.year)), pick((p) => p.yearFrom),
-      r.bucket === 'AMBER' ? `Same person? ${r.reasons.join('; ')}. Y = one person, one Client ID. N or blank = ${r.units.length} different people.` : r.reasons.join('; '),
-      r.bucket === 'AMBER' ? (r.answer.same === 'Y' || r.answer.same === 'N' ? r.answer.same : '') : '',
-      r.bucket === 'NO-CASE' ? (r.answer.give === 'Y' || r.answer.give === 'N' ? r.answer.give : '') : '',
-      uniq(ps.flatMap((p) => p.notes)).join(' | '),
-    ];
+    const cell = {
+      Key: r.key, Bucket: r.bucket,
+      'Same person? (Y/N)': r.bucket === 'AMBER' ? (r.answer.same === 'Y' || r.answer.same === 'N' ? r.answer.same : '') : '',
+      'Give a Client ID? (Y/N)': r.bucket === 'NO-CASE' ? (r.answer.give === 'Y' || r.answer.give === 'N' ? r.answer.give : '') : '',
+      Why: r.bucket === 'AMBER' ? `Same person? ${r.reasons.join('; ')}. Y = one person, one Client ID. N or blank = ${r.units.length} different people.`
+        : r.bucket === 'NO-CASE' ? `${r.reasons.join('; ')}. Y = give this client a Client ID. N or blank = no Client ID.` : r.reasons.join('; '),
+      Name: many ? pick((p) => p.name) : ps[0].name,
+      'Proposed ID': idText,
+      'Name from': pick((p) => p.nameFrom),
+      Email: pick((p) => p.email), Phone: pick((p) => p.phone),
+      Cases: ps.map(caseText).filter(Boolean).join(' / '),
+      Groups: uniq(ps.map(groupText)).join(' / '),
+      Year: pick((p) => String(p.year)), 'Year from': pick((p) => p.yearFrom),
+      Notes: uniq(ps.flatMap((p) => p.notes)).join(' | '),
+    };
+    return SHEET_HEADERS.map((h) => cell[h]);
   });
 }
 
@@ -763,16 +799,27 @@ function summaryRows(plan, { madeAt = '', counter = '' } = {}) {
     ['Client ID backfill — check list', ''],
     ['Made', madeAt],
     ['', ''],
-    ['How to answer', 'AMBER rows: write Y in "Same person? (Y/N)" when the names are ONE person, N when they are different. A blank means different people.'],
+    ['How to answer', 'The questions are at the top of the "People" sheet: the AMBER and NO-CASE rows. Only those need an answer.'],
+    ['', 'AMBER rows: write Y in "Same person? (Y/N)" when the names are ONE person, N when they are different. A blank means different people.'],
     ['', 'NO-CASE rows: write Y in "Give a Client ID? (Y/N)" only for a real client. A blank means no Client ID.'],
-    ['', 'Do not change the Key column. Send the file back as it is — the apply reads the answers from it.'],
+    ['', 'Write only Y or N (or leave it blank). Any other answer stops the apply until it is corrected.'],
+    ['', 'Sorting and filtering the sheet is fine. Do not change the "Key" or "Proposed ID" columns — the apply reads them back. Send the file back when done.'],
     ['', 'The numbers are proposals: a Y answer or a new client before the apply moves the later numbers along. A Client ID already given never changes.'],
+    ['', ''],
+    ['What the buckets mean', ''],
+    ['GREEN', 'One person, found by the app\'s own rule (the same email or phone AND the same name). Gets a Client ID. Nothing to answer.'],
+    ['AMBER', 'A question: these rows look alike (a shared email or phone, or names that only match once file numbers are removed). Answer Y or N.'],
+    ['RED', 'No email and no phone at all, so it could not be matched with anyone. Kept as its own person and gets a Client ID. Nothing to answer.'],
+    ['NO-CASE', 'A client record with no case on Client Master (a consultation only, or it looks like a test). No Client ID unless you write Y.'],
+    ['EXCLUDED', 'Never given a Client ID: the TEST group, test or template rows, Archived records, and rows whose link is broken. See "Left out".'],
+    ['', ''],
+    ['The columns', '"Key" is the app\'s own name for the row. "Bucket" is the kind of row (above). "Name from" says where the name came from. "Placeholder emails / phones" below are shared addresses or numbers (an agent\'s inbox, the office phone) treated as blank.'],
     ['', ''],
     ['Rows on the Clients board', c.clientsRows],
     ['Rows on Client Master', c.caseRows],
     ['Client Master rows counted', c.eligibleCases],
     ['People', c.people],
-    ['GREEN', c.buckets.GREEN],
+    ['GREEN rows', c.buckets.GREEN],
     ['AMBER (questions)', c.buckets.AMBER],
     ['RED (no email or phone)', c.buckets.RED],
     ['NO-CASE (only with a Y)', c.buckets['NO-CASE']],
@@ -804,12 +851,18 @@ function leftOutRows(plan) {
 
 /**
  * PURE — the answers read back from the "People" sheet rows (objects by header).
- * @returns {{ decisions: Map<string,{same,give}>, order: string[], problems: string[] }}
+ * The ORDER comes from the numbers in the "Proposed ID" column, never the row position (ux
+ * review #1): a sheet sorted by Bucket or Name in Excel gives the same numbers. `proposed`
+ * holds each key's numbers in the cell's own order (one per person; an ID a person already
+ * has is null). Rows with no number go after, by the lowest item id in their key.
+ * @returns {{ decisions: Map<string,{same,give}>, order: string[], proposed: Map<string,Array<number|null>>, names: Map<string,string>, problems: string[] }}
  */
 function readDecisions(rows) {
   const decisions = new Map();
-  const order = [];
+  const proposed = new Map();
+  const names = new Map();
   const problems = [];
+  const keys = [];
   for (const r of rows || []) {
     const key = s(r.Key);
     if (!key) continue;
@@ -821,14 +874,20 @@ function readDecisions(rows) {
     if (same && bucket !== 'AMBER') problems.push(`${key}: "Same person?" is answered on a ${bucket || 'non-AMBER'} row — ignored`);
     if (give && bucket !== 'NO-CASE') problems.push(`${key}: "Give a Client ID?" is answered on a ${bucket || 'non-NO-CASE'} row — ignored`);
     decisions.set(key, { same: bucket === 'AMBER' ? same : '', give: bucket === 'NO-CASE' ? give : '' });
-    order.push(key);
+    proposed.set(key, s(r['Proposed ID']).split(' / ').map((t) => (/\(has it\)/.test(t) ? null : clientIdNumber(t) || null)));
+    names.set(key, s(r.Name));
+    keys.push(key);
   }
-  return { decisions, order, problems };
+  const lowestN = (k) => { const f = proposed.get(k).filter((n) => n); return f.length ? Math.min(...f) : Infinity; };
+  const lowestItem = (k) => Math.min(...(k.startsWith('G:') ? k.slice(2).split('+') : [k.slice(1)]).map(Number));
+  const order = [...keys].sort((a, b) => (lowestN(a) - lowestN(b) || 0) || (lowestItem(a) - lowestItem(b)) || (a < b ? -1 : a > b ? 1 : 0));
+  return { decisions, order, proposed, names, problems };
 }
 
 module.exports = {
   buildPlan, sheetRows, summaryRows, leftOutRows, readDecisions,
   parseClients, parseCases, parseLeads, cellOf, emailOf,
   clusterNormName, cleanDisplayName, resolveRow, blockStart, readAnswer, timeInfo, refYear,
-  CM_COL, SHEET_HEADERS, BUCKETS, PLACEHOLDER_NAMES,
+  looksPlaceholderEmail, looksPlaceholderPhone,
+  CM_COL, SHEET_HEADERS, SHEET_WIDTHS, BUCKETS, PLACEHOLDER_NAMES,
 };

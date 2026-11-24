@@ -35,6 +35,15 @@
  *
  * This module does NOT look at the CLIENT_IDS switch: callers do (the live
  * mint only when it is 'on'; the backfill apply runs with live minting off).
+ *
+ * THE BACKFILL LOCK (review 2026-11-25): the CLIENT_IDS switch the backfill can see
+ * is the one on the machine that runs it, not the live server's. So the apply also
+ * writes `backfill: { by, at }` INTO the counter file (setBackfillLock, a
+ * conflict-safe write) before its first write to Monday, and clears it at the end
+ * (clearBackfillLock; `--unlock` after a crash). While it is there, allocate()
+ * gives no number — on every server, whatever its switch says — and the hourly
+ * healer writes nothing; the person gets the ID at the next hourly check after the
+ * backfill. allocateBlock (the backfill's own reservation) keeps the lock as it is.
  */
 
 const fs = require('fs');
@@ -145,7 +154,14 @@ async function readState() {
   if (!r) return { state: 'missing' };
   const last = r.data ? r.data.last : undefined;
   if (!Number.isSafeInteger(last) || last < 0) return { state: 'corrupt', etag: r.etag || '', raw: JSON.stringify(r.data) };
-  return { state: 'ok', last, etag: r.etag || '' };
+  return { state: 'ok', last, etag: r.etag || '', backfill: lockOf(r.data) };
+}
+
+/** The backfill lock in the counter's data: { by, at } or null. Anything truthy that is not an object still counts as locked. */
+function lockOf(data) {
+  const b = data && data.backfill;
+  if (!b) return null;
+  return typeof b === 'object' ? { by: s(b.by), at: s(b.at) } : { by: '', at: s(b) };
 }
 
 /** The highest counter number among these values (anything parseable as a Client ID). */
@@ -187,6 +203,7 @@ function allocate({ year } = {}) {
     for (let tries = 1; tries <= MAX_TRIES; tries++) {
       const base = await baseState(cols);
       if (base.ok === false) return base;
+      if (base.backfill) return refusal('backfill', `The Client ID backfill is running (since ${base.backfill.at || 'a while'}) — no number was given now; the hourly check gives it once the backfill is done.`);
       // Skip any number already typed on the board (burn it — never reuse).
       let n = base.last + 1;
       let free = false;
@@ -243,7 +260,7 @@ function allocateBlock(K) {
         first = hit + 1;
       }
       const end = first + k - 1;
-      try { await io.writeCounter({ last: end, updatedAt: new Date(io.now()).toISOString() }, seeded ? '' : st.etag); }
+      try { await io.writeCounter({ last: end, updatedAt: new Date(io.now()).toISOString(), ...(st.backfill ? { backfill: st.backfill } : {}) }, seeded ? '' : st.etag); }
       catch (err) {
         if (err && err.conflict) continue;
         return refusal('unavailable', `The Client ID counter could not be saved (${err.message}) — nothing was reserved.`);
@@ -252,6 +269,61 @@ function allocateBlock(K) {
       return { ok: true, first, last: end, count: k, burnt: first - last - 1, seeded, tries };
     }
     return refusal('busy', `The Client ID counter kept changing (${MAX_TRIES} tries) — nothing was reserved.`);
+  });
+}
+
+/**
+ * The backfill apply: put the lock in the counter file (or keep it, when it is there
+ * already — a resumed apply). A missing file is created, create-only, from the boards'
+ * highest number. A damaged or unreadable counter is refused — the apply then stops.
+ * @returns {Promise<{ ok: true, already: boolean, last: number } | { ok: false, reason, message }>}
+ */
+function setBackfillLock({ by = '' } = {}) {
+  return withClientIdLock(async () => {
+    const cols = configured();
+    if (!cols) return refusal('not-configured', 'The Client ID column is not set up yet.');
+    for (let tries = 1; tries <= MAX_TRIES; tries++) {
+      const st = await readState();
+      if (st.state === 'corrupt') return refusal('corrupt', 'The Client ID counter file is damaged — the backfill cannot lock it.');
+      if (st.state === 'unavailable') return refusal('unavailable', `The Client ID counter could not be read (${st.error}).`);
+      if (st.state === 'ok' && st.backfill) return { ok: true, already: true, last: st.last, lock: st.backfill };
+      let last = st.state === 'ok' ? st.last : 0;
+      if (st.state === 'missing') {
+        try { last = highestNumber(await io.boardValues(cols)); }
+        catch (err) { return refusal('unavailable', `The boards could not be read (${err.message}).`); }
+      }
+      const lock = { by: s(by), at: new Date(io.now()).toISOString() };
+      try { await io.writeCounter({ last, updatedAt: lock.at, backfill: lock }, st.state === 'ok' ? st.etag : ''); }
+      catch (err) {
+        if (err && err.conflict) continue;
+        return refusal('unavailable', `The Client ID counter could not be saved (${err.message}).`);
+      }
+      console.log(`[ClientId] Backfill lock set by ${lock.by || 'the backfill'} — live numbers wait until it is cleared`);
+      return { ok: true, already: false, last, lock };
+    }
+    return refusal('busy', `The Client ID counter kept changing (${MAX_TRIES} tries).`);
+  });
+}
+
+/** The backfill apply's end (or `--unlock`): take the lock out of the counter file. Nothing to do = ok. */
+function clearBackfillLock() {
+  return withClientIdLock(async () => {
+    const cols = configured();
+    if (!cols) return refusal('not-configured', 'The Client ID column is not set up yet.');
+    for (let tries = 1; tries <= MAX_TRIES; tries++) {
+      const st = await readState();
+      if (st.state === 'missing') return { ok: true, cleared: false };
+      if (st.state !== 'ok') return refusal(st.state, `The Client ID counter could not be read (${st.error || st.state}) — the lock is still there; run --unlock again.`);
+      if (!st.backfill) return { ok: true, cleared: false };
+      try { await io.writeCounter({ last: st.last, updatedAt: new Date(io.now()).toISOString() }, st.etag); }
+      catch (err) {
+        if (err && err.conflict) continue;
+        return refusal('unavailable', `The Client ID counter could not be saved (${err.message}) — the lock is still there; run --unlock again.`);
+      }
+      console.log('[ClientId] Backfill lock cleared — live numbers are given again');
+      return { ok: true, cleared: true };
+    }
+    return refusal('busy', `The Client ID counter kept changing (${MAX_TRIES} tries) — the lock is still there; run --unlock again.`);
   });
 }
 
@@ -300,7 +372,7 @@ function repairCounter() {
  */
 async function peekCounter() {
   const st = await readState();
-  if (st.state === 'ok') return { state: 'ok', last: st.last };
+  if (st.state === 'ok') return { state: 'ok', last: st.last, ...(st.backfill ? { backfill: st.backfill } : {}) };
   if (st.state === 'unavailable') return { state: 'unavailable', error: st.error };
   return { state: st.state };
 }
@@ -334,6 +406,7 @@ function _resetForTests() { _lockTail = Promise.resolve(); }
 
 module.exports = {
   allocate, allocateBlock, repairCounter, withClientIdLock, peekCounter, probeCounterWrites,
+  setBackfillLock, clearBackfillLock, lockOf,
   formatClientId, parseClientId, torontoYear,
   salvageLast, highestNumber, readColumns, columnTexts,
   io, COUNTER_PATH, MAX_TRIES, MAX_SKIPS, MAX_BLOCK, _resetForTests,

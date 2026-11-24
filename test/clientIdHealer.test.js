@@ -580,3 +580,121 @@ test('on: making a record for a case fails — said in the report, the rest of t
     assert.ok(w.seen.linkCase.some((x) => x.cmItemId === '502'), 'the other cases are still joined');
   } finally { w.restore(); }
 });
+
+/* ───────────────────────────── review fixes (2026-11-25) ───────────────────────────── */
+
+test('on: one person on two records (twins) never gets TWO Client IDs — only the lowest item id is given one, none when a twin has one already', async () => {
+  const w = world({ clients: [
+    client({ id: 12, name: 'Jane Doe', email: 'j@x.com' }), client({ id: 11, name: 'Jane Doe', email: 'j@x.com' }),
+    client({ id: 21, name: 'Sam Roe', email: 's@x.com', cid: 'CL-2026-00007' }), client({ id: 22, name: 'Sam Roe', email: 's@x.com' }),
+  ] });
+  try {
+    const r = await withEnv({ CLIENT_IDS: 'on', CLIENT_IDS_HEAL_SINCE: SINCE }, () => quiet(() => healer.tick()));
+    assert.equal(r.clients.twins, 2);
+    assert.deepEqual(w.seen.ensures.map((e) => e.id), ['11'], 'the lower record only; 12 and 22 wait on the twins line');
+    assert.equal(r.lines.filter((l) => l.kind === 'client-id-twins').length, 2);
+  } finally { w.restore(); }
+});
+
+test('on: a case joined to a blocked twin is joined with what that record has — no number made for it', async () => {
+  const w = world({
+    clients: [client({ id: 11, name: 'Jane Doe', email: 'j@x.com' }), client({ id: 12, name: 'Jane Doe', email: 'j@x.com' })],
+    cases: [cmRow({ id: 701, name: 'Jane Doe', ref: '2026-VV-071', email: 'j@x.com' })],
+    matches: { 'j@x.com': [{ id: '12', name: 'Jane Doe', clientIdText: '', confidence: 'exact', reasons: ['same email', 'same name'] }] },
+  });
+  try {
+    await withEnv({ CLIENT_IDS: 'on', CLIENT_IDS_HEAL_SINCE: SINCE }, () => quiet(() => healer.tick()));
+    assert.ok(!w.seen.ensures.some((e) => e.id === '12'), 'the twin that waits is never given a number');
+    assert.deepEqual(w.seen.linkCase.map((x) => [x.cmItemId, x.id, x.clientIdText]), [['701', '12', '']]);
+  } finally { w.restore(); }
+});
+
+test('on: a case copy of ANOTHER record\'s ID (its own record has none) is cleared after a fresh read; never on a record that now has one or could not be read; report only counts it', async () => {
+  const mk = () => world({
+    clients: [client({ id: 5, name: 'Old Person', email: 'o@x.com', created: Date.parse('2026-01-05T00:00:00Z') })],   // before HEAL_SINCE: no ID given
+    cases: [cmRow({ id: 801, name: 'Old Person', ref: '2026-VV-081', account: '5', copy: 'CL-2025-00044' })],
+  });
+  let w = mk();
+  try {
+    w.seen.idReads = [];
+    healer.io.readIdCell = async (cfg, id) => { w.seen.idReads.push(id); return { state: 'ok', text: '' }; };
+    const r = await withEnv({ CLIENT_IDS: 'on', CLIENT_IDS_HEAL_SINCE: SINCE }, () => quiet(() => healer.tick()));
+    assert.deepEqual(w.seen.idReads, ['5'], 'read once more before clearing');
+    assert.deepEqual(w.seen.writes, [{ board: String(CFG.clientMasterBoardId), item: '801', col: CFG.cmLinkColumns.clientId, value: '' }]);
+    assert.equal(r.did.strayCleared, 1);
+    assert.ok(!r.lines.some((l) => /copy-stray/.test(l.kind)));
+  } finally { w.restore(); }
+  for (const fresh of [{ state: 'ok', text: 'CL-2026-00090' }, { state: 'unreadable' }, { state: 'unavailable' }]) {
+    w = mk();
+    try {
+      healer.io.readIdCell = async () => fresh;
+      await withEnv({ CLIENT_IDS: 'on', CLIENT_IDS_HEAL_SINCE: SINCE }, () => quiet(() => healer.tick()));
+      assert.deepEqual(w.seen.writes, [], `nothing cleared when the fresh read is ${fresh.state} ${fresh.text || ''}`);
+    } finally { w.restore(); }
+  }
+  w = mk();
+  try {
+    healer.io.readIdCell = async () => { throw new Error('report mode must not read it'); };
+    const r = await withEnv({ CLIENT_IDS: 'report', CLIENT_IDS_HEAL_SINCE: SINCE }, () => quiet(() => healer.tick()));
+    assert.equal(r.wouldDo.strayClears, 1);
+    assert.deepEqual(w.seen.writes, []);
+  } finally { w.restore(); }
+});
+
+test('while the backfill holds the counter lock the healer writes NOTHING (whatever CLIENT_IDS says) and says so', async () => {
+  const w = world({
+    clients: [client({ id: 3, name: 'Bob Roy', email: 'bob@x.com' })],
+    cases: [cmRow({ id: 301, name: 'Bob Roy', account: '3', copy: '' })],
+    counter: { state: 'ok', last: 100, backfill: { by: 'boss@tdotimm.com', at: '2026-11-25T14:00:00Z' } },
+  });
+  try {
+    const r = await withEnv({ CLIENT_IDS: 'on', CLIENT_IDS_HEAL_SINCE: SINCE }, () => quiet(() => healer.tick()));
+    assert.equal(r.wrote, false);
+    assert.deepEqual([w.seen.ensures, w.seen.writes, w.seen.linkCase, w.seen.findOrCreate], [[], [], [], []]);
+    assert.ok(r.partial.some((p) => /backfill is running/.test(p)));
+    assert.deepEqual(r.wouldDo.mint, ['Bob Roy']);
+  } finally { w.restore(); }
+});
+
+test('a case with no consultation record: a decorated Client Master name is cleaned and only PROPOSES (a match is listed, never joined); placeholder emails count as blank', async () => {
+  const shared = 'agent@x.com';
+  const w = world({
+    clients: [client({ id: 1, name: 'Amritpal Kaur', email: 'ak@x.com', cid: 'CL-2026-00001' })],
+    cases: [
+      cmRow({ id: 901, name: 'Amritpal Kaur (2726)', ref: '2026-VV-091', email: 'ak@x.com' }),     // exact on the CLEANED name: listed
+      cmRow({ id: 902, name: 'Harjit Singh (1594)', ref: '2026-VV-092', email: 'hs@x.com' }),      // no match: made, under the clean name
+      cmRow({ id: 903, name: 'Solo Person', ref: '2026-VV-093', email: 'noemail@gmail.com' }),     // a placeholder by its look: no contact
+      ...['Ann A', 'Bob B', 'Cat C', 'Dan D'].map((n, i) => cmRow({ id: 910 + i, name: n, ref: `2026-VV-1${i}0`, email: shared, account: '1', copy: 'CL-2026-00001' })),
+      cmRow({ id: 904, name: 'Eve E', ref: '2026-VV-094', email: shared }),                        // shared by >3 names: blank
+    ],
+    matches: { 'ak@x.com': [{ id: '1', name: 'Amritpal Kaur', clientIdText: 'CL-2026-00001', confidence: 'exact', reasons: ['same email', 'same name'] }] },
+  });
+  try {
+    const r = await withEnv({ CLIENT_IDS: 'on', CLIENT_IDS_HEAL_SINCE: SINCE }, () => quiet(() => healer.tick()));
+    assert.ok(!w.seen.linkCase.some((x) => x.cmItemId === '901'), 'never joined on a cleaned name');
+    const line = healer.lastReport().problems.find((l) => l.caseRef === '2026-VV-091');
+    assert.match(line.why, /looks like the same person: "Amritpal Kaur"/);
+    assert.deepEqual(w.seen.findOrCreate.map((q) => q.fullName), ['Harjit Singh'], 'made under the readable name, never "(1594)"');
+    assert.ok(!w.seen.findMatches.some((q) => q.email === shared || q.email === 'noemail@gmail.com'), 'a placeholder is never searched with');
+    const noContact = r.lines.filter((l) => l.kind === 'client-id-case' && /neither the case nor its consultation record has an email or phone/.test(l.why)).map((l) => l.caseRef).sort();
+    assert.deepEqual(noContact, ['2026-VV-093', '2026-VV-094']);
+  } finally { w.restore(); }
+});
+
+test('Needs attention: "Mark handled" names where its note goes — the case row on Client Master, or the client\'s row on the Clients board (never "the client\'s record")', async () => {
+  const w = naWorld([
+    LINES[0],
+    { kind: 'client-id-case', fingerprint: 'client-id-case|105|no-contact|', cmItemId: '105', caseRef: '', client: 'No Ref', label: 'Client Master', since: iso(NOW - D), why: 'w3', todo: 't3' },
+    LINES[1],
+  ]);
+  try {
+    await NA.refresh({ reason: 'test' });
+    const by = Object.fromEntries(NA.view({ isAdmin: true }).entries.map((e) => [e.client, e]));
+    assert.equal(by['Ann Lee'].noteOn, "the client's row on the Clients board");
+    assert.equal(by['No Ref'].noteOn, 'the case row on Client Master');
+    assert.equal(by.Gone.noteOn, undefined, 'a line with a case number names the case number, as before');
+  } finally { w.restore(); }
+  const page = fs.readFileSync(require.resolve('../src/routes/adminDashboard.js'), 'utf8');
+  assert.match(page, /var on = li\.getAttribute\('data-na-note-on'\);\s*if \(on\) return on;/);
+  assert.match(page, /e\.noteOn \? ' data-na-note-on="' \+ escHtml\(e\.noteOn\) \+ '"' : ''/);
+});

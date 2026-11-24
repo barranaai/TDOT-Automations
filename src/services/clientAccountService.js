@@ -247,6 +247,22 @@ async function linkCase(clientId, { cmItemId, clientIdText = '' } = {}) {
   if (!cfg || !clientId || !cmItemId) return;
   const link = cfg.cmLinkColumns || {};
   const { clientMasterBoardId } = require('../../config/monday');
+  // A case MOVED to a record that has no Client ID yet must not keep the old record's ID
+  // copy — it would be shown as this client's on the portal, in emails and in "Other cases"
+  // (review 2026-11-25). Read first: cleared only when the case was read pointing at a
+  // DIFFERENT record and holding a copy (never on a read that did not come back).
+  let clearCopy = false;
+  if (link.clientId && link.clientAccountId && !isClientId(clientIdText)) {
+    try {
+      const d = await mondayApi.query(
+        `query($id:ID!){ items(ids:[$id], limit:1){ id column_values(ids:${JSON.stringify([link.clientAccountId, link.clientId])}){ id text } } }`,
+        { id: String(cmItemId) });
+      const cv = ((d && d.items && d.items[0]) || {}).column_values || [];
+      const acc = cv.find((c) => c && c.id === link.clientAccountId), copy = cv.find((c) => c && c.id === link.clientId);
+      const was = acc ? digitsOf(acc.text) : '';
+      clearCopy = !!(acc && copy && was && was !== digitsOf(clientId) && String(copy.text == null ? '' : copy.text).trim());
+    } catch (err) { console.warn(`[ClientAccount] case ${cmItemId} could not be read before the move (${err.message}) — its Client ID copy is left as it is`); }
+  }
   if (link.clientAccountId) {
     try {
       await mondayApi.query(
@@ -262,6 +278,14 @@ async function linkCase(clientId, { cmItemId, clientIdText = '' } = {}) {
         { b: String(clientMasterBoardId), i: String(cmItemId), c: JSON.stringify({ [link.clientId]: String(clientIdText) }) }
       );
     } catch (err) { console.warn(`[ClientAccount] Client ID copy failed for case ${cmItemId}: ${err.message}`); }
+  } else if (clearCopy) {
+    try {
+      await mondayApi.query(
+        'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
+        { b: String(clientMasterBoardId), i: String(cmItemId), c: JSON.stringify({ [link.clientId]: '' }) }
+      );
+      console.log(`[ClientAccount] case ${cmItemId} moved to client ${clientId}, which has no Client ID yet — the old record's ID copy is cleared`);
+    } catch (err) { console.warn(`[ClientAccount] old Client ID copy not cleared for case ${cmItemId}: ${err.message}`); }
   }
   if (link.clientRelation) {
     try {
@@ -331,6 +355,13 @@ const _idInFlight = new Map();   // account id → Promise (one ensure per accou
  * cell that could not be read (a write would cover a value it cannot see), or a
  * cell already holding something that is not a Client ID (the audit lists it; it is
  * never typed over). A number taken whose write then fails is burnt, never reused.
+ *
+ * Known and accepted (review 2026-11-25): two app INSTANCES at once (a deploy's
+ * overlap) can both find the cell blank and take n and n+1; the row keeps the last
+ * write. No number ever goes to two people (the counter's write is the claim), but
+ * for a moment the case / lead copies and a portal page or email sent then may show
+ * the other number. The hourly healer puts the copies right from the row within the
+ * hour. Inside one instance _idInFlight prevents it.
  *
  * @param {string} accountId  the Clients row's Monday item id
  * @param {{ knownId?: string, year?: number, why?: string }} [opts]

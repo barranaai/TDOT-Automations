@@ -789,6 +789,7 @@ app.post('/admin/retainer/:leadId/send-inviter-signature', async (req, res) => {
 app.get('/api/case/:caseRef', async (req, res) => {
   try {
     const overview = await caseCockpitService.getCaseOverview((req.params.caseRef || '').trim());
+    caseCockpitService.otherCasesForViewer(overview.client, null);   // the admin key sees every case; the internal assignees are taken off
     res.json(overview);
   } catch (err) {
     const notFound = /not found/i.test(err.message || '');
@@ -818,6 +819,8 @@ app.get('/admin/case-data/:caseRef', async (req, res) => {
     if (!viewer.isAdmin && !caseAccess.viewerCanSee(overview.assignees, viewer)) {
       return res.status(403).json({ error: 'not-assigned', message: 'You are not assigned to this case, so you cannot view it.' });
     }
+    // "Other cases of this client": only the ones this viewer may open (the rest as a count, no case number)
+    caseCockpitService.otherCasesForViewer(overview.client, viewer);
     // "Not applicable" needs a NAME on the decision: the buttons show only to
     // Monday-signed-in staff (the shared admin key would get a 401 on the click).
     if (overview.documents) {

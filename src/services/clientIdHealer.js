@@ -22,6 +22,13 @@
  *      ("review") is listed for staff, never joined.
  *   6. Lead Board copies: as for Client Master (only once that column exists).
  *
+ * Review fixes (2026-11-25): a twin group gives a number only to its lowest item id, and
+ * none while one of them has an ID (one person, one ID); a case copy of ANOTHER record's ID
+ * (its own record read blank, and blank again on a fresh read) is cleared; a case with no
+ * consultation record uses its cleaned Client Master name only to propose (a match is listed,
+ * never joined) and placeholder emails / phones count as blank; while the backfill's lock is
+ * in the counter file nothing is written.
+ *
  * The switch (CLIENT_IDS): off → nothing at all (the hourly tick reads nothing);
  * report → everything is worked out and logged, nothing is written; on → the
  * healer writes. audit() works it all out and writes nothing, in every mode.
@@ -118,6 +125,20 @@ const io = {
     return pageBoard(lb.boardId, `id name created_at column_values(ids:${colIds([lb.columns.clientAccountId, (cfg.leadLinkColumns || {}).clientId])}){ id text }`);
   },
   peekCounter: () => require('./clientIdAllocator').peekCounter(),
+  /** One Clients row's Client ID box, read fresh: { state: 'ok', text } | { state: 'not-found'|'merged'|'archived'|'unreadable'|'unavailable' }. */
+  async readIdCell(cfg, accountId) {
+    let d;
+    try {
+      d = await mondayApi.query(`query($id:ID!){ items(ids:[$id], limit:1){ id board { id } column_values(ids:${colIds([cfg.columns.clientId, cfg.columns.status])}){ id text } } }`, { id: String(accountId) });
+    } catch (err) { return { state: 'unavailable', message: err.message }; }
+    const it = d && d.items && d.items[0];
+    if (!it || !it.board || String(it.board.id) !== String(cfg.boardId)) return { state: 'not-found' };
+    const st = cellOf(it, cfg.columns.status);
+    if (st === 'Merged') return { state: 'merged' };
+    if (st === 'Archived') return { state: 'archived' };
+    const text = cellOf(it, cfg.columns.clientId);
+    return text == null ? { state: 'unreadable' } : { state: 'ok', text };
+  },
   /** The leads of one case, read fresh (the shared lead list drops emails). */
   leadsOfCase: (cmItemId) => require('./leadService').findAllByColumnValue('clientMasterItemId', String(cmItemId), { limit: 10 }),
   async writeText(boardId, itemId, col, value) {
@@ -305,7 +326,7 @@ let _running = null;
  */
 async function pass({ audit = false } = {}) {
   const mode = features.clientIdsMode();
-  const write = mode === 'on' && !audit;
+  let write = mode === 'on' && !audit;
   const say = (msg) => console.log(`[ClientIdHealer] ${write ? '' : (audit ? '(audit) ' : '(report — nothing written) ')}${msg}`);
   const cfg = io.loadBoard();
   if (!cfg) return { ok: false, reason: 'dormant', message: 'There is no Clients board in this environment.' };
@@ -317,8 +338,8 @@ async function pass({ audit = false } = {}) {
   const inWindow = (createdAt) => !!since && tms(createdAt) >= since && tms(createdAt) <= now - GRACE_MS;
   const partial = [];
   const problems = [];
-  const done = { minted: [], mintFailed: [], copiesFixed: 0, moved: 0, casesJoined: [], recordsMade: [], leadCopiesFixed: 0, leadsMoved: 0 };
-  const would = { mint: [], copies: 0, moves: 0, caseJoin: [], caseCreate: [], leadCopies: 0, leadMoves: 0 };
+  const done = { minted: [], mintFailed: [], copiesFixed: 0, strayCleared: 0, moved: 0, casesJoined: [], recordsMade: [], leadCopiesFixed: 0, leadsMoved: 0 };
+  const would = { mint: [], copies: 0, strayClears: 0, moves: 0, caseJoin: [], caseCreate: [], leadCopies: 0, leadMoves: 0 };
   let copyWrites = 0;
 
   // ── 1. the Clients board (the truth) ──
@@ -338,15 +359,29 @@ async function pass({ audit = false } = {}) {
   try { counter = await io.peekCounter(); }
   catch (err) { counter = { state: 'unavailable', error: err.message }; }
   const counterLast = counter && counter.state === 'ok' ? counter.last : null;
+  if (write && counter && counter.backfill) {
+    // The backfill apply is writing (its lock in the counter file): nothing is written
+    // this hour, on any server — the healer only reports (review 2026-11-25).
+    write = false;
+    partial.push(`The Client ID backfill is running (since ${counter.backfill.at || 'a while'}) — nothing was written this hour.`);
+  }
   if (counterLast == null) partial.push(`The Client ID counter could not be read (${(counter && (counter.state === 'missing' ? 'there is no counter file yet' : counter.error || counter.state)) || 'no answer'}), so numbers above it were not checked.`);
 
   for (const p of idProblems(rows, counterLast)) problems.push(idProblemLine(p));
   const twins = findTwins(rows, acc.classifyMatch, { normName, normalizeEmail: acc.normalizeEmail, normalizePhone: acc.normalizePhone });
   for (const t of twins) problems.push(twinLine(t));
+  // One person twice must not get TWO Client IDs (review 2026-11-25): in a twin group only
+  // the lowest item id (the one findOrCreate's race clean-up keeps) may be given a number,
+  // and none when a row of the group already has one. The rest wait on the twins line.
+  const twinBlocked = new Set();
+  for (const t of twins) {
+    const keep = t.rows.some((r) => idOf(r)) ? null : [...t.rows].sort((a, b) => Number(a.id) - Number(b.id))[0];
+    for (const r of t.rows) if (r !== keep) twinBlocked.add(r.id);
+  }
 
   // ── 2. Active rows with no Client ID ──
   const blank = rows.filter((r) => isActive(r) && r.clientIdText === '');
-  const toMint = blank.filter((r) => inWindow(r.createdAt) && !looksTest(r.name, r.email));
+  const toMint = blank.filter((r) => inWindow(r.createdAt) && !looksTest(r.name, r.email) && !twinBlocked.has(r.id));
   const leftOld = blank.filter((r) => !inWindow(r.createdAt) && !(since && tms(r.createdAt) > now - GRACE_MS)).length;
   const leftTest = blank.filter((r) => inWindow(r.createdAt) && looksTest(r.name, r.email)).map((r) => r.name);
   for (const r of toMint.slice(0, MAX_MINTS)) {
@@ -360,9 +395,10 @@ async function pass({ audit = false } = {}) {
 
   // Join a case to its (resolved) record with the ID — shared by steps 3 and 4.
   const joinCase = async (cmItemId, accountId, leadId, why, year) => {
-    const idr = await acc.ensureClientId(accountId, { why, ...(year ? { year } : {}) });
-    const clientIdText = idr && idr.ok ? idr.id : '';
     const row = byId.get(s(accountId));
+    // a twin that may not take a number is joined with what it has (its own ID, or none)
+    const idr = twinBlocked.has(s(accountId)) ? { ok: !!idOf(row), id: idOf(row) } : await acc.ensureClientId(accountId, { why, ...(year ? { year } : {}) });
+    const clientIdText = idr && idr.ok ? idr.id : '';
     if (row && clientIdText) row.clientIdText = clientIdText;
     await acc.linkCase(accountId, { cmItemId, clientIdText });
     if (leadId) await acc.linkLead(accountId, leadId, { clientIdText });
@@ -376,6 +412,21 @@ async function pass({ audit = false } = {}) {
   catch (err) { partial.push(`The Client Master board could not be read (${err.message}) — case copies were not checked.`); }
   const link = cfg.cmLinkColumns || {};
   const noAccount = [];
+  // Placeholder emails / phones (an agent's inbox, the office phone, "noemail@…"): an email or
+  // phone on Client Master under MORE than PLACEHOLDER_NAMES different names, or one that looks
+  // like a placeholder, is treated as blank for finding or making a record — the backfill's rule
+  // (review 2026-11-25). Counted over every case read.
+  const plan = require('./clientIdBackfillPlan');
+  const namesBy = new Map();
+  const countName = (k, n) => { if (!k || !n) return; if (!namesBy.has(k)) namesBy.set(k, new Set()); namesBy.get(k).add(n); };
+  for (const it of cmItems || []) {
+    const n = normName(plan.cleanDisplayName(s(it.name)));
+    countName(`e|${acc.normalizeEmail(cellOf(it, CM_COL.clientEmail))}`.replace(/^e\|$/, ''), n);
+    countName(`p|${acc.normalizePhone(cellOf(it, CM_COL.clientPhone))}`.replace(/^p\|$/, ''), n);
+  }
+  const shared = (k) => (namesBy.get(k) || new Set()).size > plan.PLACEHOLDER_NAMES;
+  const realEmail = (v) => { const e = acc.normalizeEmail(v); return e && !plan.looksPlaceholderEmail(e) && !shared(`e|${e}`) ? s(v) : ''; };
+  const realPhone = (v) => { const p = acc.normalizePhone(v); return p && !plan.looksPlaceholderPhone(p) && !shared(`p|${p}`) ? s(v) : ''; };
   for (const it of cmItems || []) {
     cases.read++;
     const c = {
@@ -408,7 +459,26 @@ async function pass({ audit = false } = {}) {
     }
     if (!link.clientId) continue;
     if (!want) {
-      if (c.copy) problems.push(caseLine(c, 'copy-stray', { value: c.copy, detail: c.copy, has: r.row.clientIdText ? `${quote(r.row.clientIdText)} in its Client ID box (not a Client ID)` : '' }));
+      if (!c.copy) continue;
+      // The record's box was READ and is blank, but the case shows a Client ID: that number is
+      // another record's (a case moved to a record with no ID yet). It must not be shown as this
+      // client's on the portal, in emails or in "Other cases" (review 2026-11-25) — cleared, after
+      // the record is read once more (a live mint may have just given it one).
+      if (r.row.clientIdText === '') {
+        if (!write) { would.strayClears++; continue; }
+        if (copyWrites >= MAX_COPY_WRITES) continue;
+        const fresh = await io.readIdCell(cfg, r.accountId);
+        if (fresh.state === 'ok' && fresh.text === '') {
+          copyWrites++;
+          try {
+            await io.writeText(cfg.clientMasterBoardId, c.id, link.clientId, '');
+            done.strayCleared++;
+            console.log(`[ClientIdHealer] cleared ${c.copy} from case ${c.caseRef || c.name}: its client record has no Client ID (the number is another record's)`);
+          } catch (err) { console.warn(`[ClientIdHealer] stray copy not cleared for ${c.caseRef || c.name}: ${err.message}`); }
+        }
+        continue;   // a record that has its ID now: the copy is put right at the next check
+      }
+      problems.push(caseLine(c, 'copy-stray', { value: c.copy, detail: c.copy, has: r.row.clientIdText ? `${quote(r.row.clientIdText)} in its Client ID box (not a Client ID)` : '' }));
       continue;
     }
     if (c.copy === want) continue;
@@ -431,9 +501,14 @@ async function pass({ audit = false } = {}) {
     catch (err) { partial.push(`The consultation record of ${c.caseRef || c.name} could not be read (${err.message}) — tried again next hour.`); continue; }
     const lead = leads.find((l) => digits(l.clientAccountId)) || leads.sort((a, b) => tms(b.createdAt) - tms(a.createdAt))[0] || null;
     const year = lead ? acc.yearForLead(lead, now) : Math.min(torontoYear(c.createdAt) || torontoYear(now), torontoYear(now));
+    // With no consultation record the name is Client Master's, which is often decorated
+    // ("Amritpal Kaur (2726)"): the cleaned name is used, but — as in the backfill — only to
+    // PROPOSE: a match found on it is listed for staff, never joined (review 2026-11-25).
+    const cleanName = lead ? '' : plan.cleanDisplayName(c.name);
+    const decorated = !lead && normName(cleanName) !== normName(c.name);
     const person = lead
-      ? { fullName: s(lead.fullName || lead.name), email: s(lead.email), phone: s(lead.phone), residentialAddress: lead.residentialAddress }
-      : { fullName: c.name, email: c.email, phone: c.phone };
+      ? { fullName: s(lead.fullName || lead.name), email: realEmail(lead.email), phone: realPhone(lead.phone), residentialAddress: lead.residentialAddress }
+      : { fullName: cleanName || c.name, email: realEmail(c.email), phone: realPhone(c.phone) };
     if (lead && digits(lead.clientAccountId)) {
       // The consultation record already names the person's record (a stamp that failed on the case).
       const r = await resolve(lead.clientAccountId);
@@ -447,14 +522,14 @@ async function pass({ audit = false } = {}) {
     let matches;
     try { matches = await acc.findMatches({ email: person.email, phone: person.phone, fullName: person.fullName }); }
     catch (err) { partial.push(`The Clients board could not be searched for ${c.caseRef || c.name} (${err.message}) — tried again next hour.`); continue; }
-    const exact = matches.find((m) => m.confidence === 'exact');
+    const exact = decorated ? null : matches.find((m) => m.confidence === 'exact');
     if (exact) {
       if (!write) { would.caseJoin.push(c.caseRef || c.name); continue; }
       const id = await joinCase(c.id, exact.id, lead && lead.id, 'hourly check — case had no client record', year);
       done.casesJoined.push(`${c.caseRef || c.name}${id ? ` ${id}` : ''}`);
       continue;
     }
-    const review = matches.filter((m) => m.confidence === 'review');
+    const review = matches.filter((m) => m.confidence === 'review' || (decorated && m.confidence === 'exact'));
     if (review.length) {
       const who = review.slice(0, 3).map((m) => `${quote(m.name)}${isClientId(m.clientIdText) ? ` (${m.clientIdText})` : ''} — ${(m.reasons || []).join(', ')}`).join('; ');
       problems.push(caseLine(c, 'review', { who, detail: review.map((m) => m.id).sort().join(',') }));
@@ -526,7 +601,7 @@ async function pass({ audit = false } = {}) {
     const bits = [
       done.minted.length && `gave ${done.minted.length} Client ID(s): ${done.minted.slice(0, 20).join(', ')}`,
       done.mintFailed.length && `${done.mintFailed.length} not given: ${done.mintFailed.slice(0, 10).join('; ')}`,
-      done.copiesFixed && `${done.copiesFixed} case copy(ies) fixed`, done.moved && `${done.moved} case(s) moved to the record they were merged into`,
+      done.copiesFixed && `${done.copiesFixed} case copy(ies) fixed`, done.strayCleared && `${done.strayCleared} case copy(ies) of another record's Client ID cleared`, done.moved && `${done.moved} case(s) moved to the record they were merged into`,
       done.casesJoined.length && `${done.casesJoined.length} case(s) joined: ${done.casesJoined.slice(0, 10).join(', ')}`,
       done.recordsMade.length && `${done.recordsMade.length} client record(s) made for cases: ${done.recordsMade.slice(0, 10).join(', ')}`,
       done.leadCopiesFixed && `${done.leadCopiesFixed} lead copy(ies) fixed`, done.leadsMoved && `${done.leadsMoved} lead(s) moved to the record they were merged into`,
@@ -535,7 +610,7 @@ async function pass({ audit = false } = {}) {
   } else {
     const bits = [
       would.mint.length && `would give ${would.mint.length} Client ID(s): ${would.mint.slice(0, 20).join(', ')}`,
-      would.copies && `would fix ${would.copies} case copy(ies)`, would.moves && `would move ${would.moves} case(s) to the record they were merged into`,
+      would.copies && `would fix ${would.copies} case copy(ies)`, would.strayClears && `would clear ${would.strayClears} case copy(ies) of another record's Client ID`, would.moves && `would move ${would.moves} case(s) to the record they were merged into`,
       would.caseJoin.length && `would join ${would.caseJoin.length} case(s) to their client record: ${would.caseJoin.slice(0, 10).join(', ')}`,
       would.caseCreate.length && `would make ${would.caseCreate.length} client record(s) for cases: ${would.caseCreate.slice(0, 10).join(', ')}`,
       would.leadCopies && `would fix ${would.leadCopies} lead copy(ies)`, would.leadMoves && `would move ${would.leadMoves} lead(s)`,

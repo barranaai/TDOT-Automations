@@ -200,7 +200,7 @@ test('the browser: POSTs the text (never in the URL) with the key, filters to th
   const f = await runUi([new Error('offline')]);
   f.type('Bo'); f.timers[0](); await f.flush(); await f.flush();
   assert.deepEqual(f.shown(), ['2'], 'names only');
-  assert.equal(f.note().textContent, 'Phone and email search is not available right now — searching names only.');
+  assert.equal(f.note().textContent, 'Phone, email and Client ID search is not available right now — searching names only.');
 });
 
 test('the limit counts the real caller (last X-Forwarded-For hop), not the proxy, and two staff on one office address are not cut off by normal typing (review 2026-11-09)', async () => {

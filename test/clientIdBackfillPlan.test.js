@@ -275,7 +275,7 @@ test('the answers: Y/N/blank, the wrong column, a changed group', () => {
   ]);
   assert.deepEqual(read.decisions.get('G:1+2'), { same: 'Y', give: '' });
   assert.deepEqual(read.decisions.get('A10'), { same: '', give: 'N' }, 'a "same person" answer on a NO-CASE row is ignored');
-  assert.deepEqual(read.order, ['G:1+2', 'A10', 'C5']);
+  assert.deepEqual(read.order, ['G:1+2', 'C5', 'A10'], 'no numbers on the sheet: by the lowest item id in the key, never the row position');
   assert.equal(read.problems.length, 4);
   assert.equal(P.readAnswer('No'), 'N');
   assert.equal(P.readAnswer('?'), '?');
@@ -301,21 +301,64 @@ test('the sheet order is kept at the apply; people new since the dry run go last
   assert.deepEqual(live.takers.map((p) => p.name), ['Early', 'Later', 'Brand New But Old Ref']);
 });
 
+test('a sheet SORTED or filtered in Excel gives the very same numbers as the dry run proposed (they come from "Proposed ID", not the row order)', () => {
+  const rows = { cases: [
+    kase(1, 'Zed Newer', { email: 'z@x.com', ref: '2026-VV-001' }),
+    kase(2, 'Amy Oldest', { email: 'a@x.com', ref: '2024-VV-002' }),
+    kase(3, 'Mo Middle', { email: 'm@x.com', ref: '2025-VV-003' }),
+    kase(4, 'John Doe', { email: 'fam@x.com', ref: '2026-VV-004', created: '2026-10-01T12:00:00Z' }), kase(5, 'Jane Doe', { email: 'fam@x.com', ref: '2026-VV-005', created: '2026-11-01T12:00:00Z' }),
+  ] };
+  const dry = plan(rows);
+  const proposedBy = (pl) => Object.fromEntries(pl.people.map((p) => [p.name, p.proposedId]));
+  const want = proposedBy(dry);
+  assert.deepEqual([want['Amy Oldest'], want['Mo Middle']], ['CL-2024-00001', 'CL-2025-00002']);
+  const objs = P.sheetRows(dry).map((r) => Object.fromEntries(P.SHEET_HEADERS.map((h, i) => [h, r[i]])));
+  for (const sorted of [
+    [...objs].sort((x, y) => x.Name.localeCompare(y.Name)),          // by Name
+    [...objs].sort((x, y) => y.Bucket.localeCompare(x.Bucket)),      // by Bucket
+    [...objs].reverse(),
+  ]) {
+    const read = P.readDecisions(sorted);
+    const apply = plan(rows, { decisions: read.decisions, order: read.order, proposed: read.proposed });
+    assert.deepEqual(proposedBy(apply), want, 'the same IDs, whatever the row order');
+    assert.equal(apply.changed.length, 0);
+  }
+  // the split AMBER pair keeps its own two numbers (not two adjacent ones)
+  assert.notEqual(want['John Doe'], want['Jane Doe']);
+});
+
+test('an answer that is not Y or N is listed by key and name (the apply refuses on it)', () => {
+  const rows = { cases: [kase(1, 'John Doe', { email: 'fam@x.com' }), kase(2, 'Jane Doe', { email: 'fam@x.com' })] };
+  const read = P.readDecisions([{ Key: 'G:1+2', Bucket: 'AMBER', 'Same person? (Y/N)': 'Yes, same', 'Proposed ID': 'CL-2026-00001 / CL-2026-00002' }]);
+  const a = plan(rows, { decisions: read.decisions, order: read.order, proposed: read.proposed });
+  assert.equal(a.ignored.length, 1);
+  assert.equal(a.ignored[0].key, 'G:1+2');
+  assert.match(a.ignored[0].name, /Jane Doe/);
+  assert.match(a.ignored[0].why, /not Y or N/);
+});
+
 test('the sheet: headers, one row per question, empty answer columns, a summary with the year counts', () => {
   const a = plan({
     clients: [client(10, 'Consult Only', { email: 'c@x.com' })],
     cases: [kase(1, 'John Doe', { email: 'fam@x.com' }), kase(2, 'Jane Doe', { email: 'fam@x.com' }), kase(3, 'Solo', { email: 's@x.com', ref: '2025-VV-003' })],
   });
-  assert.deepEqual(P.SHEET_HEADERS.slice(12, 14), ['Same person? (Y/N)', 'Give a Client ID? (Y/N)']);
+  const H = (name) => P.SHEET_HEADERS.indexOf(name);
+  assert.deepEqual(P.SHEET_HEADERS.slice(0, 6), ['Key', 'Bucket', 'Same person? (Y/N)', 'Give a Client ID? (Y/N)', 'Why', 'Name'], 'the answers sit beside the question and the name');
   const rows = P.sheetRows(a);
   assert.equal(rows.length, 3);
   assert.ok(rows.every((r) => r.length === P.SHEET_HEADERS.length));
+  assert.deepEqual(rows.map((r) => r[1]), ['AMBER', 'NO-CASE', 'GREEN'], 'the questions first');
   const amber = rows.find((r) => r[1] === 'AMBER');
-  assert.equal(amber[12], '');
-  assert.match(amber[2], /CL-2026-\d{5} \/ CL-2026-\d{5}/);
-  assert.equal(rows.find((r) => r[1] === 'NO-CASE')[2], 'only with a Y');
-  assert.equal(rows[0][2], 'CL-2025-00001', 'the sheet is in number order');
+  assert.equal(amber[H('Same person? (Y/N)')], '');
+  assert.match(amber[H('Proposed ID')], /CL-2026-\d{5} \/ CL-2026-\d{5}/);
+  assert.equal(rows.find((r) => r[1] === 'NO-CASE')[H('Proposed ID')], 'only with a Y');
+  assert.match(rows.find((r) => r[1] === 'NO-CASE')[H('Why')], /Y = give this client a Client ID/);
+  assert.equal(rows.find((r) => r[1] === 'GREEN')[H('Proposed ID')], 'CL-2025-00001');
+  assert.ok(P.SHEET_HEADERS.every((h) => P.SHEET_WIDTHS[h]), 'every column has a width');
   const sum = P.summaryRows(a, { madeAt: 'x', counter: '0' });
+  for (const b of P.BUCKETS) assert.ok(sum.some((r) => r[0] === b && String(r[1]).length > 60), `${b} is explained in plain words`);
+  assert.ok(sum.some((r) => /Sorting and filtering the sheet is fine/.test(r[1])));
+  assert.ok(sum.some((r) => /Any other answer stops the apply/.test(r[1])));
   assert.ok(sum.some((r) => r[0] === '2025' && r[1] === 1));
   assert.ok(sum.some((r) => r[0] === 'New Client IDs' && r[1] === 3));
 });

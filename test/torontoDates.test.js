@@ -151,3 +151,14 @@ test('torontoYear: the answer does not depend on the machine\'s own time zone', 
     assert.equal(out, '2026', TZ);
   }
 });
+
+test('torontoYear: a date-only "YYYY-MM-DD" is a Toronto day — its own year (never 31 Dec of the year before); instants are Toronto\'s year', () => {
+  const { torontoYear } = require('../src/utils/torontoTime');
+  assert.equal(torontoYear('2026-01-01'), 2026);
+  assert.equal(torontoYear(' 2027-12-31 '), 2027);
+  assert.equal(torontoYear('2026-01-01T03:00:00Z'), 2025, 'an instant: 31 Dec 22:00 in Toronto');
+  assert.equal(torontoYear('2027-01-01T05:00:00Z'), 2027);
+  assert.ok(Number.isNaN(torontoYear('2026-13-01')));
+  assert.ok(Number.isNaN(torontoYear('')));
+  assert.ok(Number.isNaN(torontoYear('not a date')));
+});

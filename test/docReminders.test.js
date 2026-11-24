@@ -2641,3 +2641,23 @@ test('routes (the pop-up\'s speed): the SEND never uses the kept facts — a han
     assert.match(src, /const readFacts = \(deps\) => deps\.readFacts \|\| require\('\.\.\/services\/caseCockpitService'\)\.getReminderFacts;/);
   } finally { c.restore(); S.restore(); routes._resetForTests(); }
 });
+
+test('renderStaffReminder: the email view carries the client-number line the send adds (the same lookup: the case\'s Client Master copy) — and none while there is no ID', async () => {
+  const D = require('../src/services/clientIdDisplay');
+  const S = staffStubs();
+  const keep = D.idForMail;
+  try {
+    const tags = [];
+    D.idForMail = async (tag) => { tags.push(tag); return 'CL-2026-00042'; };
+    const input = { overview: OV(), level: 1, subject: 'Docs', body: 'Hello {ClientName},\n\n{MissingList}\n\n{StaffName}', actor: { name: 'Mahesh Sharma', email: 'mahesh@tdotimm.com', verified: true } };
+    const r = await svc.renderStaffReminder(input);
+    assert.equal(r.ok, true);
+    assert.match(r.html, /data-tdot-client-id="1"[^>]*>Your client number: CL-2026-00042</);
+    assert.deepEqual(tags, [{ caseItemId: OV().itemId, kind: 'doc-reminder' }], 'the tag the send uses');
+    D.idForMail = async () => '';
+    const none = await svc.renderStaffReminder(input);
+    assert.doesNotMatch(none.html, /data-tdot-client-id/);
+    D.idForMail = async () => { throw new Error('Monday 503'); };
+    assert.doesNotMatch((await svc.renderStaffReminder(input)).html, /data-tdot-client-id/, 'a failed read: the email as it is');
+  } finally { D.idForMail = keep; S.restore(); }
+});

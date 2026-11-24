@@ -320,3 +320,50 @@ test('the counter file lives outside "Client Documents"', () => {
   assert.equal(a.COUNTER_PATH, 'TDOT System/client-id-counter.json');
   assert.equal(torontoYear(Date.parse('2027-01-01T04:30:00Z')), 2026);
 });
+
+// ─── the backfill lock (review 2026-11-25: the backfill cannot see the live server's switch) ───
+
+test('the backfill lock: set in the counter file (over the version read); while it is there NO number is given; a block keeps it; cleared at the end', quiet(async () => {
+  const { a, seen } = harness({ file: { last: 41 } });
+  const set = await a.setBackfillLock({ by: 'boss@tdotimm.com' });
+  assert.equal(set.ok, true); assert.equal(set.already, false);
+  assert.equal(seen.file().data.last, 41, 'the number is untouched');
+  assert.equal(seen.file().data.backfill.by, 'boss@tdotimm.com');
+  assert.equal(seen.writes[0]._etag, 'e1', 'only over the version that was read');
+  // a live mint on any server: refused, nothing written
+  const writes = seen.writes.length;
+  const live = await a.allocate();
+  assert.equal(live.ok, false); assert.equal(live.reason, 'backfill');
+  assert.match(live.message, /backfill is running/);
+  assert.equal(seen.writes.length, writes);
+  assert.deepEqual(await a.peekCounter(), { state: 'ok', last: 41, backfill: seen.file().data.backfill });
+  // set again (a resumed apply): kept, no write
+  assert.equal((await a.setBackfillLock({ by: 'x' })).already, true);
+  assert.equal(seen.writes.length, writes);
+  // the backfill's own block: allowed, and the lock stays in
+  const b = await a.allocateBlock(3);
+  assert.equal(b.ok, true); assert.deepEqual([b.first, b.last], [42, 44]);
+  assert.ok(seen.file().data.backfill, 'the block keeps the lock');
+  // cleared: live numbers again
+  const cl = await a.clearBackfillLock();
+  assert.equal(cl.cleared, true);
+  assert.equal(seen.file().data.backfill, undefined);
+  assert.equal(seen.file().data.last, 44);
+  assert.deepEqual(await a.peekCounter(), { state: 'ok', last: 44 });
+  const after = await a.allocate();
+  assert.equal(after.ok, true); assert.equal(after.n, 45);
+  assert.equal((await a.clearBackfillLock()).cleared, false, 'nothing to clear: fine');
+}));
+
+test('the backfill lock: a missing file is created (create-only, from the boards); a damaged or unreadable counter is refused', quiet(async () => {
+  const m = harness({ file: null, board: ['CL-2025-00007'] });
+  const r = await m.a.setBackfillLock({ by: 'b' });
+  assert.equal(r.ok, true); assert.equal(m.seen.file().data.last, 7); assert.equal(m.seen.writes[0]._etag, '');
+  assert.equal((await harness({ corrupt: { etag: 'c1', raw: '{' } }).a.setBackfillLock({ by: 'b' })).reason, 'corrupt');
+  assert.equal((await harness({ readFail: true }).a.setBackfillLock({ by: 'b' })).reason, 'unavailable');
+  // another instance writes between the read and the lock write: read again, then lock
+  const c = harness({ file: { last: 5 } });
+  c.seen.onRead = async () => c.seen.otherInstanceWrites(6);
+  const r2 = await c.a.setBackfillLock({ by: 'b' });
+  assert.equal(r2.ok, true); assert.equal(c.seen.file().data.last, 6); assert.ok(c.seen.file().data.backfill);
+}));

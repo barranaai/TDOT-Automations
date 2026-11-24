@@ -679,12 +679,12 @@ function listTableUi(LT, o, win) {
         .then(function (r) { return r.json().then(function (j) { return { s: r.status, j: j }; }); })
         .then(function (res) {
           if (my !== srvSeq) return;   /* an older answer: the box changed since */
-          if (res.s !== 200 || !res.j || !res.j.ok || !Array.isArray(res.j.ids)) { srvSay('Phone and email search is not available right now — searching names only.'); return; }
+          if (res.s !== 200 || !res.j || !res.j.ok || !Array.isArray(res.j.ids)) { srvSay('Phone, email and Client ID search is not available right now — searching names only.'); return; }
           srvSay('');
           if (res.j.mode === 'short') return;   /* too short to search: the name-contains search stays */
           LT.setServerHits(q, res.j.ids); apply('filter');
         })
-        .catch(function () { if (my === srvSeq) srvSay('Phone and email search is not available right now — searching names only.'); });
+        .catch(function () { if (my === srvSeq) srvSay('Phone, email and Client ID search is not available right now — searching names only.'); });
     }, 250);
   }
   if (search) { search.value = state.q; search.addEventListener('input', function () { state.q = search.value; apply('filter'); serverSearch(); }); }

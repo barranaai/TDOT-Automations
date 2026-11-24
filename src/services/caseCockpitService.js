@@ -555,7 +555,7 @@ async function otherCasesOfClient(clientId, itemId) {
   if (!id || !col) return { otherCases: [], otherCasesUnavailable: false, more: false };
   try {
     const data = await mondayApi.query(
-      `query($b:ID!,$v:String!){ items_page_by_column_values(limit:${OTHER_CASES_LIMIT}, board_id:$b, columns:[{column_id:"${col}", column_values:[$v]}]){ items{ id group{ id title } column_values(ids:["${CM.caseRef}","dropdown_mm0xd1qn","${CM.caseStage}","${col}"]){ id text } } } }`,
+      `query($b:ID!,$v:String!){ items_page_by_column_values(limit:${OTHER_CASES_LIMIT}, board_id:$b, columns:[{column_id:"${col}", column_values:[$v]}]){ items{ id group{ id title } column_values(ids:${JSON.stringify([CM.caseRef, 'dropdown_mm0xd1qn', CM.caseStage, col, ...caseAccess.PEOPLE_COLUMNS])}){ id text value } } } }`,
       { b: String(clientMasterBoardId), v: id });
     const items = (data && data.items_page_by_column_values && data.items_page_by_column_values.items) || [];
     const txt = (it, c) => String(((it.column_values || []).find((x) => x && x.id === c) || {}).text || '').trim();
@@ -564,7 +564,9 @@ async function otherCasesOfClient(clientId, itemId) {
       .filter((it) => D.shownId(txt(it, col)) === id)   // the exact ID only (the board's match is on the cell text)
       .map((it) => {
         const st = D.caseStanding({ group: it.group || {}, caseStage: txt(it, CM.caseStage) });
-        return { caseRef: txt(it, CM.caseRef), caseType: txt(it, 'dropdown_mm0xd1qn'), caseStage: txt(it, CM.caseStage), standing: st.label, kind: st.kind };
+        const people = Object.fromEntries((it.column_values || []).filter((x) => x && caseAccess.PEOPLE_COLUMNS.includes(x.id)).map((x) => [x.id, x.value]));
+        // `assignees` is for the route's visibility check only (otherCasesForViewer) — it never goes to a page
+        return { caseRef: txt(it, CM.caseRef), caseType: txt(it, 'dropdown_mm0xd1qn'), caseStage: txt(it, CM.caseStage), standing: st.label, kind: st.kind, assignees: caseAccess.assigneesFromColumnValues(people) };
       })
       .filter((r) => r.kind !== 'test');
     const order = { open: 0, closed: 1, cancelled: 2, lead: 3 };
@@ -576,4 +578,27 @@ async function otherCasesOfClient(clientId, itemId) {
   }
 }
 
-module.exports = { getCaseOverview, getReminderFacts, readReminderCore, getLeadExtras, buildTimeline, summariseDocuments, pickLeadFields, readClientMaster, otherCasesOfClient, OTHER_CASES_LIMIT, _CM: CM };
+/**
+ * The "Other cases" list as THIS viewer may see it (review 2026-11-25): a Monday-signed-in staffer
+ * who sees only the cases they are assigned to gets only those (as links); the rest are a count,
+ * never a case number. Admins and "everyone sees every case" get them all. `assignees` is always
+ * taken off. Changes `client` in place and returns it. PURE (apart from the policy setting).
+ * @param {{ otherCases?: object[] }|undefined} client  overview.client
+ * @param {object|null} viewer  resolveViewer()'s viewer; null = the admin key (/api)
+ */
+function otherCasesForViewer(client, viewer) {
+  if (!client || !Array.isArray(client.otherCases)) return client;
+  const everything = !viewer || viewer.isAdmin || caseAccess.caseVisibilityPolicy() === 'all';
+  const shown = [];
+  let hidden = 0;
+  for (const c of client.otherCases) {
+    const { assignees, ...row } = c || {};
+    if (everything || caseAccess.viewerCanSee(assignees, viewer)) shown.push(row);
+    else hidden++;
+  }
+  client.otherCases = shown;
+  client.hiddenCases = hidden;
+  return client;
+}
+
+module.exports = { otherCasesForViewer, getCaseOverview, getReminderFacts, readReminderCore, getLeadExtras, buildTimeline, summariseDocuments, pickLeadFields, readClientMaster, otherCasesOfClient, OTHER_CASES_LIMIT, _CM: CM };

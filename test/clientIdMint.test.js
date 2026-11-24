@@ -443,6 +443,34 @@ test('linkCase / linkLead: a value that is not a Client ID, or no mirror column,
   } finally { w.done(); }
 }));
 
+test('linkCase: a case MOVED to a record with no Client ID yet loses the old record\'s ID copy (read first); never on the same record, a blank copy, or a read that did not come back', quietly(async () => {
+  const L = CFG.cmLinkColumns;
+  const runWith = async (cells, { clientIdText = '', readFails = false, to = '88' } = {}) => {
+    const writes = [];
+    const back = stub(mondayApi, 'query', async (q, v) => {
+      if (/items\(ids:\[\$id\], limit:1\)\{ id column_values\(ids:\[/.test(q) && q.includes(L.clientId) && q.includes(L.clientAccountId)) {
+        if (readFails) throw new Error('Monday 503');
+        return { items: cells ? [{ id: String(v.id), column_values: cells }] : [] };
+      }
+      if (/items\(ids:\[\$id\], limit:1\)/.test(q)) return { items: [{ id: String(v.id), column_values: [{ id: 'rel', linked_item_ids: [] }] }] };
+      if (/change_multiple_column_values/.test(q)) writes.push({ board: String(v.b), cols: JSON.parse(v.c) });
+      return {};
+    });
+    svc._setBoardForTests(CFG);
+    try { await svc.linkCase(to, { cmItemId: '700', clientIdText }); } finally { back(); svc._setBoardForTests(undefined); }
+    return writes.filter((w) => w.board === CM_BOARD && L.clientId in w.cols).map((w) => w.cols[L.clientId]);
+  };
+  const cells = (account, copy) => [{ id: L.clientAccountId, text: account }, { id: L.clientId, text: copy }];
+  assert.deepEqual(await runWith(cells('77', 'CL-2026-00009')), [''], 'moved from 77 to 88 (no ID yet): the old copy is cleared');
+  assert.deepEqual(await runWith(cells('77', 'CL-2026-00009'), { clientIdText: 'CL-2026-00010' }), ['CL-2026-00010'], 'with an ID: the new copy, as before');
+  assert.deepEqual(await runWith(cells('88', 'CL-2026-00009')), [], 'the same record: left alone');
+  assert.deepEqual(await runWith(cells('77', '')), [], 'no copy: nothing to clear');
+  assert.deepEqual(await runWith(cells('', 'CL-2026-00009')), [], 'no record before: never cleared on a guess');
+  assert.deepEqual(await runWith([{ id: L.clientAccountId, text: '77' }]), [], 'the copy did not come back: never written');
+  assert.deepEqual(await runWith(null), [], 'the case did not come back: never written');
+  assert.deepEqual(await runWith(cells('77', 'CL-2026-00009'), { readFails: true }), [], 'a failed read: never written');
+}));
+
 /* ───────────────────────── (c) a paid consultation ───────────────────────── */
 
 test('paid consultation, ON, a new person: an account (source "consultation") + the ID; the lead points at both; the case later reuses it — the same ID', quietly(async () => {

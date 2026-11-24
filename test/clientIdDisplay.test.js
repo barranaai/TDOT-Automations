@@ -187,7 +187,9 @@ test('otherCasesOfClient: no ID or no column = no read; one read by the copy col
       assert.match(calls[0].q, /items_page_by_column_values\(limit:50, board_id:\$b, columns:\[\{column_id:"text_cid_cm", column_values:\[\$v\]\}\]\)/);
       assert.ok(!/items\(ids/.test(calls[0].q));
       assert.equal(calls[0].v.v, 'CL-2026-00042');
-      assert.deepEqual(r.otherCases, [
+      assert.ok(require('../src/services/caseAccessService').PEOPLE_COLUMNS.every((c) => calls[0].q.includes(`"${c}"`)), 'the people columns are read for the visibility check');
+      assert.ok(r.otherCases.every((c) => c.assignees && Array.isArray(c.assignees.personIds)));
+      assert.deepEqual(r.otherCases.map(({ assignees, ...row }) => row), [
         { caseRef: '2026-PR-007', caseType: 'Visitor Visa', caseStage: 'Submitted', standing: 'Submitted', kind: 'open' },
         { caseRef: '2025-SV-004', caseType: 'Visitor Visa', caseStage: 'Document Collection Started', standing: 'Cancelled', kind: 'cancelled' },
         { caseRef: '', caseType: 'Visitor Visa', caseStage: '', standing: 'Lead only', kind: 'lead' },
@@ -255,6 +257,51 @@ test('the case page: the ID under the name; "Other cases of this client" with Ca
   assert.equal(p.els['oc-card'].style.display, '');
 });
 
+test('"Other cases" follows who is looking: a staffer limited to their own cases sees only those (links) and a count of the rest — never their case numbers; admins / scope all see every one; the internal assignees never leave the server', () => {
+  const cockpit = require('../src/services/caseCockpitService');
+  const keep = process.env.CASE_VISIBILITY;
+  const mk = () => ({ id: 'CL-2026-00042', otherCasesUnavailable: false, otherCases: [
+    { caseRef: '2026-PR-007', caseType: 'PR', standing: 'Submitted', kind: 'open', assignees: { personIds: ['11'], teamIds: [] } },
+    { caseRef: '2025-SV-004', caseType: 'SV', standing: 'Cancelled', kind: 'cancelled', assignees: { personIds: ['22'], teamIds: [] } },
+    { caseRef: '2026-VV-009', caseType: 'VV', standing: 'Open', kind: 'open', assignees: { personIds: [], teamIds: ['t9'] } },
+  ] });
+  try {
+    const staff = { userId: '11', teamIds: ['t9'], isAdmin: false };
+    process.env.CASE_VISIBILITY = 'all';   // everyone sees every case
+    const open = cockpit.otherCasesForViewer(mk(), staff);
+    assert.equal(open.otherCases.length, 3); assert.equal(open.hiddenCases, 0);
+    process.env.CASE_VISIBILITY = 'assigned';
+    const limited = cockpit.otherCasesForViewer(mk(), staff);
+    assert.deepEqual(limited.otherCases.map((c) => c.caseRef), ['2026-PR-007', '2026-VV-009'], 'their own person or team only');
+    assert.equal(limited.hiddenCases, 1);
+    assert.ok(!JSON.stringify(limited).includes('2025-SV-004'), 'a case they may not open is never named');
+    for (const c of limited.otherCases) assert.equal(c.assignees, undefined);
+    const admin = cockpit.otherCasesForViewer(mk(), { userId: '99', isAdmin: true });
+    assert.equal(admin.otherCases.length, 3); assert.equal(admin.hiddenCases, 0);
+    assert.ok(!JSON.stringify(admin).includes('personIds'));
+    const key = cockpit.otherCasesForViewer(mk(), null);   // /api/case: the admin key
+    assert.equal(key.otherCases.length, 3); assert.ok(!JSON.stringify(key).includes('personIds'));
+    assert.equal(cockpit.otherCasesForViewer(undefined, staff), undefined, 'no client block: nothing to do');
+    // both routes that send the overview shape it first
+    const src = require('fs').readFileSync(require.resolve('../src/server.js'), 'utf8');
+    assert.match(src, /getCaseOverview\(\(req\.params\.caseRef \|\| ''\)\.trim\(\)\);\n\s*caseCockpitService\.otherCasesForViewer\(overview\.client, null\);/);
+    assert.match(src, /not-assigned[\s\S]{0,400}caseCockpitService\.otherCasesForViewer\(overview\.client, viewer\);/);
+  } finally { if (keep === undefined) delete process.env.CASE_VISIBILITY; else process.env.CASE_VISIBILITY = keep; }
+});
+
+test('the case page: cases the viewer is not assigned to are a count, no case number and no link', () => {
+  const p = casePage();
+  p.render({ client: { id: 'CL-2026-00042', otherCases: [{ caseRef: '2026-PR-007', caseType: 'PR', standing: 'Submitted', kind: 'open' }], hiddenCases: 2 } });
+  let h = p.els['oc-card'].innerHTML;
+  assert.match(h, /Other cases of this client <span class="cnt">3<\/span>/);
+  assert.match(h, /And 2 cases you are not assigned to\./);
+  p.render({ client: { id: 'CL-2026-00042', otherCases: [], hiddenCases: 1 } });
+  h = p.els['oc-card'].innerHTML;
+  assert.equal(p.els['oc-card'].style.display, '');
+  assert.match(h, />1 case you are not assigned to\./);
+  assert.ok(!/<a /.test(h));
+});
+
 // ─── the profile "New application" box (review #10) ────────────────────────────
 
 test('the New application box: only OPEN cases are "open cases"; Cancelled / Lead only / Closed are listed as not open; this case and TEST rows left out', () => {
@@ -295,7 +342,7 @@ test('the Retainers page New-application box shows the not-open cases as not ope
   run('2026-VV-001', { identity: {}, priorFacts: { openCases: [{ caseRef: '2026-PR-007', caseStage: 'Submitted' }], otherCases: [{ caseRef: '2025-SV-004', standing: 'Cancelled' }] } });
   const h = els['dc-profile'].innerHTML;
   assert.match(h, /This client also has open case 2026-PR-007 \(Submitted\)\./);
-  assert.match(h, /This client also has case 2025-SV-004 \(Cancelled\)\. It is not open\./);
+  assert.match(h, /This client also has case 2025-SV-004 — Cancelled\. It is not open\./, 'no brackets inside brackets ("Closed (Approved)")');
   assert.ok(!/open case 2025-SV-004/.test(h));
 });
 

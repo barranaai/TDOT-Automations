@@ -3023,6 +3023,8 @@ function naRecordLink(e) {
 
 // Where a "Mark handled" note is written, in words: the case number, or the client's record.
 function naNoteOn(li, fallback) {
+  var on = li.getAttribute('data-na-note-on');
+  if (on) return on;
   if (li.getAttribute('data-na-on') === 'record') return "the client's record";
   var refEl = li.querySelector('.na-ref');
   return refEl ? refEl.textContent : fallback;
@@ -3041,7 +3043,7 @@ function naItemHtml(e) {
   if (e.stage) meta.push(e.stage);
   if (e.manager) meta.push('Case manager: ' + e.manager);
   var since = naSince(e.since);
-  return '<li class="na-item" data-na-key="' + escHtml(e.key) + '"' + (rec ? ' data-na-on="record"' : '') + '>' +
+  return '<li class="na-item" data-na-key="' + escHtml(e.key) + '"' + (rec ? ' data-na-on="record"' : '') + (e.noteOn ? ' data-na-note-on="' + escHtml(e.noteOn) + '"' : '') + '>' +
     '<div class="na-who">' + who + '<span class="na-client">' + escHtml(e.client) + '</span>' +
       (meta.length ? '<span class="na-meta">' + escHtml(meta.join(' · ')) + '</span>' : '') + '</div>' +
     '<div class="na-text"><p class="na-why">' + escHtml(e.why) + '</p>' +

@@ -1208,6 +1208,9 @@ function clientIdEntries(lines) {
       since: tms(p.since) ? iso(tms(p.since)) : '',
       why: s(p.why), todo: s(p.todo),
       ...(s(p.caseRef) ? {} : { linkLabel: s(p.label) || 'Clients board' }),
+      // where "Mark handled" writes its note, in words (ux review #6): a case with no number → its Client Master row;
+      // a client record → its Clients board row (never "the client's record", which elsewhere means the consultation record)
+      ...(s(p.caseRef) ? {} : { noteOn: cm ? 'the case row on Client Master' : "the client's row on the Clients board" }),
       noteItemId: cm || s(p.accountItemId),
     });
   }

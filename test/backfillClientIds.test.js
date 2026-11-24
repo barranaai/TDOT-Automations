@@ -35,7 +35,7 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'cid-backfill-'));
 /** A small Monday: Clients, Client Master and the Lead Board, plus the counter. */
 function world() {
   const w = {
-    mode: 'report', counter: { last: 0 }, nextId: 9000,
+    mode: 'report', counter: { last: 0 }, nextId: 9000, lock: null, lockLog: [],
     clients: new Map(), cases: new Map(), leads: new Map(),
     calls: [], writes: [], blocks: [], hide: { case: new Set(), lead: new Set(), client: new Set() },
     crashAfterSleeps: Infinity, sleeps: 0,
@@ -57,6 +57,8 @@ function world() {
     readLeads: async () => [...w.leads].map(([id, r]) => ({ id, name: r.fullName, created_at: r.created,
       column_values: cells({ [LC.fullName]: r.fullName, [LC.email]: r.email, [LC.phone]: r.phone, [LC.clientMasterItemId]: r.cm, [LC.clientAccountId]: r.account, [LC.retainerSigned]: '', [CFG.leadLinkColumns.clientId]: r.copy }, w.hide.lead.has(id) ? new Set([LC.clientAccountId]) : new Set()) })),
     peekCounter: async () => ({ state: 'ok', last: w.counter.last }),
+    lockCounter: async (by) => { w.lockLog.push(['lock', by]); if (w.lockFails) return { ok: false, message: 'the counter could not be read' }; const already = !!w.lock; if (!w.lock) w.lock = { by }; return { ok: true, already }; },
+    unlockCounter: async () => { w.lockLog.push(['unlock']); const had = !!w.lock; w.lock = null; return { ok: true, cleared: had }; },
     allocateBlock: async (k) => { const first = w.counter.last + 1; w.counter.last += k; w.blocks.push({ first, last: w.counter.last }); w.calls.push(['block', k]); return { ok: true, first, last: w.counter.last, count: k }; },
     findOrCreate: async (p) => {
       w.calls.push(['findOrCreate', p.fullName]);
@@ -95,8 +97,8 @@ function answer(file, answers) {
   rows.forEach((r, i) => {
     const a = answers[r[0]];
     if (!a || i === 0) return;
-    if (a.same) ws[XLSX.utils.encode_cell({ r: i, c: 12 })] = { t: 's', v: a.same };
-    if (a.give) ws[XLSX.utils.encode_cell({ r: i, c: 13 })] = { t: 's', v: a.give };
+    if (a.same) ws[XLSX.utils.encode_cell({ r: i, c: planner.SHEET_HEADERS.indexOf('Same person? (Y/N)') })] = { t: 's', v: a.same };
+    if (a.give) ws[XLSX.utils.encode_cell({ r: i, c: planner.SHEET_HEADERS.indexOf('Give a Client ID? (Y/N)') })] = { t: 's', v: a.give };
   });
   const out = file.replace(/\.xlsx$/, '-answered.xlsx');
   fs.writeFileSync(out, XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
@@ -132,7 +134,10 @@ test('the dry run writes NOTHING to Monday or OneDrive — only the check list (
   assert.ok(fs.existsSync(r.file));
   assert.equal(fs.readdirSync(out).length, 1, 'no checkpoint, no log');
   const wb = XLSX.read(fs.readFileSync(r.file), { type: 'buffer' });
-  assert.deepEqual(wb.SheetNames, ['People', 'Summary', 'Left out']);
+  assert.deepEqual(wb.SheetNames, ['Summary', 'People', 'Left out'], 'the workbook opens on how to answer');
+  assert.ok(wb.Sheets.People['!autofilter'], 'a filter on every column of People');
+  const sum = XLSX.utils.sheet_to_json(wb.Sheets.Summary, { header: 1, defval: '' });
+  assert.match(sum.find((r) => r[0] === 'Made')[1], /\(Toronto\)$/, '"Made" in Toronto time');
   const people = XLSX.utils.sheet_to_json(wb.Sheets.People, { defval: '' });
   assert.deepEqual(Object.keys(people[0]), planner.SHEET_HEADERS);
   const amber = people.find((p) => p.Bucket === 'AMBER');
@@ -155,7 +160,9 @@ test('the apply is refused without every guard — and writes nothing', async ()
   const file = dry.file;
   const base = ['--apply', '--out', out, '--decisions', file, '--admin', ADMIN, '--automations-checked'];
   w.mode = 'on';
-  assert.equal((await run(w, base)).reason, 'live-on');
+  const on = await run(w, base);
+  assert.equal(on.reason, 'live-on');
+  assert.match(on.message, /on this machine/);
   w.mode = 'report';
   assert.equal((await run(w, base.filter((a) => a !== ADMIN).concat(['--admin', 'someone@x.com']))).reason, 'not-admin');
   assert.equal((await run(w, ['--apply', '--out', out, '--admin', ADMIN, '--automations-checked'])).reason, 'no-decisions');
@@ -240,11 +247,9 @@ test('resume: a run stopped half way picks up from the checkpoint — no second 
   const cp = JSON.parse(fs.readFileSync(path.join(out, 'apply-checkpoint.json'), 'utf8'));
   assert.equal(cp.blocks.length, 1);
   w.crashAfterSleeps = Infinity;
-  // fewer new IDs are left now; the right phrase is printed when the old one is typed
-  const tryOld = await run(w, [...args, '--confirm', 'GIVE 4 CLIENT IDS']);
-  assert.equal(tryOld.reason, 'confirm');
-  const phrase = /--confirm "([^"]+)"/.exec(tryOld.message)[1];
-  const r = await run(w, [...args, '--confirm', phrase]);
+  assert.equal(w.lock, null, 'the lock is cleared even when the run stops with an error');
+  // "resume = run the same command again": the phrase it was started with still counts
+  const r = await run(w, [...args, '--confirm', 'GIVE 4 CLIENT IDS']);
   assert.equal(r.ok, true, r.message);
   assert.equal(w.blocks.length, 1, 'the numbers reserved before the stop are used');
   const creates = w.writes.filter((x) => x[0] === 'create').map((x) => x[2]);
@@ -254,6 +259,100 @@ test('resume: a run stopped half way picks up from the checkpoint — no second 
   assert.equal(ids.length, 5, 'the 4 new + the one kept');
   const nums = ids.map((v) => Number(v.slice(-5))).sort((a, b) => a - b);
   assert.deepEqual(nums, [3, 4, 5, 6, 7]);
+});
+
+test('resume with the old phrase is refused when MORE people would be numbered than it said', async () => {
+  const w = office();
+  const out = tmp();
+  const dry = await run(w, ['--out', out]);
+  const args = ['--apply', '--out', out, '--decisions', dry.file, '--admin', ADMIN, '--automations-checked'];
+  w.crashAfterSleeps = 3;
+  await assert.rejects(run(w, [...args, '--confirm', 'GIVE 4 CLIENT IDS']), /simulated crash/);
+  w.crashAfterSleeps = Infinity;
+  w.addCase(120, 'Brand New', { email: 'bn@x.com' });   // two new people since the start
+  w.addCase(121, 'Also New', { email: 'an@x.com' });
+  const n = w.writes.length;
+  const old = await run(w, [...args, '--confirm', 'GIVE 4 CLIENT IDS']);
+  assert.equal(old.reason, 'confirm');
+  assert.match(old.message, /--confirm "GIVE 5 CLIENT IDS"/, 'the phrase for what is left now');
+  assert.equal(w.writes.length, n, 'nothing written');
+});
+
+test('the counter is LOCKED for the apply (the live server\'s switch cannot be seen from here) and unlocked at the end; a lock that cannot be set stops it before any write', async () => {
+  const w = office();
+  const out = tmp();
+  const dry = await run(w, ['--out', out]);
+  assert.deepEqual(w.lockLog, [], 'the dry run never locks');
+  const args = ['--apply', '--out', out, '--decisions', dry.file, '--admin', ADMIN, '--automations-checked', '--confirm', 'GIVE 4 CLIENT IDS'];
+  w.lockFails = true;
+  const no = await run(w, args);
+  assert.equal(no.reason, 'lock');
+  assert.equal(w.writes.length, 0); assert.equal(w.blocks.length, 0);
+  w.lockFails = false; w.lockLog = [];
+  let lockedDuringWrites = true;
+  const keepWrite = w.io.writeIdCell;
+  w.io.writeIdCell = async (...a) => { if (!w.lock) lockedDuringWrites = false; return keepWrite(...a); };
+  const r = await run(w, args);
+  assert.equal(r.ok, true, r.message);
+  assert.ok(lockedDuringWrites, 'every ID written while the lock is in');
+  assert.deepEqual(w.lockLog, [['lock', ADMIN], ['unlock']]);
+  assert.equal(w.lock, null);
+  // --unlock alone (after a stopped apply): named admin only
+  w.lock = { by: ADMIN };
+  assert.equal((await run(w, ['--unlock'])).reason, 'not-admin');
+  const un = await run(w, ['--unlock', '--admin', ADMIN]);
+  assert.equal(un.ok, true); assert.equal(un.cleared, true); assert.equal(w.lock, null);
+  const src = fs.readFileSync(require.resolve('../scripts/backfill-client-ids'), 'utf8');
+  assert.match(src, /lockCounter: \(by\) => allocator\.setBackfillLock\(\{ by \}\)/);
+  assert.match(src, /unlockCounter: \(\) => allocator\.clearBackfillLock\(\)/);
+});
+
+test('an answer that is not Y or N stops the apply — never read as blank (two permanent IDs)', async () => {
+  const w = office();
+  const out = tmp();
+  const dry = await run(w, ['--out', out]);
+  const answered = answer(dry.file, { 'G:103+104': { same: 'Yes, same' } });
+  const r = await run(w, ['--apply', '--out', out, '--decisions', answered, '--admin', ADMIN, '--automations-checked', '--confirm', 'GIVE 4 CLIENT IDS']);
+  assert.equal(r.reason, 'unclear-answers');
+  assert.match(r.message, /G:103\+104 \(John Doe \/ Jane Doe\)|G:103\+104 \(Jane Doe \/ John Doe\)/);
+  assert.equal(w.writes.length, 0); assert.equal(w.blocks.length, 0); assert.deepEqual(w.lockLog, []);
+});
+
+test('a sorted answered sheet gives the numbers the dry run proposed', async () => {
+  const w = office();
+  const out = tmp();
+  const dry = await run(w, ['--out', out]);
+  const proposed = Object.fromEntries(dry.plan.people.filter((p) => p.gets).map((p) => [p.anchor, p.proposedId]));
+  // sort People by Name, as in Excel
+  const wb = XLSX.read(fs.readFileSync(dry.file), { type: 'buffer' });
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets.People, { defval: '' }).sort((a, b) => String(a.Name).localeCompare(String(b.Name)));
+  wb.Sheets.People = XLSX.utils.json_to_sheet(rows, { header: planner.SHEET_HEADERS });
+  const sorted = dry.file.replace(/\.xlsx$/, '-sorted.xlsx');
+  fs.writeFileSync(sorted, XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+  const r = await run(w, ['--apply', '--out', out, '--decisions', sorted, '--admin', ADMIN, '--automations-checked', '--confirm', 'GIVE 4 CLIENT IDS']);
+  assert.equal(r.ok, true, r.message);
+  const cp = JSON.parse(fs.readFileSync(path.join(out, 'apply-checkpoint.json'), 'utf8'));
+  for (const [anchor, id] of Object.entries(proposed)) assert.equal(cp.done[anchor].clientId, id, `${anchor} got the number it was proposed`);
+});
+
+test('a record findOrCreate finds by the CLEANED name that the check list gives to another person is never used (Gauri\'s N stands)', async () => {
+  const w = world();
+  w.addClient(900, 'Raj Kumar', { email: 'r@x.com' });
+  w.addCase(1, 'Raj Kumar', { email: 'r@x.com', account: '900' });
+  w.addCase(2, 'Raj Kumar (2726)', { email: 'r@x.com' });
+  const out = tmp();
+  const dry = await run(w, ['--out', out]);
+  const amber = dry.plan.rows.find((r) => r.bucket === 'AMBER');
+  assert.equal(amber.key, 'G:1+2');
+  const answered = answer(dry.file, { 'G:1+2': { same: 'N' } });
+  const r = await run(w, ['--apply', '--out', out, '--decisions', answered, '--admin', ADMIN, '--automations-checked', '--confirm', 'GIVE 2 CLIENT IDS']);
+  assert.equal(r.ok, true, r.message);
+  assert.equal(w.cases.get('2').account, '', 'case 2 is NOT joined to record 900');
+  assert.equal(w.cases.get('2').copy, '');
+  assert.ok(r.done.skipped.some((x) => /Raj Kumar: matches Raj Kumar's client record exactly, but the check list says they are different people/.test(x)));
+  assert.ok(/^CL-/.test(w.clients.get('900').cid), 'record 900 still gets its own ID');
+  const log = fs.readFileSync(path.join(out, 'apply-log.jsonl'), 'utf8');
+  assert.match(log, /"kind":"skip-claimed"/);
 });
 
 test('an answered "same person" group that changed since the sheet was made: refused, nothing written', async () => {

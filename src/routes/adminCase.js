@@ -916,15 +916,16 @@ function renderClientId(d) {
   if (el) { el.textContent = cl.id ? 'Client ID ' + cl.id : ''; el.style.display = cl.id ? '' : 'none'; }
   var box = document.getElementById('oc-card');
   if (!box) return;
-  var list = cl.otherCases || [];
-  if (!cl.id || (!cl.otherCasesUnavailable && !list.length)) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  var list = cl.otherCases || [], hidden = Number(cl.hiddenCases) || 0;
+  if (!cl.id || (!cl.otherCasesUnavailable && !list.length && !hidden)) { box.style.display = 'none'; box.innerHTML = ''; return; }
   var rows = list.map(function(c) {
     var ref = c.caseRef ? '<a href="/admin/case/' + encodeURIComponent(c.caseRef) + '">' + escHtml(c.caseRef) + '</a>' : '<span class="muted">No case number yet</span>';
     return '<div class="oc-row">' + ref + (c.caseType ? ' · ' + escHtml(c.caseType) : '') +
       ' <span class="oc-st oc-' + escHtml(c.kind || 'open') + '">' + escHtml(c.standing || '') + '</span></div>';
   });
-  box.innerHTML = '<div class="card-title">🗂 Other cases of this client <span class="cnt">' + (list.length ? list.length : '') + '</span></div>' +
+  box.innerHTML = '<div class="card-title">🗂 Other cases of this client <span class="cnt">' + ((list.length + hidden) ? (list.length + hidden) : '') + '</span></div>' +
     (cl.otherCasesUnavailable ? '<div class="muted">The other cases could not be read just now. Reload the page in a minute.</div>' : '<div class="oc-list">' + rows.join('') + '</div>') +
+    (!cl.otherCasesUnavailable && hidden ? '<div class="muted" style="margin-top:6px">' + (list.length ? 'And ' : '') + hidden + ' ' + (hidden === 1 ? 'case' : 'cases') + ' you are not assigned to.</div>' : '') +
     (cl.more ? '<div class="muted" style="margin-top:6px">Only the first ' + list.length + ' are shown.</div>' : '');
   box.style.display = '';
 }

@@ -57,10 +57,17 @@ const TORONTO_YEAR = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toron
  * Render, so a case made on 31 Dec after 7 pm Toronto (00:00 UTC on 1 Jan)
  * got next year's number. Toronto's own year is the office's year.
  *
- * @param {Date|number|string} [at]  a Date, epoch milliseconds or an ISO instant; now when left out
+ * @param {Date|number|string} [at]  a Date, epoch milliseconds, an ISO instant or a date-only 'YYYY-MM-DD'
+ *                                   (a Toronto day: its own year); now when left out
  * @returns {number}                 NaN when the value is not a time
  */
 function torontoYear(at) {
+  // A date-only '2026-01-01' is a Toronto day already: its year is its own (new Date()
+  // reads it as UTC midnight, the evening of 31 Dec in Toronto — review 2026-11-25).
+  if (typeof at === 'string') {
+    const day = /^\s*(\d{4})-(\d{2})-(\d{2})\s*$/.exec(at);
+    if (day) return Number.isNaN(Date.parse(`${day[1]}-${day[2]}-${day[3]}T12:00:00Z`)) ? NaN : Number(day[1]);
+  }
   const d = at == null ? new Date()
     : new Date(at instanceof Date ? at.getTime() : (typeof at === 'number' ? at : String(at)));
   if (Number.isNaN(d.getTime())) return NaN;
