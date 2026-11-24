@@ -235,12 +235,12 @@ test('widget: one email in the shared pop-up — its text as text nodes, only ht
   assert.deepEqual(JSON.parse(JSON.stringify(w.gets.at(-1).o)), { credentials: 'same-origin', cache: 'no-store' });
 });
 
-test('the staff guide: one how-to for the Emails tab — Monday sign-in, read-only, what is not shown, not switched on yet', () => {
+test('the staff guide: one how-to for the Emails tab — Monday sign-in, read-only, what is not shown (switched on 19 Nov 2026)', () => {
   const g = JSON.parse(require('node:fs').readFileSync(require.resolve('../src/staffGuide/guide-data.json'), 'utf8'));
   const h = g.howto.filter((x) => /emails with a client on the case page/i.test(x.q));
   assert.equal(h.length, 1);
   assert.equal(h[0].lane, 'case');
-  for (const re of [/Sign in with Monday/, /read-only/, /Copies of app emails start 19 Nov 2026/, /old no-reply address/, /Not switched on yet\.$/]) assert.match(h[0].answer, re);
+  for (const re of [/Sign in with Monday/, /read-only/, /Copies of app emails start 19 Nov 2026/, /old no-reply address/, /^(?![\s\S]*Not switched on yet)/]) assert.match(h[0].answer, re);
 });
 
 /* ══ review fixes (2026-11-19) ════════════════════════════════════════════════ */

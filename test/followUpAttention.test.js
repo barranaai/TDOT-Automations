@@ -690,17 +690,6 @@ test('the table: two kinds of their own, "To do", after the other To-do lines; t
   assert.ok(src.includes('function shapeFor(entry, viewer, { opensRecords = false } = {}) {') && src.includes('function view(viewer, { ensure = false, opensRecords = false } = {}) {'), 'no link unless the route says the tab can open it');
 });
 
-// OPEN ITEM (review 2026-11-23) — a "todo" test: it does NOT pass today and does not fail the suite; it is
-// here so the open item shows in every test run instead of only in a comment. Every group staff can see under
-// "Needs attention" is to be explained in the staff guide; test/needsAttention.test.js checks that for KINDS,
-// and the two follow-up groups sit in CLIENT_KINDS, outside that check, until the guide has them (the guide's
-// data file is rebuilt, not edited by hand). At the next guide rebuild: add the two entries, see this pass,
-// then widen the guide check to { ...NA.KINDS, ...NA.CLIENT_KINDS } and delete this test.
-test('OPEN ITEM — the staff guide explains the two follow-up groups (they come with the next guide rebuild)', { todo: 'add "Follow-up date passed" and "Follow-Up with no follow-up date" to the guide\'s Needs-attention table at the next guide rebuild' }, () => {
-  const guide = JSON.parse(fs.readFileSync(require.resolve('../src/staffGuide/guide-data.json'), 'utf8'));
-  for (const k of FU_KINDS) assert.ok(guide.needs_attention.some((e) => e.problem === NA.CLIENT_KINDS[k].label), `guide entry for ${k}`);
-});
-
 // ── The Summary page ────────────────────────────────────────────────────────
 
 function renderSummary() {

@@ -1,0 +1,139 @@
+[
+ {
+  "op": "append",
+  "section": "steps",
+  "key_field": "id",
+  "key_value": "consultation-attribution",
+  "field": "watch_out",
+  "value_json": "\"While the client's outcome is Follow-Up, the follow-up date can be changed but not removed: 'This client's outcome is Follow-Up, so the follow-up date cannot be removed. Choose a new date, or change the outcome first.'\"",
+  "switch": "FOLLOWUP_DATE_REQUIRED",
+  "why": "With \"Follow-Up needs a date\" on, the date cannot be removed from a Follow-Up client (121e8f6, d25e0aa).",
+  "source": [
+   "src/services/consultantPortalService.js:810",
+   "src/services/consultantPortalService.js:1398-1402",
+   "src/routes/adminConsultation.js:2849-2850"
+  ]
+ },
+ {
+  "op": "append",
+  "section": "steps",
+  "key_field": "id",
+  "key_value": "consultation-outcome-set",
+  "field": "watch_out",
+  "value_json": "\"Follow-Up asks for the day to call the client back. A pop-up 'Outcome: Follow-Up' says 'Choose the day to call <Name> back.' with one box 'Follow-up date (required)', then 'Cancel' or 'Save Follow-Up'. The outcome and the date are saved together: 'Outcome recorded: Follow-Up. Follow-up date: <date>.' An empty box says 'Choose the follow-up date. Follow-Up cannot be saved without it.'; a day before today says 'The follow-up date cannot be in the past. Choose today or a later day.' A page left open from before shows 'Follow-Up needs a follow-up date (the day to call the client back). Choose the date and save again. If you see no date box, reload this page first.' To change the date later, press Follow-Up again. The same pop-up opens on the lead page.\"",
+  "switch": "FOLLOWUP_DATE_REQUIRED",
+  "why": "\"Follow-Up needs a date\" pop-up and refusals on the record and the lead page (121e8f6, d25e0aa).",
+  "source": [
+   "src/routes/adminShared.js:1384-1400",
+   "src/routes/adminConsultation.js:2731",
+   "src/routes/adminLeads.js:707",
+   "src/services/consultantPortalService.js:808-809",
+   "src/services/consultantPortalService.js:1258-1266",
+   "src/services/consultantPortalService.js:1306"
+  ]
+ },
+ {
+  "op": "append",
+  "section": "steps",
+  "key_field": "id",
+  "key_value": "consultation-outcome-change",
+  "field": "watch_out",
+  "value_json": "\"Changing Follow-Up to Newsletter, Not Wanted or Webinar removes the follow-up date in the same save; the message adds 'The follow-up date <date> was removed.' and the update names it. Retain keeps the date.\"",
+  "switch": "FOLLOWUP_DATE_REQUIRED",
+  "why": "With the switch on, leaving Follow-Up clears the follow-up date in the same write (121e8f6).",
+  "source": [
+   "src/services/consultantPortalService.js:1267-1274",
+   "src/services/consultantPortalService.js:1298-1306"
+  ]
+ },
+ {
+  "op": "append",
+  "section": "steps",
+  "key_field": "id",
+  "key_value": "followups-list",
+  "field": "watch_out",
+  "value_json": "\"A Follow-Up client with no follow-up date shows an amber 'no follow-up date' beside the outcome — here and on the Consultations page — but never on the Retained tab or for a retained client. Open the client's record, press Follow-Up and choose the date.\"",
+  "switch": "FOLLOWUP_DATE_REQUIRED",
+  "why": "Amber \"no follow-up date\" pill on the Consultations and Retainers lists, behind the switch (d25e0aa, 68d8087).",
+  "source": [
+   "src/routes/adminConsultation.js:243-253",
+   "src/routes/adminConsultation.js:905",
+   "src/routes/adminConsultation.js:987"
+  ]
+ },
+ {
+  "op": "append",
+  "section": "steps",
+  "key_field": "id",
+  "key_value": "lead-read-intake",
+  "field": "watch_out",
+  "value_json": "\"'Follow-up date: not set' on the Lead status card means this Follow-Up lead has no day to call back: press Follow-Up under 'Outcome & remarks' and choose the date.\"",
+  "switch": "FOLLOWUP_DATE_REQUIRED",
+  "why": "Lead page shows \"not set\" for a Follow-Up lead with no date, only with the switch on (d25e0aa).",
+  "source": [
+   "src/routes/adminLeads.js:813-816",
+   "src/routes/adminLeads.js:651"
+  ]
+ },
+ {
+  "op": "append",
+  "section": "steps",
+  "key_field": "id",
+  "key_value": "consult-fee-record",
+  "field": "options",
+  "value_json": "{\"label\": \"Invoice — paid (sent by the team, not the booking link) → The invoice has been paid — the money is in\", \"does\": \"Record an invoice only once it is paid. Choosing the invoice shows the tick and the date box becomes 'Date the invoice was paid'. Under the tick: 'Only sent, not paid yet? Do not record it. The consultation shows “Not paid” in red until the money is in.' Without the tick the window says 'Tick “The invoice has been paid”.' and saves nothing.\", \"exact\": true}",
+  "switch": "CONSULT_MONEY_FIRST",
+  "why": "Money first: an invoice is recorded only with the \"paid\" tick (1f95c9a, e5fc7fd).",
+  "source": [
+   "src/routes/adminConsultation.js:1692-1697",
+   "src/routes/adminConsultation.js:1713-1714",
+   "src/routes/adminConsultation.js:1738-1744",
+   "src/routes/adminConsultation.js:1769",
+   "src/services/consultPaymentService.js:45"
+  ]
+ },
+ {
+  "op": "append",
+  "section": "steps",
+  "key_field": "id",
+  "key_value": "consult-fee-record",
+  "field": "watch_out",
+  "value_json": "\"'Tick “The invoice has been paid”. An invoice that is only sent is not recorded — record it when the money is in. Nothing was saved. If you cannot see the tick, reload the page first.' means the page was opened before this rule: reload it.\"",
+  "switch": "CONSULT_MONEY_FIRST",
+  "why": "Money first invoice refusal (1f95c9a, e5fc7fd).",
+  "source": [
+   "src/services/consultPaymentService.js:45",
+   "src/services/consultPaymentService.js:153"
+  ]
+ },
+ {
+  "op": "append",
+  "section": "steps",
+  "key_field": "id",
+  "key_value": "consultation-direct-add",
+  "field": "options",
+  "value_json": "{\"label\": \"Not paid yet (greyed out)\", \"does\": \"For a time still ahead, 'Not paid yet' is only offered for a follow-up, or for 'Existing client: about their current file' when the app finds the client's file by email or phone. A new client pays first. A line under Payment says why: 'A new client pays first. “Not paid yet” is only for an existing client (about their current file) or a follow-up.' or, for an existing client, 'Type the client’s email or phone first — “Not paid yet” is offered when the app finds their file.' / 'Looking for this client’s file…' / 'The app could not look this client up just now. Click in the email or phone box and out again to try once more.' / 'The app finds no file for this email or phone, so “Not paid yet” is not offered.' A consultation that already happened can still be saved unpaid. 'Free' with a reason always works.\", \"exact\": true}",
+  "switch": "CONSULT_MONEY_FIRST",
+  "why": "Money first in \"＋ Direct consultation\" (1f95c9a, e5fc7fd).",
+  "source": [
+   "src/routes/directConsultUi.js:105-108",
+   "src/routes/directConsultUi.js:165-173",
+   "src/routes/directConsultUi.js:268-300",
+   "src/services/directConsultService.js:416-425"
+  ]
+ },
+ {
+  "op": "append",
+  "section": "steps",
+  "key_field": "id",
+  "key_value": "consultation-direct-add",
+  "field": "watch_out",
+  "value_json": "\"Refused with 'Not paid yet' (nothing is saved): 'A new client pays first — nothing was saved. Choose how the fee was paid, or “Free” with the reason. …' or 'The app finds no file for this email or phone, so “Not paid yet” cannot be used — nothing was saved. Type the email or phone that is on the client’s case, …'.\"",
+  "switch": "CONSULT_MONEY_FIRST",
+  "why": "Money first refusals (1f95c9a).",
+  "source": [
+   "src/services/directConsultService.js:54-55",
+   "src/services/directConsultService.js:422-425"
+  ]
+ }
+]

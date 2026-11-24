@@ -846,7 +846,8 @@ test('REMINDERS: the new kinds are in the table with the guide\'s wording, the n
     assert.equal(NA.KINDS[k].order, o, k); assert.ok(NA.KINDS[k].label && NA.KINDS[k].severity, k);
   }
   const guide = JSON.parse(fs.readFileSync(require.resolve('../src/staffGuide/guide-data.json'), 'utf8'));
-  for (const k of Object.keys(NA.KINDS)) assert.ok(guide.needs_attention.some((e) => e.problem === NA.KINDS[k].label), `guide entry for ${k}`);
+  const ALL_KINDS = { ...NA.KINDS, ...NA.CLIENT_KINDS };   // the follow-up groups too (guide rebuild 2026-11-24)
+  for (const k of Object.keys(ALL_KINDS)) assert.ok(guide.needs_attention.some((e) => e.problem === ALL_KINDS[k].label), `guide entry for ${k}`);
   assert.equal(NA.NOT_CASE_GROUPS, DR.NOT_CASE_GROUPS);
   assert.equal(NA.NOT_CASE_GROUPS, require('../src/utils/caseGroups').NOT_CASE_GROUPS);
   for (const id of ['date_mm33sj6t', 'numeric_mm2njqk1', 'date_mm1amqyr', 'date_mm3t66pa']) assert.ok(Object.values(NA.COL).includes(id), id);
