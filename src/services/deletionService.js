@@ -61,6 +61,12 @@ const familyBoard = require('../data/familyMembersBoard.json');
 // The Leads board's "Case deleted" column (2026-11-05): written on a kept consultation record. Without it a
 // case delete that keeps the record is refused — an unmarked, unlinked signed lead would be re-opened as a case.
 const leadCaseDeletedCol = () => (require('../data/newLeadsBoard.json').columns || {}).caseDeleted || '';
+// The case-number shapes this file acts on (named + exported 2026-11-25 so the Client ID guard test
+// proves a "CL-2026-00042" never reads as one). No /g flag: exec/test keep no state between calls.
+/** A folder name ending " - <case ref>" = a case's folder (kept, never deleted with a plain record). */
+const CASE_FOLDER_SUFFIX_RE = / - (\d{4}-[A-Z]+(?:-[A-Z]+)*-\d+)$/;
+/** A whole case ref — its number is recorded as used before the case is deleted. */
+const CASE_REF_RE = /^\d{4}-[A-Z]+(?:-[A-Z]+)*-\d+$/;
 const KEEP_LEADS_LIMIT = 50;   // findAllByColumnValue's page: at the limit there may be more — refuse rather than leave one linked
 
 const EXEC_BOARD_ID   = process.env.MONDAY_EXECUTION_BOARD_ID || '18401875593';
@@ -476,7 +482,7 @@ async function leadGraph(lead, { leadOnly = false } = {}) {
   // and said plainly (a case that is archived, or moved to a board the app cannot see, is not gone).
   const folders = [];
   for (const f of found) {
-    const m = / - (\d{4}-[A-Z]+(?:-[A-Z]+)*-\d+)$/.exec(String(f.name || ''));
+    const m = CASE_FOLDER_SUFFIX_RE.exec(String(f.name || ''));
     if (!m) { folders.push(f); continue; }
     if (leadOnly) bad(LEAD_ONLY_REFUSAL);
     const live = await clientMaster.findItemByCaseRef(m[1]).catch(() => null);
@@ -679,7 +685,7 @@ async function executeDeletion({ leadId, caseRef, confirmText, expectedKind, act
     // case is left for the allocator to find, and restoring it from the
     // recycle bins must never collide with a new client): record it in the
     // high-water mark FIRST — and refuse to delete when that cannot be done.
-    if (g.kind === 'case' && g.caseRef && /^\d{4}-[A-Z]+(?:-[A-Z]+)*-\d+$/.test(g.caseRef)) {
+    if (g.kind === 'case' && g.caseRef && CASE_REF_RE.test(g.caseRef)) {
       const saved = await require('./caseRefAllocator').recordAssigned(g.caseRef).catch(() => false);
       if (!saved) bad(`Could not record case number ${g.caseRef} as used in OneDrive ("TDOT System/case-number-high-water.json") — nothing was deleted. Try again in a minute; if it keeps failing, OneDrive is unavailable.`);
     }
@@ -1098,4 +1104,4 @@ async function postNote(itemId, body) {
   return false;
 }
 
-module.exports = { previewDeletion, executeDeletion, LEAD_ONLY_REFUSAL, _internal: { buildGraph, leadOnlyRefusal, rowsByCaseRef, resolveFolders, deleteMondayRows, planFolderReturn, unlinkKeptLead, keptNote, readKeepPlan, planMarker, timing } };
+module.exports = { previewDeletion, executeDeletion, LEAD_ONLY_REFUSAL, CASE_FOLDER_SUFFIX_RE, CASE_REF_RE, _internal: { buildGraph, leadOnlyRefusal, rowsByCaseRef, resolveFolders, deleteMondayRows, planFolderReturn, unlinkKeptLead, keptNote, readKeepPlan, planMarker, timing } };

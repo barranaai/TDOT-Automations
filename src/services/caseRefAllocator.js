@@ -351,4 +351,4 @@ async function audit() {
 
 function _resetForTests() { _recent.clear(); _folderScan = null; _markCache = null; _lockTail = Promise.resolve(); }
 
-module.exports = { allocate, withAllocationLock, noteAssigned, recordAssigned, audit, probeRecordWrites, maxSeq, salvageMarks, io, MARK_PATH, _resetForTests };
+module.exports = { allocate, withAllocationLock, noteAssigned, recordAssigned, audit, probeRecordWrites, maxSeq, prefixesIn, salvageMarks, io, MARK_PATH, _resetForTests };

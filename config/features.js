@@ -14,9 +14,26 @@
  *                            (decideCaseReuse) instead of silently reusing and
  *                            overwriting the old one. Off = byte-for-byte
  *                            legacy handoff behavior.
+ *
+ * And one three-way switch for the readable Client ID ("CL-2026-00042"):
+ *
+ *   CLIENT_IDS = off | report | on   (anything else, or unset, is off)
+ *     off    — nothing new happens: no number is made, nothing is written.
+ *              A page may still SHOW an ID a person already has.
+ *     report — the healer / audit work out and log what they WOULD do;
+ *              nothing is written.
+ *     on     — new people get a number (and the healer writes).
+ *   Read on every call (not at load), so a Render env change and the tests
+ *   both take effect without a reload.
  */
 
 const on = (v) => /^(1|true|yes|on)$/i.test(String(v || '').trim());
+
+/** 'off' | 'report' | 'on' — the CLIENT_IDS switch; anything else is off. */
+function clientIdsMode() {
+  const v = String(process.env.CLIENT_IDS == null ? '' : process.env.CLIENT_IDS).trim().toLowerCase();
+  return v === 'on' ? 'on' : v === 'report' ? 'report' : 'off';
+}
 
 module.exports = {
   // Default ON (user decision 2026-08-04: accounts accrete from future
@@ -30,4 +47,10 @@ module.exports = {
   clientMultiCaseEnabled: process.env.CLIENT_MULTI_CASE_ENABLED === undefined
     ? true
     : on(process.env.CLIENT_MULTI_CASE_ENABLED),
+  // Client IDs (2026-11-25). Default OFF.
+  clientIdsMode,
+  /** 'on': new people get a number and the healer writes. */
+  clientIdsOn:     () => clientIdsMode() === 'on',
+  /** 'report' or 'on': the healer / audit work out what to do ('report' only logs it). */
+  clientIdsActive: () => clientIdsMode() !== 'off',
 };

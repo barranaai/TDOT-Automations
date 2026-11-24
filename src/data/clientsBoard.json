@@ -14,7 +14,8 @@
     "status": "color_mm5xp031",
     "mergedInto": "text_mm5x8rd8",
     "source": "text_mm5x5s20",
-    "leads": "board_relation_mm5x3mew"
+    "leads": "board_relation_mm5x3mew",
+    "clientId": null
   },
   "statusLabels": [
     "Active",
@@ -29,6 +30,10 @@
   "createdAt": "2026-08-04T11:05:31.366Z",
   "cmLinkColumns": {
     "clientAccountId": "text_mm5xmeka",
-    "clientRelation": "board_relation_mm5xd2bh"
+    "clientRelation": "board_relation_mm5xd2bh",
+    "clientId": null
+  },
+  "leadLinkColumns": {
+    "clientId": null
   }
 }
