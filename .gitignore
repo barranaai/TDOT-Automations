@@ -6,3 +6,6 @@ node_modules/
 render-phase2-env.txt
 .claude/launch.json
 backfill-client-accounts-report.md
+
+# Client ID backfill check lists, checkpoint and apply log (names, emails, phones)
+backfill-client-ids/
