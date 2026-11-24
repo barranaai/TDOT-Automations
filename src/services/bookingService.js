@@ -916,6 +916,16 @@ async function postBookingNote(leadId, body) {
 }
 const escNote = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+/**
+ * The consultation is paid (online, by invoice, or free by config): the person gets
+ * their client account and Client ID (decision 6). In the background — the booking
+ * never waits for it or sees it fail; CLIENT_IDS off = nothing happens.
+ */
+function paidConsultationAccount(leadId, lead) {
+  try { require('./clientAccountService').queueConsultationPaid(leadId, { lead: lead || null, via: 'paid online' }); }
+  catch (err) { console.warn(`[Booking] client account step not started for ${leadId}: ${err.message}`); }
+}
+
 /** Mark a booking confirmed after the consultation fee is paid. */
 async function confirmSlot(leadId, txnId, meetingType, amountCents) {
   const key = String(leadId);
@@ -957,6 +967,7 @@ async function _confirmSlot(leadId, txnId, meetingType, amountCents) {
       }
       await leadService.updateLead(leadId, { squareConsultTxnId: txnId });
       _recentConfirm.set(leadId, { txnId: String(txnId), at: Date.now() });
+      paidConsultationAccount(leadId, lead);
       console.warn(`[Booking] Payment ${txnId}${paid} on lead ${leadId}, which was set to Booked by hand — recorded, staff told`);
       const slot = String(lead.bookedSlot || '').trim();
       // Staff had already recorded this fee (cash / e-transfer / waived): the client
@@ -976,6 +987,10 @@ async function _confirmSlot(leadId, txnId, meetingType, amountCents) {
         `Please check the time${slot ? ` (${escNote(slot)})` : ''} and the Square calendar, and use "Review &amp; send" on the consultation page if the client has not had the package.`);
     } else {
       console.log(`[Booking] Lead ${leadId} already booked — skipping (idempotent)`);
+      // The same payment again (a webhook retry, the reconciler): the client account
+      // step is run again too — it reuses what the first run made, and finishes what
+      // a failure there left undone.
+      if (txnId && txnId === knownTxn) paidConsultationAccount(leadId, lead);
     }
     return;
   }
@@ -1006,6 +1021,7 @@ async function _confirmSlot(leadId, txnId, meetingType, amountCents) {
   _recentConfirm.set(leadId, { txnId: String(txnId || ''), at: Date.now() });
   require('./leadSnapshot').invalidate();   // the Consultations tab must show the booking on its next load
   console.log(`[Booking] Confirmed booking for lead ${leadId} (txn ${txnId})`);
+  paidConsultationAccount(leadId, lead);
 
   // Two clients booked for the same time with the same consultant? The hold
   // check makes it rare; a hand booking or a late payment can still collide.

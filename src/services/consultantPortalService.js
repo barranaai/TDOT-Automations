@@ -2812,6 +2812,10 @@ async function recordConsultPaymentAction({ leadId, n, who, actor }) {
   const hstCents = rec.hstCents;
   await leadService.updateLead(leadId, { consultPayment: JSON.stringify(rec) });
   try { consultAgreementService.evictCache(leadId); } catch (_) { /* the agreement's "has paid" line changes — drop the cached copy */ }
+  // Paid or waived: the person gets their client account and Client ID (decision 6) —
+  // in the background, never holding up or failing the record (CLIENT_IDS off = nothing).
+  try { require('./clientAccountService').queueConsultationPaid(leadId, { lead, via: rec.kind === 'waived' ? 'fee waived' : 'payment recorded' }); }
+  catch (err) { console.warn(`[ConsultPayment] client account step not started for ${leadId}: ${err.message}`); }
   const money = (c) => (c / 100).toLocaleString('en-CA', { style: 'currency', currency: 'CAD' });
 
   // 2) The booking. From here a failure never undoes the record — the reply says what is left.

@@ -535,6 +535,16 @@ async function createLocked(n, actor) {
         await leadService.updateLead(leadId, { consultPayment: JSON.stringify(rec) });
         lead.consultPayment = JSON.stringify(rec);
         try { require('./consultAgreementService').evictCache(leadId); } catch (_) { /* a cached preview only */ }
+        // The fee is recorded (paid or free): the person gets their client account and Client ID
+        // (decision 6) — in the background (CLIENT_IDS off = nothing). The lead as written here:
+        // a just-made row may not read back yet. An account staff chose in the pop-up is kept.
+        try {
+          require('./clientAccountService').queueConsultationPaid(leadId, {
+            lead: { ...lead, id: leadId, fullName: n.fullName, email: n.email || lead.email || '', phone: n.phone || lead.phone || '',
+              ...(n.clientAccountId ? { clientAccountId: n.clientAccountId } : {}) },
+            via: 'direct consultation',
+          });
+        } catch (err) { console.warn(`[DirectConsult] client account step not started for lead ${leadId}: ${err.message}`); }
       } catch (err) {
         rec = null;
         left.push(`The payment (${PAY_LABELS[n.payment.kind]}) could not be recorded (${err.message}) — use "Record payment" on the record.`);

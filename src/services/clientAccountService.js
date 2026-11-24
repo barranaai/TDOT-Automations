@@ -22,6 +22,7 @@ const fs   = require('fs');
 const path = require('path');
 const mondayApi = require('./mondayApi');
 const { normName } = require('./handoffService');
+const { isClientId } = require('../utils/clientId');
 
 const CFG_PATH = path.join(__dirname, '..', 'data', 'clientsBoard.json');
 
@@ -33,6 +34,8 @@ function loadBoard() {
   catch (_) { _cfg = null; }
   return _cfg;
 }
+/** Tests only: use this board config (undefined = read the file again). */
+function _setBoardForTests(cfg) { _cfg = cfg; }
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
@@ -92,8 +95,11 @@ function colText(item, colId) {
 }
 
 async function queryByColumn(cfg, colId, value) {
+  // The readable Client ID ("CL-2026-00042") is read too once its column exists.
+  const idCol = (cfg.columns || {}).clientId || '';
+  const cols = [cfg.columns.primaryEmail, cfg.columns.phone, cfg.columns.dateOfBirth, cfg.columns.status, ...(idCol ? [idCol] : [])];
   const data = await mondayApi.query(
-    `query($b:ID!,$v:String!){ items_page_by_column_values(limit:25, board_id:$b, columns:[{column_id:"${colId}", column_values:[$v]}]){ items{ id name column_values(ids:${JSON.stringify([cfg.columns.primaryEmail, cfg.columns.phone, cfg.columns.dateOfBirth, cfg.columns.status])}){ id text } } } }`,
+    `query($b:ID!,$v:String!){ items_page_by_column_values(limit:25, board_id:$b, columns:[{column_id:"${colId}", column_values:[$v]}]){ items{ id name column_values(ids:${JSON.stringify(cols)}){ id text } } } }`,
     { b: String(cfg.boardId), v: String(value) }
   );
   return (data?.items_page_by_column_values?.items || []).map((it) => ({
@@ -103,6 +109,7 @@ async function queryByColumn(cfg, colId, value) {
     phone: colText(it, cfg.columns.phone),
     dob: colText(it, cfg.columns.dateOfBirth),
     status: colText(it, cfg.columns.status),
+    clientIdText: idCol ? String(colText(it, idCol)).trim() : '',
   }));
 }
 
@@ -169,7 +176,7 @@ async function findOrCreate({ email, phone, fullName, residentialAddress, dob, s
   const work = (async () => {
     const matches = await findMatches({ email, phone, fullName, dob });
     const exact = matches.find((m) => m.confidence === 'exact');
-    if (exact) return { clientId: exact.id, created: false, matchBasis: exact.reasons, reviewCandidates: [] };
+    if (exact) return { clientId: exact.id, created: false, matchBasis: exact.reasons, reviewCandidates: [], clientIdText: exact.clientIdText || '' };
 
     const clientId = await createAccount(cfg, { fullName, email, phone, residentialAddress, dob, source });
 
@@ -186,11 +193,14 @@ async function findOrCreate({ email, phone, fullName, residentialAddress, dob, s
           'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
           { b: String(cfg.boardId), i: clientId, c: JSON.stringify({ [cfg.columns.status]: { label: 'Merged' }, [cfg.columns.mergedInto]: String(canonical.id) }) }
         );
-        return { clientId: canonical.id, created: false, matchBasis: ['race-reconciled'], reviewCandidates: [] };
+        return { clientId: canonical.id, created: false, matchBasis: ['race-reconciled'], reviewCandidates: [], clientIdText: canonical.clientIdText || '' };
       }
     } catch (_) { /* reconcile is best-effort */ }
 
-    return { clientId, created: true, matchBasis: [], reviewCandidates: matches.filter((m) => m.confidence === 'review') };
+    // The Client ID is NOT minted here: the caller asks ensureClientId() for the row
+    // that came out of this — after the reconcile, so a row marked Merged above never
+    // takes a number.
+    return { clientId, created: true, matchBasis: [], reviewCandidates: matches.filter((m) => m.confidence === 'review'), clientIdText: '' };
   })();
 
   _inFlight.set(key, work);
@@ -226,17 +236,32 @@ async function appendAccountRelation(cfg, clientId, relColId, itemId, label) {
   } catch (err) { console.warn(`[ClientAccount] ${label} relation append failed for client ${clientId}: ${err.message}`); }
 }
 
-/** Stamp the account id on a Client Master case + append the navigation relation (best-effort). */
-async function linkCase(clientId, { cmItemId }) {
+/**
+ * Stamp the account id on a Client Master case + append the navigation relation (best-effort).
+ * clientIdText: the person's readable Client ID ("CL-2026-00042") — copied into the case's
+ * "Client ID" column (a plain mirror) when given and the column exists. Every write here has
+ * its OWN try/catch (review #1): one failing never stops the next, nor linkLead after it.
+ */
+async function linkCase(clientId, { cmItemId, clientIdText = '' } = {}) {
   const cfg = loadBoard();
   if (!cfg || !clientId || !cmItemId) return;
   const link = cfg.cmLinkColumns || {};
   const { clientMasterBoardId } = require('../../config/monday');
   if (link.clientAccountId) {
-    await mondayApi.query(
-      'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
-      { b: String(clientMasterBoardId), i: String(cmItemId), c: JSON.stringify({ [link.clientAccountId]: String(clientId) }) }
-    );
+    try {
+      await mondayApi.query(
+        'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
+        { b: String(clientMasterBoardId), i: String(cmItemId), c: JSON.stringify({ [link.clientAccountId]: String(clientId) }) }
+      );
+    } catch (err) { console.warn(`[ClientAccount] account id write failed for case ${cmItemId}: ${err.message}`); }
+  }
+  if (link.clientId && isClientId(clientIdText)) {
+    try {
+      await mondayApi.query(
+        'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
+        { b: String(clientMasterBoardId), i: String(cmItemId), c: JSON.stringify({ [link.clientId]: String(clientIdText) }) }
+      );
+    } catch (err) { console.warn(`[ClientAccount] Client ID copy failed for case ${cmItemId}: ${err.message}`); }
   }
   if (link.clientRelation) {
     try {
@@ -256,13 +281,267 @@ async function linkCase(clientId, { cmItemId }) {
  * entry of theirs, not just their cases (user directive 2026-08-04).
  * Best-effort; leadService validates the column.
  */
-async function linkLead(clientId, leadId) {
+async function linkLead(clientId, leadId, { clientIdText = '' } = {}) {
   const cfg = loadBoard();
   if (!cfg || !clientId || !leadId) return;
   const leadService = require('./leadService');
   try { await leadService.updateLead(String(leadId), { clientAccountId: String(clientId) }); }
   catch (err) { console.warn(`[ClientAccount] lead stamp failed for ${leadId}: ${err.message}`); }
+  // The lead's "Client ID" column (a plain mirror) — its own write, its own catch.
+  const leadCol = (cfg.leadLinkColumns || {}).clientId;
+  if (leadCol && isClientId(clientIdText)) {
+    try {
+      const { boardId: leadBoardId } = require('../data/newLeadsBoard.json');
+      await mondayApi.query(
+        'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
+        { b: String(leadBoardId), i: String(leadId), c: JSON.stringify({ [leadCol]: String(clientIdText) }) }
+      );
+    } catch (err) { console.warn(`[ClientAccount] Client ID copy failed for lead ${leadId}: ${err.message}`); }
+  }
   await appendAccountRelation(cfg, clientId, cfg.columns.leads, leadId, 'Leads');
+}
+
+// ─── The readable Client ID ("CL-2026-00042") of an account ─────────────────────
+
+const digitsOf = (v) => String(v == null ? '' : v).replace(/\D/g, '').slice(0, 20);
+
+/**
+ * The Toronto year this person first came, as far as this lead shows: the year the
+ * lead was made, or now — whichever is earlier (decision 5). A label only.
+ */
+function yearForLead(lead, now = Date.now()) {
+  const { torontoYear } = require('../utils/torontoTime');
+  const nowYear = torontoYear(now);
+  const made = torontoYear(lead && lead.createdAt ? lead.createdAt : NaN);
+  return Number.isFinite(made) && made < nowYear ? made : nowYear;
+}
+
+const _idInFlight = new Map();   // account id → Promise (one ensure per account at a time in this process)
+
+/**
+ * The account's Client ID: the one on its Clients row, or — when that is blank and
+ * CLIENT_IDS is 'on' — a new number, written to the row. Never throws.
+ *
+ *   off     → nothing is read or written: { ok: false, reason: 'off' }
+ *   report  → the row is read and the log says what WOULD happen; nothing is written
+ *   on      → { ok: true, id, minted } — the ID now on the row
+ *
+ * Refused (nothing minted): a row that is not on the Clients board, a Merged or
+ * Archived row (never a number for a Merged row — a merge's loser keeps none), a
+ * cell that could not be read (a write would cover a value it cannot see), or a
+ * cell already holding something that is not a Client ID (the audit lists it; it is
+ * never typed over). A number taken whose write then fails is burnt, never reused.
+ *
+ * @param {string} accountId  the Clients row's Monday item id
+ * @param {{ knownId?: string, year?: number, why?: string }} [opts]
+ *   knownId: a Client ID just read with the row (findOrCreate) — used without a read
+ */
+async function ensureClientId(accountId, { knownId = '', year, why = '' } = {}) {
+  const { clientIdsMode } = require('../../config/features');
+  const mode = clientIdsMode();
+  if (mode === 'off') return { ok: false, reason: 'off' };
+  try {
+    const cfg = loadBoard();
+    if (!cfg) return { ok: false, reason: 'dormant' };
+    const col = (cfg.columns || {}).clientId;
+    if (!col) return { ok: false, reason: 'not-configured' };
+    const id = digitsOf(accountId);
+    if (!id) return { ok: false, reason: 'no-account' };
+    const known = String(knownId || '').trim();
+    if (isClientId(known)) return mode === 'on' ? { ok: true, id: known, minted: false } : { ok: false, reason: 'report', existing: known };
+    if (_idInFlight.has(id)) return await _idInFlight.get(id);
+    const work = _ensureClientId(cfg, col, id, { mode, year, why });
+    _idInFlight.set(id, work);
+    try { return await work; } finally { _idInFlight.delete(id); }
+  } catch (err) {
+    console.warn(`[ClientId] account ${accountId}: ${err.message}`);
+    return { ok: false, reason: 'error', message: err.message };
+  }
+}
+
+/** One read of the account row's Client ID cell. { state: 'ok', text } | { state: 'not-found'|'merged'|'archived'|'unreadable'|'unavailable', … } */
+async function readClientIdCell(cfg, col, id) {
+  let data;
+  try {
+    data = await mondayApi.query(
+      `query($id:ID!){ items(ids:[$id], limit:1){ id board { id } column_values(ids:${JSON.stringify([col, cfg.columns.status, cfg.columns.mergedInto])}){ id text } } }`,
+      { id: String(id) });
+  } catch (err) { return { state: 'unavailable', message: err.message }; }
+  const it = data && data.items && data.items[0];
+  if (!it || !it.board || String(it.board.id) !== String(cfg.boardId)) return { state: 'not-found' };
+  const status = String(colText(it, cfg.columns.status)).trim();
+  if (status === 'Merged') return { state: 'merged', mergedInto: String(colText(it, cfg.columns.mergedInto)).trim() };
+  if (status === 'Archived') return { state: 'archived' };
+  const cell = (it.column_values || []).find((c) => c.id === col);
+  if (!cell) return { state: 'unreadable' };   // the column did not come back: never treat as blank
+  return { state: 'ok', text: String(cell.text == null ? '' : cell.text).trim() };
+}
+
+async function writeClientIdCell(cfg, col, id, value) {
+  await mondayApi.query(
+    'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
+    { b: String(cfg.boardId), i: String(id), c: JSON.stringify({ [col]: String(value) }) });
+}
+
+async function _ensureClientId(cfg, col, id, { mode, year, why }) {
+  const tag = `[ClientId] account ${id}${why ? ` (${why})` : ''}`;
+  const cell = await readClientIdCell(cfg, col, id);
+  if (cell.state !== 'ok') {
+    if (cell.state !== 'merged') console.warn(`${tag}: no Client ID — the row is ${cell.state}${cell.message ? ` (${cell.message})` : ''}`);
+    return { ok: false, reason: cell.state, ...(cell.mergedInto ? { mergedInto: cell.mergedInto } : {}) };
+  }
+  if (cell.text) {
+    if (!isClientId(cell.text)) {
+      console.warn(`${tag}: the Client ID cell holds "${cell.text.slice(0, 40)}", which is not a Client ID — left as it is`);
+      return { ok: false, reason: 'malformed', value: cell.text };
+    }
+    return mode === 'on' ? { ok: true, id: cell.text, minted: false } : { ok: false, reason: 'report', existing: cell.text };
+  }
+  if (mode !== 'on') {
+    console.log(`${tag}: would get a new Client ID (CLIENT_IDS=report — nothing written)`);
+    return { ok: false, reason: 'report', wouldMint: true };
+  }
+  const allocator = require('./clientIdAllocator');
+  const a = await allocator.allocate(year == null ? {} : { year });
+  if (!a || !a.ok) {
+    console.warn(`${tag}: no Client ID given — ${(a && a.message) || 'the counter refused'}`);
+    return { ok: false, reason: (a && a.reason) || 'refused', message: a && a.message };
+  }
+  // Looked at once more right before writing: another instance may have given this
+  // person a number meanwhile — theirs stands, ours is burnt (never reused).
+  const again = await readClientIdCell(cfg, col, id);
+  if (again.state === 'ok' && isClientId(again.text)) {
+    console.warn(`${tag}: got ${again.text} from another instance meanwhile — ${a.id} is left unused`);
+    return { ok: true, id: again.text, minted: false, burnt: a.id };
+  }
+  if (again.state !== 'ok' || again.text) {
+    console.warn(`${tag}: the row changed (${again.state}${again.text ? ` "${again.text.slice(0, 40)}"` : ''}) — ${a.id} is left unused`);
+    return { ok: false, reason: again.state === 'ok' ? 'malformed' : again.state, burnt: a.id };
+  }
+  try { await writeClientIdCell(cfg, col, id, a.id); }
+  catch (err) {
+    console.warn(`${tag}: ${a.id} could not be written (${err.message}) — that number is left unused; tried again later`);
+    return { ok: false, reason: 'write-failed', burnt: a.id, message: err.message };
+  }
+  // Read back: the cell is the truth. Two instances writing at once both end up
+  // with what the row finally holds (the copies are then the same).
+  const after = await readClientIdCell(cfg, col, id);
+  if (after.state === 'ok' && isClientId(after.text) && after.text !== a.id) {
+    console.warn(`${tag}: the row holds ${after.text} (another instance wrote last) — ${a.id} is left unused`);
+    return { ok: true, id: after.text, minted: false, burnt: a.id };
+  }
+  console.log(`${tag}: Client ID ${a.id} given`);
+  return { ok: true, id: a.id, minted: true };
+}
+
+// ─── A paid consultation gives the person their account + Client ID (decision 6) ──
+
+const _paidInFlight = new Map();   // lead id → Promise
+
+/**
+ * A consultation was PAID — online (Square link or invoice), recorded by staff
+ * (cash / e-transfer / invoice / Square outside the app), Waived / Free, or a direct
+ * consultation with its fee. Make sure the person has their Clients account and its
+ * Client ID, and the lead points at both — so the case, when it opens, lands on the
+ * same person (stampClientAccount reuses lead.clientAccountId).
+ *
+ * Only with CLIENT_IDS 'on' (and client accounts on). 'report': read-only — the log
+ * says what would happen. 'off': nothing at all.
+ * The same strict matching as the handoff: an exact match is linked; a weaker one
+ * (shared email, phone only) is NOT — a new account is made and the possible match
+ * is left for staff (a note on the lead). Safe to run again (webhook retry, a record
+ * edited): the lead's account and its ID are reused, never a second number.
+ * Never throws.
+ *
+ * @param {string} leadId
+ * @param {{ lead?: object, via?: string }} [opts] lead: the lead as the caller has it (saves a read)
+ */
+async function onConsultationPaid(leadId, { lead = null, via = '' } = {}) {
+  const features = require('../../config/features');
+  const mode = features.clientIdsMode();
+  if (mode === 'off') return { ok: false, reason: 'off' };
+  if (!features.clientAccountsEnabled) return { ok: false, reason: 'accounts-off' };
+  if (!loadBoard()) return { ok: false, reason: 'dormant' };
+  const key = digitsOf(leadId);
+  if (!key) return { ok: false, reason: 'no-lead' };
+  if (_paidInFlight.has(key)) return _paidInFlight.get(key);
+  const work = (async () => {
+    try { return await _onConsultationPaid(key, { lead, via, mode }); }
+    catch (err) {
+      console.warn(`[ClientId] paid consultation, lead ${key}: ${err.message}`);
+      return { ok: false, reason: 'error', message: err.message };
+    }
+  })();
+  _paidInFlight.set(key, work);
+  try { return await work; } finally { _paidInFlight.delete(key); }
+}
+
+async function _onConsultationPaid(leadId, { lead, via, mode }) {
+  const self = module.exports;   // through the exports, so each step can be replaced in a test
+  const tag = `[ClientId] paid consultation${via ? ` (${via})` : ''}, lead ${leadId}`;
+  let l = lead;
+  if (!l || !l.id) l = { ...(await require('./leadService').getLead(leadId)), ...(lead || {}) };
+  if (!l || (!l.id && !l.fullName)) return { ok: false, reason: 'no-lead' };
+  const preChosen = digitsOf(l.clientAccountId);
+  const year = yearForLead(l);
+
+  if (!preChosen && !normalizeEmail(l.email) && !normalizePhone(l.phone)) {
+    // Nothing to match on: an account made now could never be found again — the case opening makes it.
+    console.log(`${tag}: no email or phone — no account made now`);
+    return { ok: false, reason: 'no-contact' };
+  }
+
+  if (mode !== 'on') {
+    if (preChosen) {
+      const r = await self.ensureClientId(preChosen, { year, why: 'paid consultation' });
+      console.log(`${tag}: would keep the lead's account (Client ID ${r.existing || (r.wouldMint ? 'would be given' : r.reason)}) — CLIENT_IDS=report, nothing written`);
+      return { ok: false, reason: 'report', clientId: preChosen };
+    }
+    const m = await self.findMatches({ email: l.email, phone: l.phone, fullName: l.fullName });
+    const exact = m.find((x) => x.confidence === 'exact');
+    const review = m.filter((x) => x.confidence === 'review').length;
+    console.log(`${tag}: would ${exact ? `link the account with ${exact.clientIdText || 'no Client ID yet'}` : `make a new account${review ? ` (${review} possible match${review > 1 ? 'es' : ''} left for staff)` : ''}`} — CLIENT_IDS=report, nothing written`);
+    return { ok: false, reason: 'report', ...(exact ? { clientId: exact.id } : {}) };
+  }
+
+  let clientId = preChosen, created = false, knownId = '', review = [];
+  if (!clientId) {
+    const r = await self.findOrCreate({
+      email: l.email, phone: l.phone, fullName: l.fullName || l.name,
+      residentialAddress: l.residentialAddress, source: 'consultation',
+    });
+    if (!r) return { ok: false, reason: 'dormant' };
+    clientId = r.clientId; created = !!r.created; knownId = r.clientIdText || ''; review = r.reviewCandidates || [];
+    if (created) console.log(`${tag}: client account ${clientId} made for "${l.fullName || l.name || ''}"`);
+  }
+  const idr = await self.ensureClientId(clientId, { knownId, year, why: 'paid consultation' });
+  const clientIdText = idr && idr.ok ? idr.id : '';
+  // Always (also for an account staff chose): it stamps the lead, copies the ID to it
+  // and adds the lead to the account's Leads — all idempotent.
+  await self.linkLead(clientId, leadId, { clientIdText });
+  if (created && review.length) await noteReviewCandidates(leadId, review).catch(() => {});
+  return { ok: true, clientId, created, clientIdText, minted: !!(idr && idr.minted), reason: idr && !idr.ok ? idr.reason : '' };
+}
+
+/** A note on the lead: an existing client looks like this person, but was not linked (staff decide). Names and Client IDs only. */
+async function noteReviewCandidates(leadId, review) {
+  const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const who = review.slice(0, 5).map((r) => `${esc(r.name || 'a client')}${isClientId(r.clientIdText) ? ` (${esc(r.clientIdText)})` : ''} — ${esc((r.reasons || []).join(', '))}`).join('; ');
+  await mondayApi.query('mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }', {
+    i: String(leadId),
+    b: `👥 <b>Possibly the same person as an existing client</b>: ${who}. They were NOT linked — this person was given their own client record. If it is the same person, tell the admin so the two can be joined.`,
+  });
+}
+
+/**
+ * Fire-and-forget form of onConsultationPaid for the payment paths: the payment's
+ * own steps never wait for it and never see it fail. Returns the promise (tests).
+ */
+function queueConsultationPaid(leadId, opts = {}) {
+  let p;
+  try { p = module.exports.onConsultationPaid(leadId, opts); }
+  catch (err) { p = Promise.resolve({ ok: false, reason: 'error', message: err.message }); }
+  return Promise.resolve(p).catch((err) => ({ ok: false, reason: 'error', message: err && err.message }));
 }
 
 /** One account row with its profile fields. null when dormant or missing. */
@@ -310,4 +589,6 @@ async function getClientCases(clientId) {
 module.exports = {
   loadBoard, normalizeEmail, normalizePhone, classifyMatch,
   findMatches, findOrCreate, linkCase, linkLead, getClient, getClientCases,
+  ensureClientId, yearForLead, onConsultationPaid, queueConsultationPaid,
+  _setBoardForTests,
 };

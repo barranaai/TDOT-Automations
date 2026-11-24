@@ -109,8 +109,9 @@ const normName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' '
 
 /**
  * Best-effort: attach this client's person-level account (Clients board) to
- * the case + lead. Accounts accrete from NEW applications only (user decision
- * 2026-08-04 — no historical backfill). Respects a pre-chosen account (staff
+ * the case + lead, with the person's Client ID. Accounts accrete from new
+ * applications (user decision 2026-08-04); since 2026-11-25 a paid consultation
+ * makes one too, and the Client ID backfill (decided then) adds past clients. Respects a pre-chosen account (staff
  * picked one in the warn-and-link modal → lead.clientAccountId already set).
  * Never throws — account bookkeeping must never block a handoff.
  */
@@ -120,6 +121,7 @@ async function stampClientAccount(lead, cmItemId) {
     const accounts = require('./clientAccountService'); // lazy — avoids the require cycle (it imports normName from here)
     const preChosen = String((lead && lead.clientAccountId) || '').trim();
     let clientId = preChosen;
+    let knownId = '';
     if (!clientId) {
       const r = await accounts.findOrCreate({
         email: lead.email, phone: lead.phone, fullName: lead.fullName,
@@ -127,12 +129,22 @@ async function stampClientAccount(lead, cmItemId) {
       });
       if (!r) return; // Clients board not provisioned in this environment
       clientId = r.clientId;
+      knownId = r.clientIdText || '';
       if (r.created) console.log(`[Handoff] Client account ${clientId} created for "${lead.fullName}"`);
     }
-    await accounts.linkCase(clientId, { cmItemId });
+    // The person's readable Client ID ("CL-2026-00042") — on BOTH paths (an account
+    // staff chose, or one an earlier paid consultation made, may have none yet; review
+    // #1), after findOrCreate's race reconcile, before the case and lead copy it.
+    // CLIENT_IDS off → nothing; report → logged only. Never blocks the handoff.
+    let clientIdText = '';
+    try {
+      const idr = await accounts.ensureClientId(clientId, { knownId, year: accounts.yearForLead(lead), why: 'case opened' });
+      clientIdText = idr && idr.ok ? idr.id : '';
+    } catch (err) { console.warn(`[Handoff] Client ID step failed for lead ${lead && lead.id}: ${err.message}`); }
+    await accounts.linkCase(clientId, { cmItemId, clientIdText });
     // Always — even when staff pre-chose the account: linkLead also appends
     // the account's Leads relation, and both writes are idempotent.
-    await accounts.linkLead(clientId, lead.id);
+    await accounts.linkLead(clientId, lead.id, { clientIdText });
   } catch (err) {
     console.warn(`[Handoff] client-account stamp failed for lead ${lead && lead.id}: ${err.message}`);
   }
