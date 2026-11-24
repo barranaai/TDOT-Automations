@@ -679,7 +679,9 @@ test('the table: two kinds of their own, "To do", after the other To-do lines; t
   for (const k of FU_KINDS) assert.ok(!labels.includes(NA.CLIENT_KINDS[k].label));
   // what the page is sent: both tables, so it can name and order every group
   const sent = NA.view(ADMIN).kinds;
-  assert.deepEqual(Object.keys(sent).sort(), [...Object.keys(NA.KINDS), ...FU_KINDS].sort());
+  // the Client ID kinds are sent only while the CLIENT_IDS switch is report/on (or such a line exists)
+  const idKinds = require('../config/features').clientIdsActive() ? Object.keys(NA.CLIENT_ID_KINDS) : [];
+  assert.deepEqual(Object.keys(sent).sort(), [...Object.keys(NA.KINDS), ...FU_KINDS, ...idKinds].sort());
   for (const k of Object.keys(NA.KINDS)) assert.deepEqual(sent[k], NA.KINDS[k]);
   for (const k of FU_KINDS) assert.deepEqual(sent[k], NA.CLIENT_KINDS[k]);
   // the visibility rule is the table: no other kind is shown to a limited viewer without a case row
