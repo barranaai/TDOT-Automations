@@ -86,7 +86,9 @@ const caseAccess = require('./caseAccessService');
 
 async function readClientMaster(itemId) {
   // Fetch our columns PLUS every people column (for the access check), deduped.
-  const fetchIds = [...new Set([...Object.values(CM), ...caseAccess.PEOPLE_COLUMNS])];
+  // … and the Client ID copy once that column is made (build step 5) — the readable ID only.
+  const cidCol = require('./clientIdDisplay').columns().cm;
+  const fetchIds = [...new Set([...Object.values(CM), ...caseAccess.PEOPLE_COLUMNS, ...(cidCol ? [cidCol] : [])])];
   const ids = fetchIds.map((c) => `"${c}"`).join(', ');
   const data = await mondayApi.query(
     `query($itemId: ID!) {
@@ -130,6 +132,7 @@ async function readClientMaster(itemId) {
     manualOverride:  txt(CM.manualOverride),
     escalationLastNotified: txt(CM.escalationLastNotified).slice(0, 10),
     qDone:           txt(CM.qCompletionStatus) === 'Done',
+    clientId:        cidCol ? require('./clientIdDisplay').shownId(txt(cidCol)) : '',   // '' = no ID (or not made yet)
     notes:           require('./docReminderService').rawNotes(item.updates),   // newest CM_NOTES_LIMIT, for the reminders record
   };
 }
@@ -438,6 +441,8 @@ async function getCaseOverview(caseRef, opts = {}) {
   const cm = core._cm, members = core._members, qMembers = core._qMembers;
   const caseType = core._rawCaseType, caseSubType = core._rawCaseSubType;
   const docSummary = { items: core.docItems, _unavailable: core.docsUnavailable };
+  // The person's other cases (build step 5): from the Client Master Client ID copy, beside the reads below.
+  const otherCasesP = otherCasesOfClient(cm._unavailable ? '' : cm.clientId, itemId);
   const composition = await compositionP;
 
   const documents = summariseDocuments(docSummary.items || []);
@@ -527,8 +532,48 @@ async function getCaseOverview(caseRef, opts = {}) {
     timeline,
     sponsor,
   };
+  // The client's Client ID and their other cases (build step 5): { id: '' | 'CL-…', otherCases, otherCasesUnavailable, more }.
+  // Only once the Client Master copy column is made: until then the overview has exactly the keys it had.
+  const otherCases = await otherCasesP;
+  if (require('./clientIdDisplay').columns().cm) overview.client = { id: cm._unavailable ? '' : (cm.clientId || ''), ...otherCases };
   if (opts && opts.team) overview.teamCells = cm._unavailable ? null : (cm.peopleCells || null);
   return overview;
 }
 
-module.exports = { getCaseOverview, getReminderFacts, readReminderCore, getLeadExtras, buildTimeline, summariseDocuments, pickLeadFields, readClientMaster, _CM: CM };
+const OTHER_CASES_LIMIT = 50;
+/**
+ * "Other cases of this client" (build step 5): every Client Master row carrying the SAME Client ID copy, this case
+ * left out, each with where it stands (clientIdDisplay.caseStanding: a Cancelled or Lead-only row is never called
+ * open — review #10). The TEST group is left out. One read by the copy column — no link read, never items(ids:).
+ * No ID (or the column not made yet) = no read and an empty list. A failed read = otherCasesUnavailable (the box says
+ * so), never "no other cases".
+ * @returns {Promise<{ otherCases: Array<{ caseRef, caseType, caseStage, standing, kind }>, otherCasesUnavailable: boolean, more: boolean }>}
+ */
+async function otherCasesOfClient(clientId, itemId) {
+  const D = require('./clientIdDisplay');
+  const id = D.shownId(clientId), col = D.columns().cm;
+  if (!id || !col) return { otherCases: [], otherCasesUnavailable: false, more: false };
+  try {
+    const data = await mondayApi.query(
+      `query($b:ID!,$v:String!){ items_page_by_column_values(limit:${OTHER_CASES_LIMIT}, board_id:$b, columns:[{column_id:"${col}", column_values:[$v]}]){ items{ id group{ id title } column_values(ids:["${CM.caseRef}","dropdown_mm0xd1qn","${CM.caseStage}","${col}"]){ id text } } } }`,
+      { b: String(clientMasterBoardId), v: id });
+    const items = (data && data.items_page_by_column_values && data.items_page_by_column_values.items) || [];
+    const txt = (it, c) => String(((it.column_values || []).find((x) => x && x.id === c) || {}).text || '').trim();
+    const rows = items
+      .filter((it) => it && String(it.id) !== String(itemId))
+      .filter((it) => D.shownId(txt(it, col)) === id)   // the exact ID only (the board's match is on the cell text)
+      .map((it) => {
+        const st = D.caseStanding({ group: it.group || {}, caseStage: txt(it, CM.caseStage) });
+        return { caseRef: txt(it, CM.caseRef), caseType: txt(it, 'dropdown_mm0xd1qn'), caseStage: txt(it, CM.caseStage), standing: st.label, kind: st.kind };
+      })
+      .filter((r) => r.kind !== 'test');
+    const order = { open: 0, closed: 1, cancelled: 2, lead: 3 };
+    rows.sort((a, b) => (order[a.kind] - order[b.kind]) || b.caseRef.localeCompare(a.caseRef));
+    return { otherCases: rows, otherCasesUnavailable: false, more: items.length >= OTHER_CASES_LIMIT };
+  } catch (e) {
+    console.warn(`[Cockpit] other-cases read failed: ${e.message}`);
+    return { otherCases: [], otherCasesUnavailable: true, more: false };
+  }
+}
+
+module.exports = { getCaseOverview, getReminderFacts, readReminderCore, getLeadExtras, buildTimeline, summariseDocuments, pickLeadFields, readClientMaster, otherCasesOfClient, OTHER_CASES_LIMIT, _CM: CM };

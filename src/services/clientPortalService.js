@@ -217,12 +217,14 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
       return { members, qMembers: members.map((m) => ({ ...m, hasData: false, completionPct: 0 })), unavailable: true };
     }
   };
+  // The client's own Client ID (build step 5): the Client Master copy, read with the same row once that column is made.
+  const cidCol = require('./clientIdDisplay').columns().cm;
   const [cmData, docSummary, qRead, extras] = await Promise.all([
     mondayApi.query(
       `query($itemId: ID!) {
          items(ids: [$itemId]) {
            column_values(ids: [
-             "${CM.caseStage}", "${CM.qReadiness}", "${CM.qCompletionStatus}", "${CM.clientEmail}"
+             "${CM.caseStage}", "${CM.qReadiness}", "${CM.qCompletionStatus}", "${CM.clientEmail}"${cidCol ? `, "${cidCol}"` : ''}
            ]) { id text value }
          }
        }`,
@@ -291,6 +293,7 @@ async function getPortalSnapshot({ caseRef, validatedCase }) {
     caseSubType: validatedCase.caseSubType,
     caseStage,
     accessToken: validatedCase.accessToken,
+    clientId:    cidCol ? require('./clientIdDisplay').shownId(colTxt(cidCol)) : '',   // '' = none: the line is left out
     qReadinessPct,
     qSubmitted,                          // every member submitted (or board Done) — decides "Submitted", not 100%
     qLabel:      qSubmitted ? 'Submitted' : qProgress.label,
@@ -758,6 +761,7 @@ function buildPortalPage(snap, opts) {
 
     <div class="case-meta">
       <div>📋 <strong>Case:</strong> ${escHtml(snap.caseRef)}</div>
+      ${snap.clientId ? `<div class="client-number">🪪 <strong>${isStaff ? 'Client number' : 'Your client number'}:</strong> ${escHtml(snap.clientId)}</div>` : ''}
       <div>📌 <strong>Stage:</strong> ${escHtml(isStaff ? snap.caseStage : journey.label)}</div>
       ${snap.totalMembers > 1 ? `<div>👥 <strong>Applicants:</strong> ${snap.submittedMembers} / ${snap.totalMembers} submitted</div>` : ''}
     </div>

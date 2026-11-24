@@ -116,7 +116,9 @@ const io = {
   async fetchLeads() {
     const out = [];
     let cursor = null, pages = 0;
-    const ids = FETCH_IDS.map((id) => `"${id}"`).join(', ');
+    // … and the Lead Board "Client ID" copy once that column is made (build step 5): for the search only, kept like the phone.
+    const cidCol = require('./clientIdDisplay').columns().lead;
+    const ids = (cidCol && !FETCH_IDS.includes(cidCol) ? [...FETCH_IDS, cidCol] : FETCH_IDS).map((id) => `"${id}"`).join(', ');
     do {
       const data = await mondayApi.query(
         `query($boardId: ID!, $cursor: String) {
@@ -138,7 +140,8 @@ const io = {
         lead.hasEmail = !!String(lead.email || '').trim();
         // The phone and email stay on the SERVER for the Leads search (step 3, 2026-11-09): a
         // non-enumerable symbol, so JSON, Object.keys and {...lead} never carry them to a page.
-        Object.defineProperty(lead, CONTACT, { value: { phone: String(lead.phone || ''), email: String(lead.email || '') }, enumerable: false });
+        const cidCell = cidCol ? (it.column_values || []).find((c) => c && c.id === cidCol) : null;
+        Object.defineProperty(lead, CONTACT, { value: { phone: String(lead.phone || ''), email: String(lead.email || ''), clientId: require('./clientIdDisplay').shownId(cidCell && cidCell.text) }, enumerable: false });
         delete lead.email;
         delete lead.phone;
         // The case-gate facts (the Client Master "Waiting for" label): reduced here, server only;
@@ -291,7 +294,7 @@ async function contactIndex(opts) {
     const { buildIndexEntry } = require('./oldClientDirectory');
     idx = snap.leads.map((l) => {
       const c = l[CONTACT] || {};
-      return buildIndexEntry({ id: l.id, name: l.fullName || l.name || '', phone: c.phone, email: c.email });
+      return buildIndexEntry({ id: l.id, name: l.fullName || l.name || '', phone: c.phone, email: c.email, clientId: c.clientId });
     });
     _indexFor.set(snap.leads, idx);
   }

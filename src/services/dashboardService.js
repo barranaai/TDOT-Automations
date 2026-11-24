@@ -93,6 +93,10 @@ const { statusText } = require('../utils/mondayStatus');
 // Fetch our stat columns PLUS every people column (for per-user access control),
 // de-duplicated (Case Manager / Ops Supervisor already appear in COLS).
 const FETCH_IDS = [...new Set([...Object.values(COLS), ...caseAccess.PEOPLE_COLUMNS])];
+// The Client ID copy (build step 5): read only once the column is made (src/data/clientsBoard.json
+// cmLinkColumns.clientId — the column script fills it). The readable ID only; never the Client Account (item) id.
+const cmClientIdCol = () => require('./clientIdDisplay').columns().cm;
+function fetchIds() { const c = cmClientIdCol(); return c && !FETCH_IDS.includes(c) ? [...FETCH_IDS, c] : FETCH_IDS; }
 
 // ─── Fetch all items with cursor-based pagination ─────────────────────────────
 // The Cases board read is the slow part of the Cases page (~15 s, 100 rows a
@@ -181,7 +185,7 @@ async function _fetchAllItemsFresh() {
   // the meta read starts AFTER the listing (so the listing stays the first call), beside the batches
   const metaP = _fetchMeta();
   // 2. the rows, in parallel batches
-  const cols = FETCH_IDS.map((id) => `"${id}"`).join(',');
+  const cols = fetchIds().map((id) => `"${id}"`).join(',');
   const batches = [];
   for (let i = 0; i < ids.length; i += CASES_BATCH) batches.push(ids.slice(i, i + CASES_BATCH));
   const items = new Array(ids.length);
@@ -365,6 +369,12 @@ function peopleIds(raw) {
   return { personIds, teamIds };
 }
 
+/** The row's Client ID as shown ('' while the copy column is not made, or the cell is not an ID). */
+function clientIdOf(cvOf) {
+  const c = cmClientIdCol();
+  return c ? require('./clientIdDisplay').shownId(cvOf(c)?.text) : '';
+}
+
 /** @param {number} [boardIdx]  the row's place in the board read (Monday's board order) */
 function parseItem(item, boardIdx) {
   const cvOf = (id) => item.column_values?.find((c) => c.id === id);
@@ -449,6 +459,9 @@ function parseItem(item, boardIdx) {
     retainedBy:         col(COLS.retainedBy),                          // names, as the other people columns
     retainerStatus:     statusText(cvOf(COLS.retainerStatus)).trim(),  // the label as it is on the board
     portalLink:         linkUrl(cvOf(COLS.portalLink)),
+    // the person's Client ID ("CL-2026-00042") from the Client Master copy — '' when blank or not an ID; the key is on
+    // the row only once that column is made (until then every row has exactly the keys it had)
+    ...(cmClientIdCol() ? { clientId: clientIdOf(cvOf) } : {}),
     qReadinessPct:      numOrNull(col(COLS.qReadiness)),               // blank = null (qReadiness above reads it as 0)
     // ── More from the Monday board (the optional columns): '' / null = an empty cell (the page shows "—", never a made-up 0 or date).
     //    A date is the plain day on the board (no time, never shifted by a time zone); a status is its label, '' when empty.

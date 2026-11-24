@@ -367,7 +367,7 @@ function alSubmit(){
         var m=res.j.matches||{}; var rows=[];
         (m.leads||[]).forEach(function(l){ rows.push('Existing lead: <a href="/admin/lead/'+encodeURIComponent(l.id)+'" target="_blank" rel="noopener">'+escHtml(l.name||l.id)+'</a>'); });
         (m.cases||[]).forEach(function(c){ rows.push('Open case: <a href="/admin/case/'+encodeURIComponent(c.caseRef||'')+'" target="_blank" rel="noopener">'+escHtml(c.caseRef||'(ref pending)')+'</a> — '+escHtml(c.name||'')); });
-        (m.clients||[]).forEach(function(c){ rows.push('Client account: '+escHtml(c.name||'')); });
+        (m.clients||[]).forEach(function(c){ rows.push(c.clientId ? 'Client '+escHtml(c.clientId)+' · '+escHtml(c.name||'') : 'Client account: '+escHtml(c.name||'')); });
         var box=alEl('al-matches');
         /* The Not Wanted list (point 5): the warning comes with the 409 — a warning only; "Create lead" again adds them. */
         var bl=tdotBlacklistHtml(res.j.blacklist,{leadLinks:true});

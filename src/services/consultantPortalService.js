@@ -3140,7 +3140,8 @@ async function findClientMatches({ email, phone, withLeads = false, strict = fal
 
   out.leads = [...leadMap.values()];
   out.cases = [...caseMap.values()];
-  out.clients = (clients || []).map((c) => ({ id: c.id, name: c.name, email: c.email, confidence: c.confidence, reasons: c.reasons }));
+  // The page gets the readable Client ID ('' = none) — never the Client Account (Monday item) id (build step 5).
+  out.clients = (clients || []).map((c) => ({ clientId: require('./clientIdDisplay').shownId(c.clientIdText), name: c.name, email: c.email, confidence: c.confidence, reasons: c.reasons }));
   // withLeads (Direct consultation, step 2): the matched lead rows as read, for the server's own
   // decisions (follow-up, a live booking, "Use this lead") — never sent to a page.
   if (withLeads) {

@@ -158,9 +158,14 @@ async function sendEmail({ to, subject, html, replyTo, attachments, tag, testCli
     throw new Error('Microsoft Mail: no recipients provided');
   }
 
+  // A CLIENT email (a tag) carries one short line "Your client number: CL-…" at the end of the BODY when the
+  // person has a Client ID (build step 5) — never in the subject. Best-effort: no ID, no copy column yet, or a
+  // slow / failed read = the body exactly as given.
+  const content = (tag && typeof tag === 'object') ? await require('./clientIdDisplay').mailBody(html, tag) : html;
+
   const message = {
     subject,
-    body:         { contentType: 'HTML', content: html },
+    body:         { contentType: 'HTML', content },
     toRecipients: recipients,
   };
 

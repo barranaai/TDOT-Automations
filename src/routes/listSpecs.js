@@ -258,6 +258,38 @@ function casesListSpec(ctx) {
   }
   /* A cell of names ("A, B"): each name is its own choice; whole names only. */
   function names(v) { return s(v).split(',').map(s).filter(function (m) { return m && m !== 'Unassigned'; }); }
+  /* The client's Client ID (build step 5, 2026-11-25): "CL-2026-00042" on the row, or ''. What staff TYPE is read the way
+     utils/clientId.parseClientId reads it — "CL", an optional 4-digit year, the number; separated by nothing, spaces, dashes,
+     dots, _ # or : — nothing else; so "CL 42", "cl42" and "CL-2026-00042" find that one person (the number is the person; a
+     typed year must match too). Bare digits are never an ID (they stay the phone search). Written without a backslash (the
+     page-script rule); test/clientIdDisplay.test.js holds this copy to parseClientId. */
+  function cidParts(v) {
+    var p = s(v).split('-');
+    if (p.length !== 3 || p[0] !== 'CL' || !/^[0-9]{4}$/.test(p[1]) || !/^[0-9]{5,}$/.test(p[2])) return null;
+    return Number(p[2]) >= 1 ? { year: Number(p[1]), n: Number(p[2]) } : null;
+  }
+  function cidTyped(q) {
+    var t = s(q).toUpperCase(), SEPS = '-_.#:‐‑‒–—―', toks = [], i, ch, kind;
+    if (!t || t.length > 40 || t.slice(0, 2) !== 'CL') return null;
+    for (i = 2; i < t.length; i++) {
+      ch = t.charAt(i);
+      kind = (ch >= '0' && ch <= '9') ? 'd' : (ch.trim() === '' || SEPS.indexOf(ch) >= 0) ? 's' : '';
+      if (!kind) return null;
+      if (toks.length && toks[toks.length - 1].k === kind) toks[toks.length - 1].v += ch; else toks.push({ k: kind, v: ch });
+    }
+    if (toks.length && toks[0].k === 's') toks.shift();
+    var shape = toks.map(function (x) { return x.k; }).join('');
+    if (shape === 'd' && toks[0].v.length <= 7) { var n = Number(toks[0].v); return n >= 1 ? { n: n, year: null } : null; }
+    if (shape === 'dsd' && toks[0].v.length === 4 && toks[2].v.length <= 7) {
+      var y = Number(toks[0].v), k = Number(toks[2].v);
+      return y >= 1000 && k >= 1 ? { n: k, year: y } : null;
+    }
+    return null;
+  }
+  function cidHit(r, q) {
+    var want = cidTyped(q), has = want && cidParts(r.clientId);
+    return !!(has && has.n === want.n && (!want.year || has.year === want.year));
+  }
   function dtype(r) { if (ctx.typeOf) return ctx.typeOf(r); var t = s(r.deadlineType); return t === 'Deadline' ? 'real' : t === 'Imaginary' ? 'imaginary' : 'none'; }
   /* A status column sorted in the board's own label order (the order Monday lists the labels in), where the board meta is
      on the page; without it A → Z (the phases with their numbers as numbers). An empty cell is blank — last both ways. */
@@ -359,9 +391,17 @@ function casesListSpec(ctx) {
       'supervisor', 'escalationReason', 'docsLocation', 'consultant', 'consultOutcome', 'consultFee', 'sourceRef'],
     defaultSort: { key: 'createdAt', dir: 'desc' },   // newest case first
     // The search box also finds a case by the client's email, phone (however the number is written) and dependents (2026-11-12).
-    search: { chip: 'Search', text: function (r) { return [r.clientName, r.caseRef, r.caseType, r.officer, r.clientEmail, r.clientPhone, r.dependents]; },
-      digits: function (r) { return s(r.clientPhone); } },
+    // … and by the client's Client ID: the whole ID as written ("CL-2026-00042", "00042") and, typed as an ID ("CL 42"), that one person (match).
+    search: { chip: 'Search', text: function (r) { var t = [r.clientName, r.caseRef, r.caseType, r.officer, r.clientEmail, r.clientPhone, r.dependents]; return r.clientId ? t.concat([r.clientId]) : t; },
+      digits: function (r) { return s(r.clientPhone); },
+      match: function (r, q) { return cidHit(r, q); } },
   };
+  /* The Client ID column's sort (only once the Monday column exists — ctx.clientIdCol, as casesListOpts): by its number
+     (the person), lowest first; no ID last both ways. */
+  if (ctx && ctx.clientIdCol === true) {
+    spec.sorts.clientId = function (r) { var p = cidParts(r.clientId); return p ? ('000000000' + p.n).slice(-9) : ''; };
+    spec.sortBlanksLast.push('clientId');
+  }
   if (TODO) {
     /* The page-only tab's own column, "With" (its id: the tab's key + 'With'): the case's Case Manager(s) — who has it for
        review. Its OWN filter (the empty choice reads "Nobody") and sort, so the Manager filter and sort of the other tabs
@@ -473,6 +513,13 @@ function casesListOpts(ctx) {
       { id: 'consultRecord', label: 'Consultation record', title: 'Opens the consultation record in a new tab', sort: 'consultRecord', sortText: LINK, sortDirs: ASC, tabs: NONE, more: 'link' },
     ],
   };
+  /* The Client ID (build step 5, 2026-11-25): an optional column like the board ones (on no tab until a person switches it
+     on with the Columns button; last in that group), and only once the Client Master "Client ID" column exists
+     (ctx.clientIdCol — the page says so; the same answer on the server and on the page). Until then every tab, and the
+     Columns panel, are exactly as before. The cell is the page's own (cells.clientId): the ID, or the dash. */
+  if (ctx && ctx.clientIdCol === true) {
+    opts.cols.push({ id: 'clientId', label: 'Client ID', title: 'Client ID: the same for all of this client’s applications (search it as “CL 42”)', sort: 'clientId', sortText: ['Lowest number first', 'Highest number first'], sortDirs: ASC, tabs: NONE, more: 'text' });
+  }
   /* The page-only tab's own column (only when the page has the tab): who has the case for review. Its id, filter and sort
      are the tab's key + 'With'. It comes last in this list; the tab's own column order (With third) is the page's (CM_TABCOLS). */
   if (TODO) {

@@ -353,10 +353,14 @@ function cmPageViews(todoOn) {
   return todoOn ? views.concat([todoList.PAGE_VIEW]) : views;
 }
 
+/** Is the Client Master "Client ID" copy column made (build step 5)? Then the page offers its optional Client ID column —
+    the same answer for the server's lists here and for the page's own list (listSpecs casesListOpts ctx.clientIdCol). */
+function cmClientIdCol() { return !!require('../services/clientIdDisplay').columns().cm; }
+
 /** The column ids of each Client Master tab: { '': the All tab, assigning: […], deadlines: […], eeita: […] } — and, when the
     page has it, the To-do tab's twelve in their own order (todoListService.DEFAULT_COLS: an order colsOnTab cannot give). */
 function cmTabCols(views) {
-  const cols = casesListOpts({ views }).cols, on = listCore({}).colsOnTab;
+  const cols = casesListOpts({ views, clientIdCol: cmClientIdCol() }).cols, on = listCore({}).colsOnTab;
   const out = { '': on(cols, '').map((c) => c.id) };
   for (const v of views) out[v.key] = v.todoBox ? todoList.DEFAULT_COLS.slice() : on(cols, v.key).map((c) => c.id);
   return out;
@@ -365,7 +369,7 @@ function cmTabCols(views) {
 /** Each column's name for the Columns panel: { id: label } (the delete column has none and is not a choice). */
 function cmColNames(views) {
   const out = {};
-  for (const c of casesListOpts({ views }).cols) if (c.label) out[c.id] = c.label;
+  for (const c of casesListOpts({ views, clientIdCol: cmClientIdCol() }).cols) if (c.label) out[c.id] = c.label;
   return out;
 }
 /** More from the Monday board (Faran 2026-11-20): the optional columns — on no tab by default (so they are in no list of
@@ -373,7 +377,7 @@ function cmColNames(views) {
     clip | link) }, in the list's own order (listSpecs casesListOpts: a column with more: …). */
 function cmMoreCols(views) {
   const out = {};
-  for (const c of casesListOpts({ views }).cols) if (c.more) out[c.id] = String(c.more);
+  for (const c of casesListOpts({ views, clientIdCol: cmClientIdCol() }).cols) if (c.more) out[c.id] = String(c.more);
   return out;
 }
 /* The Columns button's code for the page (Client Master only). Built here, outside the page's template literal: the
@@ -2546,8 +2550,10 @@ function caseRow(c, v, today, wide) {
     // ── the wide table: Case Ref and Client stay in view while it scrolls sideways (cm-pin); the plain All table: as it has always been ──
     caseRef: pin ? '<td class="cm-pin cm-pin1"' + (c.caseRef ? ' title="' + escHtml(c.caseRef) + '"' : '') + '>' + refCell + '</td>'
       : '<td style="font-weight:600;color:var(--navy);white-space:nowrap">' + refCell + '</td>',
-    clientName: pin ? '<td class="cm-pin cm-pin2" title="' + escHtml(c.clientName) + '"><span class="cm-ell">' + escHtml(c.clientName) + '</span></td>'
+    clientName: pin ? '<td class="cm-pin cm-pin2" title="' + escHtml(c.clientName + (c.clientId ? ' · ' + c.clientId : '')) + '"><span class="cm-ell">' + escHtml(c.clientName) + '</span></td>'
       : '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(c.clientName) + '</td>',
+    // the client's Client ID (an optional column, once the Monday column exists): the ID, or the dash
+    clientId: cmTextCell('cm-c-cid', c.clientId, false),
     // ── the view tabs' columns ──
     dependents: cmTextCell('cm-c-dep', c.dependents, true),
     clientEmail: cmTextCell('cm-c-email', c.clientEmail, true),
@@ -3274,7 +3280,7 @@ document.addEventListener('DOMContentLoaded', function() {
   if (VIEW === 'summary') { loadKpis(); loadTrend(); }   // the monthly figures and the 12-month charts load on their own, beside the case data
 });
 </script>
-${isSummary ? '' : '<script>' + listTableScript(casesListSpec, casesListOpts, '{ healthOrder: HEALTH_ORDER, views: CM_VIEWS, initial: cmInitial, onChange: cmOnChange, ' + (todoOn ? 'todoHas: cmTodoHas, ' : '') + 'meta: function() { return (_data && _data.meta) || null; }, typeOf: CMW.typeOf }') + (todoOn ? '\n' + todoPage.TODO_BOOT_JS : '') + '</script>'}
+${isSummary ? '' : '<script>' + listTableScript(casesListSpec, casesListOpts, '{ healthOrder: HEALTH_ORDER, views: CM_VIEWS, initial: cmInitial, onChange: cmOnChange, ' + (todoOn ? 'todoHas: cmTodoHas, ' : '') + 'meta: function() { return (_data && _data.meta) || null; }, typeOf: CMW.typeOf' + (cmClientIdCol() ? ', clientIdCol: true' : '') + ' }') + (todoOn ? '\n' + todoPage.TODO_BOOT_JS : '') + '</script>'}
 ${DEADLINE_CHANGE_HTML}
 </body>
 </html>`;

@@ -191,14 +191,13 @@ async function gatherReusableProfile({ sourceCaseRef }) {
     refusalDate: (lead && lead.refusalDate) || '',
     refusalType: (lead && lead.refusalType) || '',
     openCases: [],
+    otherCases: [],   // the client's cases that are NOT open — Cancelled, Lead only, Closed — each said so (review #10)
   };
   try {
     const accounts = require('./clientAccountService');
     const cmAccount = lead && lead.clientAccountId ? String(lead.clientAccountId).trim() : '';
     if (cmAccount) {
-      priorFacts.openCases = (await accounts.getClientCases(cmAccount))
-        .filter((c) => c.caseRef && c.caseRef !== ref)
-        .map((c) => ({ caseRef: c.caseRef, caseStage: c.caseStage }));
+      Object.assign(priorFacts, splitPriorCases(await accounts.getClientCases(cmAccount), ref));
     }
   } catch (err) { console.warn(`[Profile] open-cases read failed for ${ref}: ${err.message}`); }
 
@@ -211,4 +210,21 @@ async function gatherReusableProfile({ sourceCaseRef }) {
   };
 }
 
-module.exports = { mineQuestionnaireProfile, mergeProfileSources, gatherReusableProfile, _internal: { LABEL_TO_FIELD, STALE_AFTER_MS } };
+/**
+ * PURE. The client's other Client Master rows (getClientCases) split for the "New application" box (review #10):
+ * openCases = the open ones only; otherCases = Cancelled / Lead only / Closed, each with where it stands. This case and
+ * TEST rows are left out.
+ */
+function splitPriorCases(cases, ref) {
+  const { caseStanding } = require('./clientIdDisplay');
+  const list = (cases || [])
+    .filter((c) => c && c.caseRef && c.caseRef !== ref)
+    .map((c) => ({ caseRef: c.caseRef, caseStage: c.caseStage, st: caseStanding({ group: c.group, caseStage: c.caseStage }) }))
+    .filter((c) => c.st.kind !== 'test');
+  return {
+    openCases: list.filter((c) => c.st.kind === 'open').map((c) => ({ caseRef: c.caseRef, caseStage: c.caseStage })),
+    otherCases: list.filter((c) => c.st.kind !== 'open').map((c) => ({ caseRef: c.caseRef, standing: c.st.label })),
+  };
+}
+
+module.exports = { splitPriorCases, mineQuestionnaireProfile, mergeProfileSources, gatherReusableProfile, _internal: { LABEL_TO_FIELD, STALE_AFTER_MS } };

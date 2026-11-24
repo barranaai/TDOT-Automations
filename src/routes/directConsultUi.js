@@ -391,7 +391,7 @@ function openDirectConsult(){
     var people={}, order=[];
     function person(name){ var k=dqNorm(name)||'?'; if(!people[k]){ people[k]={ name:name||'(no name)', lines:[] }; order.push(k); } return people[k]; }
     var existing=radio('dq-choice')==='existing', s=slot();
-    ((m&&m.clients)||[]).forEach(function(c){ person(c.name).lines.push('Client account'+(c.reasons&&c.reasons.length?' ('+dqEsc(c.reasons.join(', '))+')':'')); });
+    ((m&&m.clients)||[]).forEach(function(c){ person(c.name).lines.push((c.clientId?'Client '+dqEsc(c.clientId):'Client account')+(c.reasons&&c.reasons.length?' ('+dqEsc(c.reasons.join(', '))+')':'')); });
     ((m&&m.cases)||[]).forEach(function(c){ person(c.name).lines.push('Case <a href="/admin/case/'+encodeURIComponent(c.caseRef||'')+'" target="_blank" rel="noopener">'+dqEsc(c.caseRef||'(no number yet)')+'</a>'+(c.caseStage?' · '+dqEsc(c.caseStage):'')); });
     var uses=[];
     ((m&&m.leads)||[]).forEach(function(l){

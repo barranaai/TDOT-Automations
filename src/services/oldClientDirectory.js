@@ -219,8 +219,12 @@ function searchPeople(people, rawQ) {
  * One searchable entry for ONE record (no grouping — the id maps 1:1 to the row), in the shape
  * matchPeople reads. Used by the Leads search (leadSearch.js).
  */
-function buildIndexEntry({ id, name, phone, email }) {
+function buildIndexEntry({ id, name, phone, email, clientId }) {
+  // the record's Client ID as search fields (build step 5): { clientN, clientYear } — 0 / 0 when it has none
+  const cid = require('./clientIdDisplay').searchFields(clientId);
   return {
+    clientN: cid.clientN,
+    clientYear: cid.clientYear,
     id: String(id),
     name: String(name || '').replace(/\s+/g, ' ').trim(),
     groupKey: compact(name),

@@ -688,7 +688,7 @@ async function getClientCases(clientId) {
   if (!cfg || !(cfg.cmLinkColumns || {}).clientAccountId) return [];
   const { clientMasterBoardId } = require('../../config/monday');
   const data = await mondayApi.query(
-    `query($b:ID!,$v:String!){ items_page_by_column_values(limit:100, board_id:$b, columns:[{column_id:"${cfg.cmLinkColumns.clientAccountId}", column_values:[$v]}]){ items{ id name column_values(ids:["text_mm142s49","dropdown_mm0xd1qn","color_mm0x8faa","color_mm0x9fnn"]){ id text } } } }`,
+    `query($b:ID!,$v:String!){ items_page_by_column_values(limit:100, board_id:$b, columns:[{column_id:"${cfg.cmLinkColumns.clientAccountId}", column_values:[$v]}]){ items{ id name group{ id title } column_values(ids:["text_mm142s49","dropdown_mm0xd1qn","color_mm0x8faa","color_mm0x9fnn"]){ id text } } } }`,
     { b: String(clientMasterBoardId), v: String(clientId) }
   );
   return (data?.items_page_by_column_values?.items || []).map((it) => ({
@@ -698,6 +698,8 @@ async function getClientCases(clientId) {
     caseType: colText(it, 'dropdown_mm0xd1qn'),
     caseStage: colText(it, 'color_mm0x8faa'),
     paymentStatus: colText(it, 'color_mm0x9fnn'),
+    // where the row stands (review #10): a Cancel / Did-not-retain or Leads group row is never an open case
+    group: { id: String((it.group && it.group.id) || ''), title: String((it.group && it.group.title) || '') },
   }));
 }
 

@@ -603,7 +603,7 @@ function dcRenderMatches(m){
   if(!any){ box.style.display='none'; box.innerHTML=''; DC_MATCHES=null; return; }
   var rows=[];
   (m.clients||[]).forEach(function(c){
-    rows.push('<div class="dcm-info">Client account: '+escHtml(c.name)+(c.reasons&&c.reasons.length?' <span class="dcm-badge">'+escHtml(c.reasons.join(', '))+'</span>':'')+'</div>');
+    rows.push('<div class="dcm-info">'+(c.clientId ? 'Client '+escHtml(c.clientId)+' · '+escHtml(c.name) : 'Client account: '+escHtml(c.name))+(c.reasons&&c.reasons.length?' <span class="dcm-badge">'+escHtml(c.reasons.join(', '))+'</span>':'')+'</div>');
   });
   (m.cases||[]).forEach(function(c){
     rows.push('<div class="dcm-info">Open case: <a href="/admin/case/'+encodeURIComponent(c.caseRef)+'" target="_blank" rel="noopener">'+escHtml(c.caseRef||'(ref pending)')+'</a> — '+escHtml(c.name)+(c.caseStage?' · '+escHtml(c.caseStage):'')+'. If this is the same matter, work in the case instead of creating a new client.</div>');
@@ -652,6 +652,7 @@ function dcApplyProfile(ref,p){
   var pf=p.priorFacts||{};
   if(pf.hadRefusal) rows.push('<div class="dcp-fact">⚠ Refusal on file'+(pf.refusalType?' ('+escHtml(pf.refusalType)+(pf.refusalDate?', '+escHtml(pf.refusalDate):'')+')':'')+' — ensure the new application discloses it.</div>');
   (pf.openCases||[]).forEach(function(c){ rows.push('<div class="dcp-fact">This client also has open case '+escHtml(c.caseRef)+(c.caseStage?' ('+escHtml(c.caseStage)+')':'')+'.</div>'); });
+  (pf.otherCases||[]).forEach(function(c){ rows.push('<div class="dcp-fact">This client also has case '+escHtml(c.caseRef)+(c.standing?' ('+escHtml(c.standing)+')':'')+'. It is not open.</div>'); });
   /* as the one-line box holds it: line breaks dropped, or a carried two-line address would never ask for the tick */
   DC_PROFILE_ADDR=String(id.address||'').split(String.fromCharCode(13)).join('').split(String.fromCharCode(10)).join('');
   if(id.address) rows.push('<label class="dcp-confirm"><input type="checkbox" id="dcp-addr-ok"><span>I confirmed the residential address is CURRENT with the client (it prints on the retainer agreement)</span></label>');

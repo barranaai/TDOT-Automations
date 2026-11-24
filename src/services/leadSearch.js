@@ -7,7 +7,8 @@
  * The phone and email never go to the browser: the page POSTs the typed text and
  * gets back ONLY the matching lead ids. Matching is oldClientDirectory's
  * (matchPeople): "@" → email (any case), 4+ digits and no letters → phone (last
- * 10 digits, +1 / a leading 1 allowed), otherwise name words in any order.
+ * 10 digits, +1 / a leading 1 allowed), otherwise name words in any order. A Client ID ("CL 42") is
+ * looked for first, on the Lead Board's Client ID copy (mode 'clientId').
  * Reads the shared snapshot (leadSnapshot.contactIndex) — no Monday call when warm.
  */
 
@@ -21,6 +22,14 @@ const io = {
 async function search(q) {
   const { matchPeople } = require('./oldClientDirectory');
   const { index, stale } = await io.contactIndex();
+  // A Client ID FIRST (build step 5, review #5): "CL 42", "CL-2026-00042" → the leads carrying that ID (the Lead Board
+  // copy). Typed as an ID it is never a name search; bare digits are never an ID (they stay the phone search).
+  const D = require('./clientIdDisplay');
+  const asId = D.searchQuery(q);
+  if (asId) {
+    const ids = [...new Set(index.filter((e) => D.entryMatches(e, asId)).map((e) => String(e.id)))].slice(0, MAX_IDS);
+    return { ok: true, mode: 'clientId', ids, ...(stale ? { stale: true } : {}) };
+  }
   const { hits, mode } = matchPeople(index, String(q == null ? '' : q));
   if (mode === 'short') return { ok: true, mode: 'short', ids: [] };
   const ids = [...new Set(hits.map((h) => String(h.id)))].slice(0, MAX_IDS);

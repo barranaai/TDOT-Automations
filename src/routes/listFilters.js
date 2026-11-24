@@ -30,7 +30,8 @@
  *         sortBlanksLast: [sort keys] (their blank values go last in both directions),
  *         search: { text(r) -> string | string[], chip, id(r) (the row's lead id — the server search answers ids),
  *                   digits(r) -> the row's phone digits (a search text that is a phone number — digits, spaces, + ( ) - . only, three
- *                   digits or more — also finds the rows whose digits contain its digits, however either is written) },
+ *                   digits or more — also finds the rows whose digits contain its digits, however either is written),
+ *                   match(r, q) -> true also finds the row (q lowercased; the Client Master "CL 42" Client ID search) },
  *         flags: { key: { chip, test(r) } },
  *         date: { key, chip, get(r) -> 'YYYY-MM-DD',
  *                 per: { facet, all, none: [values], legacy } (a date range PER TAB — Consultations 2026-11-12: the facet is the
@@ -150,7 +151,7 @@ function listCore(spec) {
         if (!serverHit.set[s(SEARCH.id(r))]) return false;
       } else if (q) {
         var t = SEARCH.text(r), list = Array.isArray(t) ? t : [t];
-        if (!list.some(function (x) { return s(x).toLowerCase().indexOf(q) >= 0; }) && !digitsHit(r, q)) return false;
+        if (!list.some(function (x) { return s(x).toLowerCase().indexOf(q) >= 0; }) && !digitsHit(r, q) && !(SEARCH.match && SEARCH.match(r, q))) return false;
       }
     }
     for (var k in FLAGS) { if (k !== skip && st[k] && !FLAGS[k].test(r)) return false; }

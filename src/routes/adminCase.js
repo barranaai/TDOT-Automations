@@ -66,6 +66,12 @@ function buildCockpitHTML(caseRef, opts = {}) {
     .case-hd-top { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; }
     .case-name { font-size:23px; font-weight:800; color:var(--navy); letter-spacing:-.5px; margin:0; }
     .case-sub { font-size:12px; color:var(--light); margin-top:3px; font-weight:600; }
+    .case-cid { font-size:12px; color:var(--navy); margin-top:3px; font-weight:700; letter-spacing:.2px; }
+    .oc-list { display:flex; flex-direction:column; gap:6px; }
+    .oc-row { font-size:13px; }
+    .oc-st { display:inline-block; font-size:11px; font-weight:700; padding:1px 8px; border-radius:999px; background:#eef2f7; color:#475569; margin-left:4px; }
+    .oc-st.oc-open { background:#e7f6ec; color:#166534; }
+    .oc-st.oc-cancelled, .oc-st.oc-lead { background:#fdf2e9; color:#9a3412; }
     .case-actions { display:flex; gap:8px; flex-wrap:wrap; }
     .act-btn { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:8px; font-size:12px; font-weight:700; text-decoration:none; border:1px solid var(--border); color:var(--navy); background:white; transition:all .15s; }
     .act-btn:hover { border-color:var(--navy); background:#f0f4f8; }
@@ -315,6 +321,7 @@ ${buildNavHeader('dashboard')}
       <div class="case-hd-top">
         <div>
           <h1 class="case-name" id="c-name">—</h1>
+          <div class="case-cid" id="c-cid" style="display:none"></div>
           <div class="case-sub" id="c-sub">—</div>
         </div>
         <div class="case-actions" id="c-actions"></div>
@@ -375,6 +382,9 @@ ${buildNavHeader('dashboard')}
           <div id="qm-list"></div>
         </div>
       </div>
+
+      <!-- Other cases of this client (build step 5) — the same Client ID on Client Master; hidden when the client has no ID or no other case -->
+      <div class="card" id="oc-card" style="display:none;margin-top:16px"></div>
 
       <!-- Sponsor / inviter — hidden unless the case type has a sponsor role -->
       <div class="card" id="sp-card" style="display:none;margin-top:16px">
@@ -899,8 +909,29 @@ function teamRmDlg(role, uid) {
   try { c.box.querySelector('#team-cancel').focus(); } catch (x) {}
 }
 
+/* The client's Client ID under the name, and "Other cases of this client" (build step 5). No ID = neither shows.
+   A Cancelled or Lead-only row is said so — never called an open case. A failed read says so — never "no other cases". */
+function renderClientId(d) {
+  var cl = (d && d.client) || {}, el = document.getElementById('c-cid');
+  if (el) { el.textContent = cl.id ? 'Client ID ' + cl.id : ''; el.style.display = cl.id ? '' : 'none'; }
+  var box = document.getElementById('oc-card');
+  if (!box) return;
+  var list = cl.otherCases || [];
+  if (!cl.id || (!cl.otherCasesUnavailable && !list.length)) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  var rows = list.map(function(c) {
+    var ref = c.caseRef ? '<a href="/admin/case/' + encodeURIComponent(c.caseRef) + '">' + escHtml(c.caseRef) + '</a>' : '<span class="muted">No case number yet</span>';
+    return '<div class="oc-row">' + ref + (c.caseType ? ' · ' + escHtml(c.caseType) : '') +
+      ' <span class="oc-st oc-' + escHtml(c.kind || 'open') + '">' + escHtml(c.standing || '') + '</span></div>';
+  });
+  box.innerHTML = '<div class="card-title">🗂 Other cases of this client <span class="cnt">' + (list.length ? list.length : '') + '</span></div>' +
+    (cl.otherCasesUnavailable ? '<div class="muted">The other cases could not be read just now. Reload the page in a minute.</div>' : '<div class="oc-list">' + rows.join('') + '</div>') +
+    (cl.more ? '<div class="muted" style="margin-top:6px">Only the first ' + list.length + ' are shown.</div>' : '');
+  box.style.display = '';
+}
+
 function render(d) {
   document.getElementById('c-name').textContent = d.clientName || d.caseRef;
+  renderClientId(d);
   document.getElementById('c-sub').textContent =
     d.caseRef + '  ·  ' + (d.caseType || '—') + (d.caseSubType ? ('  ·  ' + d.caseSubType) : '');
 
