@@ -434,6 +434,120 @@ async function _ensureClientId(cfg, col, id, { mode, year, why }) {
   return { ok: true, id: a.id, minted: true };
 }
 
+// ─── Following "Merged into" (review #9) ─────────────────────────────────────────
+
+const MAX_MERGE_HOPS = 10;
+
+/**
+ * The record a client record stands for today: itself, or — Merged — the record it was
+ * merged into, and so on down the chain. The "Merged into" box is free text: a record
+ * number (Monday item id) or a Client ID ("CL-2026-00042"). Stops, and says why, on:
+ *   missing         a record not on the Clients board
+ *   cycle           a chain that comes back on itself
+ *   archived        it ends on an Archived record
+ *   merged-nowhere  a Merged record whose box is blank or unreadable
+ *   ambiguous       a Client ID found on two records
+ *   too-deep        more than 10 steps
+ *   bad-link        the start is not a record number
+ *   unavailable     a read failed (never taken as "missing")
+ *
+ * @param {string} startId  a record number
+ * @param {{ getById: (id) => row|null|Promise, getByClientNumber?: (n) => row[]|Promise }} lookup
+ *   row = { id, status, mergedInto, clientIdText, … }; getById may throw (→ unavailable)
+ * @returns {Promise<{ ok: true, accountId, row, path: string[], merged: boolean }
+ *                  | { ok: false, reason, path: string[] }>}
+ */
+async function resolveAccount(startId, lookup) {
+  const path = [];
+  let id = /^\s*\d+\s*$/.test(String(startId == null ? '' : startId)) ? String(startId).trim() : '';
+  if (!id) return { ok: false, reason: 'bad-link', path };
+  for (let hop = 0; hop <= MAX_MERGE_HOPS; hop++) {
+    if (path.includes(id)) return { ok: false, reason: 'cycle', path: [...path, id] };
+    path.push(id);
+    let row;
+    try { row = await lookup.getById(id); }
+    catch (err) { return { ok: false, reason: 'unavailable', message: err.message, path }; }
+    if (!row) return { ok: false, reason: 'missing', path };
+    const status = String(row.status || '').trim();
+    if (status === 'Archived') return { ok: false, reason: 'archived', path };
+    if (status !== 'Merged') return { ok: true, accountId: String(row.id), row, path, merged: path.length > 1 };
+    const into = String(row.mergedInto || '').trim();
+    if (/^\d+$/.test(into)) { id = into; continue; }
+    const { parseClientId } = require('../utils/clientId');
+    const p = isClientId(into) ? parseClientId(into) : null;
+    if (!p || !lookup.getByClientNumber) return { ok: false, reason: 'merged-nowhere', path };
+    let hits;
+    try { hits = (await lookup.getByClientNumber(p.n)) || []; }
+    catch (err) { return { ok: false, reason: 'unavailable', message: err.message, path }; }
+    if (hits.length > 1) return { ok: false, reason: 'ambiguous', path };
+    if (!hits.length) return { ok: false, reason: 'missing', path };
+    id = String(hits[0].id);
+  }
+  return { ok: false, reason: 'too-deep', path };
+}
+
+/** One Clients row read for resolveAccount: { id, status, mergedInto, clientIdText } or null (not on the board). */
+async function readAccountRow(cfg, id) {
+  const idCol = (cfg.columns || {}).clientId || '';
+  const cols = [cfg.columns.status, cfg.columns.mergedInto, ...(idCol ? [idCol] : [])];
+  const data = await mondayApi.query(
+    `query($id:ID!){ items(ids:[$id], limit:1){ id name board { id } column_values(ids:${JSON.stringify(cols)}){ id text } } }`,
+    { id: String(id) });
+  const it = data && data.items && data.items[0];
+  if (!it || !it.board || String(it.board.id) !== String(cfg.boardId)) return null;
+  return { id: String(it.id), name: it.name, status: String(colText(it, cfg.columns.status)).trim(),
+    mergedInto: String(colText(it, cfg.columns.mergedInto)).trim(), clientIdText: idCol ? String(colText(it, idCol)).trim() : '' };
+}
+
+/**
+ * resolveAccount over Monday reads (one row at a time): the record and the readable
+ * Client ID a record number stands for today. Never throws.
+ * @returns {Promise<{ ok: true, accountId, clientIdText, merged, path } | { ok: false, reason, path }>}
+ */
+async function resolveClientId(accountId) {
+  const cfg = loadBoard();
+  if (!cfg) return { ok: false, reason: 'dormant', path: [] };
+  try {
+    const idCol = (cfg.columns || {}).clientId || '';
+    const r = await resolveAccount(accountId, {
+      getById: (id) => readAccountRow(cfg, id),
+      getByClientNumber: idCol ? async (n) => {
+        const { formatClientId } = require('../utils/clientId');
+        const { torontoYear } = require('../utils/torontoTime');
+        const forms = [];
+        for (let y = 2000; y <= torontoYear(Date.now()) + 1; y++) forms.push(formatClientId(y, n));
+        const d = await mondayApi.query(
+          `query($b:ID!,$v:[String]!){ items_page_by_column_values(limit:2, board_id:$b, columns:[{column_id:"${idCol}", column_values:$v}]){ items{ id } } }`,
+          { b: String(cfg.boardId), v: forms });
+        return ((d && d.items_page_by_column_values && d.items_page_by_column_values.items) || []).map((x) => ({ id: String(x.id) }));
+      } : null,
+    });
+    if (!r.ok) return r;
+    return { ok: true, accountId: r.accountId, clientIdText: isClientId(r.row.clientIdText) ? r.row.clientIdText : '', merged: r.merged, path: r.path };
+  } catch (err) {
+    return { ok: false, reason: 'unavailable', message: err.message, path: [] };
+  }
+}
+
+/**
+ * The record to use for an account a lead already carries (staff chose it, or a paid
+ * consultation made it): with CLIENT_IDS 'on', a Merged one is followed to the record
+ * it was merged into. Anything else — off, report, a chain that cannot be followed —
+ * keeps the account as given (the case is linked as before; the ID step then refuses
+ * a Merged/Archived row). Never throws.
+ */
+async function survivingAccount(accountId, { why = '' } = {}) {
+  const given = String(accountId || '').trim();
+  if (!given || !require('../../config/features').clientIdsOn()) return given;
+  const r = await module.exports.resolveClientId(given);
+  if (r.ok && r.accountId !== given) {
+    console.log(`[ClientId] account ${given} was merged into ${r.accountId} — that one is used${why ? ` (${why})` : ''}`);
+    return r.accountId;
+  }
+  if (!r.ok && r.reason !== 'unavailable' && r.reason !== 'dormant') console.warn(`[ClientId] account ${given}: ${r.reason} — kept as it is${why ? ` (${why})` : ''}`);
+  return given;
+}
+
 // ─── A paid consultation gives the person their account + Client ID (decision 6) ──
 
 const _paidInFlight = new Map();   // lead id → Promise
@@ -504,7 +618,8 @@ async function _onConsultationPaid(leadId, { lead, via, mode }) {
     return { ok: false, reason: 'report', ...(exact ? { clientId: exact.id } : {}) };
   }
 
-  let clientId = preChosen, created = false, knownId = '', review = [];
+  let clientId = preChosen ? await self.survivingAccount(preChosen, { why: 'paid consultation' }) : '';
+  let created = false, knownId = '', review = [];
   if (!clientId) {
     const r = await self.findOrCreate({
       email: l.email, phone: l.phone, fullName: l.fullName || l.name,
@@ -590,5 +705,6 @@ module.exports = {
   loadBoard, normalizeEmail, normalizePhone, classifyMatch,
   findMatches, findOrCreate, linkCase, linkLead, getClient, getClientCases,
   ensureClientId, yearForLead, onConsultationPaid, queueConsultationPaid,
+  resolveAccount, resolveClientId, survivingAccount, MAX_MERGE_HOPS,
   _setBoardForTests,
 };

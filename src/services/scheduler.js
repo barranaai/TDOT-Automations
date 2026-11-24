@@ -244,6 +244,15 @@ function startScheduler() {
       console.error('[Scheduler] Consultation copy refresh failed:', err.message)));
   console.log('[Scheduler] Job registered — Client Master consultation copy refresh hourly (:46)');
 
+  // ── Client IDs (2026-11-25): the hourly check at :43 (no other job runs at :43). CLIENT_IDS=off (the
+  // default): nothing is read. report: it works out and logs what it would fix. on: it gives missing IDs
+  // (only to records made since CLIENT_IDS_HEAL_SINCE), fixes the Client Master / Lead Board copies, and
+  // lists for staff what a person must decide (the same person twice, an ID typed wrong). Never joins or renumbers.
+  cron.schedule('43 * * * *', () =>
+    withTimeout('Client ID check', () => require('./clientIdHealer').tick())
+      .catch((err) => console.error('[Scheduler] Client ID check failed:', err.message)));
+  console.log('[Scheduler] Job registered — Client ID check hourly (:43, only when CLIENT_IDS is report or on)');
+
   // ── The Leads list's "Current status" (Faran 2026-10-28): a copy of the Lead
   // Board's recent notes (invite, reminders, remarks). Read back 45 days at boot,
   // then the new notes every 10 minutes (a full re-read every 6 hours). Read-only.

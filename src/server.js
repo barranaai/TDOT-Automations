@@ -1928,6 +1928,33 @@ app.post('/admin/case-refs/probe-record', async (req, res) => {
   }
 });
 
+// READ-ONLY: Client IDs ("CL-2026-00042") — the counter, the highest number given,
+// IDs typed wrong or on two records, the same person twice, records and cases without
+// an ID, copies out of step, and what the hourly check would do. Writes nothing, in
+// every CLIENT_IDS mode. Names and Client IDs only (never a record's Monday id).
+app.get('/admin/client-ids/audit', async (req, res) => {
+  if (!resolveAdminOrReject(req, res, 'Only an admin can see this.')) return;
+  try {
+    res.json(await require('./services/clientIdHealer').audit());
+  } catch (err) {
+    console.error('[ClientIdAudit] failed:', err.message);
+    res.status(err.transient ? 503 : 500).json({ error: err.transient ? 'Temporarily unavailable' : err.message });
+  }
+});
+
+// Prove on production that OneDrive honours the two write conditions the Client ID
+// counter relies on (create-only; only over this version) — on a scratch file beside
+// the counter, never the counter itself, which is only read. Named admins only (it writes a file).
+app.post('/admin/client-ids/probe-record', async (req, res) => {
+  if (!resolveNamedAdminViewerOrReject(req, res, 'check the Client ID counter file')) return;
+  try {
+    res.json(await require('./services/clientIdAllocator').probeCounterWrites());
+  } catch (err) {
+    console.error('[ClientIdProbe] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // READ-ONLY: one root folder under "Client Documents" by its EXACT name, with
 // every file (who/when) in it and its sub-folders — for looking into a folder
 // the app does not resolve a case to (see oneDriveService.listRootFolderTree).

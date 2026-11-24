@@ -107,6 +107,9 @@ const io = {
     if (cols.cmBoardId && cols.cmCol) out.push(...await columnTexts(cols.cmBoardId, cols.cmCol));
     return out;
   },
+  /** The probe's scratch file (never the counter): the same two write conditions. */
+  scratchWrite: (file, data, opts = {}) => require('./oneDriveService').writeJsonFile(file, data, { etag: opts.etag || '' }),
+  scratchRead: (file) => require('./oneDriveService').readJsonFile(file),
   now: () => Date.now(),
 };
 
@@ -291,10 +294,46 @@ function repairCounter() {
   });
 }
 
+/**
+ * READ-ONLY: the counter as it is now — { state: 'ok', last } | { state: 'missing' } |
+ * { state: 'corrupt' } | { state: 'unavailable', error }. Never writes, never seeds.
+ */
+async function peekCounter() {
+  const st = await readState();
+  if (st.state === 'ok') return { state: 'ok', last: st.last };
+  if (st.state === 'unavailable') return { state: 'unavailable', error: st.error };
+  return { state: st.state };
+}
+
+/**
+ * Prove on production that OneDrive honours the two write conditions the counter
+ * relies on (create-only; only over the version read) — on a SCRATCH file beside
+ * the counter, never the counter itself (the case-number probe's steps). The
+ * counter is only read. For /admin/client-ids/probe-record.
+ */
+async function probeCounterWrites() {
+  const counter = await peekCounter().catch((err) => ({ state: 'unavailable', error: err.message }));
+  const file = COUNTER_PATH.replace(/\.json$/, `.probe-${stamp(io.now())}.json`);
+  const steps = [];
+  const step = async (name, expected, fn) => {
+    let got;
+    try { const r = await fn(); got = r === undefined ? 'ok' : r; } catch (err) { got = err && err.conflict ? 'conflict' : `error: ${err && err.message}`; }
+    steps.push({ step: name, expected, got: String(got), ok: String(got).startsWith(expected) });
+  };
+  await step('create a new file', 'created', async () => ((await io.scratchWrite(file, { probe: 1 })).created ? 'created' : 'written-but-not-201'));
+  await step('create it again (must be refused)', 'conflict', async () => { await io.scratchWrite(file, { probe: 2 }); return 'overwritten'; });
+  const cur = await io.scratchRead(file).catch(() => null);
+  await step('write over the current version', 'ok', async () => { await io.scratchWrite(file, { probe: 3 }, { etag: cur ? cur.etag : 'missing' }); });
+  await step('write over the OLD version (must be refused)', 'conflict', async () => { await io.scratchWrite(file, { probe: 4 }, { etag: cur ? cur.etag : 'missing' }); return 'overwritten'; });
+  const end = await io.scratchRead(file).catch((e) => ({ data: { error: e.message } }));
+  steps.push({ step: 'the file holds the last good write', expected: '3', got: String(end && end.data && end.data.probe), ok: !!(end && end.data && end.data.probe === 3) });
+  return { ok: steps.every((x) => x.ok), counter, file, steps };
+}
+
 function _resetForTests() { _lockTail = Promise.resolve(); }
 
 module.exports = {
-  allocate, allocateBlock, repairCounter, withClientIdLock,
+  allocate, allocateBlock, repairCounter, withClientIdLock, peekCounter, probeCounterWrites,
   formatClientId, parseClientId, torontoYear,
   salvageLast, highestNumber, readColumns, columnTexts,
   io, COUNTER_PATH, MAX_TRIES, MAX_SKIPS, MAX_BLOCK, _resetForTests,

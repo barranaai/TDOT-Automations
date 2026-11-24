@@ -120,7 +120,9 @@ async function stampClientAccount(lead, cmItemId) {
     if (!require('../../config/features').clientAccountsEnabled) return;
     const accounts = require('./clientAccountService'); // lazy — avoids the require cycle (it imports normName from here)
     const preChosen = String((lead && lead.clientAccountId) || '').trim();
-    let clientId = preChosen;
+    // A record that was since merged into another is followed to that one (CLIENT_IDS=on only;
+    // off / report: exactly as before, no read).
+    let clientId = preChosen ? await accounts.survivingAccount(preChosen, { why: 'case opened' }) : '';
     let knownId = '';
     if (!clientId) {
       const r = await accounts.findOrCreate({

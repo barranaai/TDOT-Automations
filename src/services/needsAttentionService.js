@@ -36,7 +36,7 @@ const crypto = require('crypto');
 const mondayApi = require('./mondayApi');
 const { clientMasterBoardId, executionBoardId } = require('../../config/monday');
 const caseAccess = require('./caseAccessService');
-const { torontoTime } = require('../utils/torontoTime');
+const { torontoTime, torontoYear } = require('../utils/torontoTime');
 const outcomes = require('../../config/outcomes');   // the outcome Follow-Up (and the old label that reads as it); the switch "Follow-Up needs a date"
 
 // ─── Columns (Cases board) ───────────────────────────────────────────────────
@@ -166,7 +166,17 @@ const CLIENT_KINDS = {
   'followup-due':     { order: 67, severity: 'medium', label: 'Follow-up date passed' },
   'followup-no-date': { order: 68, severity: 'medium', label: 'Follow-Up with no follow-up date' },   // listed only while FOLLOWUP_DATE_REQUIRED is on
 };
-const kindInfo = (kind) => KINDS[kind] || CLIENT_KINDS[kind] || null;
+// ─── Lines about the Client IDs (2026-11-25) — from the hourly Client ID check ──
+// About a client record on the Clients board (or a case not joined to one): admins and staff who see every
+// case only (they name other clients). Never joined or renumbered by the app — a person decides. "Mark handled"
+// leaves its note on the client record (or the case). Only while CLIENT_IDS is report or on. Kept apart from
+// KINDS like CLIENT_KINDS: the staff guide gets these with its Client ID line (build step 9).
+const CLIENT_ID_KINDS = {
+  'client-id-twins': { order: 90, severity: 'medium', label: 'Same person twice on the Clients board' },
+  'client-id-bad':   { order: 91, severity: 'medium', label: 'Client ID that needs checking' },
+  'client-id-case':  { order: 92, severity: 'medium', label: 'Case not joined to a client record' },
+};
+const kindInfo = (kind) => KINDS[kind] || CLIENT_KINDS[kind] || CLIENT_ID_KINDS[kind] || null;
 /** An item every signed-in staff member sees (a CLIENT_KINDS item about a client record — it has no case row). */
 const isForAllStaff = (entry) => !!(entry && CLIENT_KINDS[entry.kind] && !entry.rows.length);
 /** Admins, the team key, and staff who see every case. */
@@ -242,7 +252,7 @@ const oneLine = (t, max = 140) => { const x = s(t).replace(/\s+/g, ' '); return 
 const dateWord = (ms) => {
   if (!ms) return '';
   const full = torontoTime(ms).replace(/,.*$/, '');                 // "12 Sep 2026"
-  return full.endsWith(` ${new Date(io.now()).getUTCFullYear()}`) ? full.replace(/ \d{4}$/, '') : full;
+  return full.endsWith(` ${torontoYear(io.now())}`) ? full.replace(/ \d{4}$/, '') : full;   // this year in TORONTO (on 31 Dec evening the UTC year is already the next one)
 };
 const keyOf = (fingerprint) => `NA-${crypto.createHash('sha1').update(fingerprint).digest('hex').slice(0, 10)}`;
 const isClosed = (c) => CLOSED_STAGES.includes(c.stage);
@@ -1162,6 +1172,8 @@ const io = {
   async postNote(itemId, body) {
     await mondayApi.query('mutation($i: ID!, $b: String!){ create_update(item_id: $i, body: $b){ id } }', { i: String(itemId), b: body });
   },
+  /** The Client ID check's lines (clientIdHealer) — [] while CLIENT_IDS is off (no read at all then). */
+  clientIdProblems: () => require('./clientIdHealer').problemsForNeedsAttention(),
 };
 
 /** Run fn over items, `n` at a time; each result or the error is kept per item. */
@@ -1179,6 +1191,29 @@ async function eachLimited(items, n, fn) {
 }
 
 /** Work the whole list out (no caching here). */
+/**
+ * The Client ID check's lines as list items. PURE. They carry no case row (admins and
+ * staff who see every case only); a line about a case names its case number, and its
+ * "handled" note goes on the case; a line about a client record carries the record only
+ * as noteItemId (stripped before any page sees it).
+ */
+function clientIdEntries(lines) {
+  const out = [];
+  for (const p of lines || []) {
+    if (!p || !CLIENT_ID_KINDS[p.kind] || !s(p.fingerprint)) continue;
+    const cm = s(p.cmItemId);
+    out.push({
+      key: keyOf(s(p.fingerprint)), kind: p.kind,
+      itemIds: cm ? [cm] : [], caseRef: s(p.caseRef), client: s(p.client), stage: '', payment: '', manager: '', rows: [],
+      since: tms(p.since) ? iso(tms(p.since)) : '',
+      why: s(p.why), todo: s(p.todo),
+      ...(s(p.caseRef) ? {} : { linkLabel: s(p.label) || 'Clients board' }),
+      noteItemId: cm || s(p.accountItemId),
+    });
+  }
+  return out;
+}
+
 async function buildSnapshot() {
   const startedAt = io.now();
   const partial = [];
@@ -1277,6 +1312,10 @@ async function buildSnapshot() {
 
   const entries = detect({ cases, checklist, folders, workFolders, checklistNewest, family, checklistFamily, manifestFamily, balances, templateProblems, leads, now: io.now() });
 
+  // The Client ID check (2026-11-25): its lines, while CLIENT_IDS is report or on.
+  try { entries.push(...clientIdEntries(await io.clientIdProblems())); }
+  catch (err) { partial.push(`Client IDs could not be checked (${oneLine(err.message, 120)}).`); }
+
   // "Handled" notes: from the notes read, plus a deeper read for an item on a
   // case whose notes were not read far back yet (an older handled note must count).
   const handled = new Set();
@@ -1308,6 +1347,13 @@ async function buildSnapshot() {
       try { const r = await io.readDeepNotes(movedCases); for (const [, ups] of r.notes) for (const k of handledKeys(caseNotes(ups))) handled.add(k); } catch (_) { /* the record's own notes were read */ }
     }
     if (failed.length) partial.push(`Notes on ${failed.length} client record${failed.length === 1 ? '' : 's'} could not be read, so an item marked handled may show again.`);
+  }
+  // A Client ID line about a client record (no case): its "handled" note is on that record.
+  const onRecords = [...new Set(entries.filter((e) => e.noteItemId && !e.itemIds.length && !handled.has(e.key)).map((e) => e.noteItemId))];
+  if (onRecords.length) {
+    const { notes: more, failed } = await io.readDeepNotes(onRecords);
+    for (const [, ups] of more) for (const k of handledKeys(caseNotes(ups))) handled.add(k);
+    if (failed.length) partial.push(`Notes on ${failed.length} client record${failed.length === 1 ? '' : 's'} on the Clients board could not be read, so a Client ID item marked handled may show again.`);
   }
   const nf = deepFailed.size;
   if (nf) partial.push(`Older notes on ${nf} case${nf === 1 ? '' : 's'} could not be read, so an older warning may be missing, or an item marked handled long ago may show again.`);
@@ -1378,7 +1424,7 @@ function visibleRows(entry, viewer) {
  * them names only those — never the other client.
  */
 function shapeFor(entry, viewer, { opensRecords = false } = {}) {
-  const { rows: _all, ...out } = entry;
+  const { rows: _all, noteItemId: _note, ...out } = entry;   // noteItemId: a Clients record's Monday id — never sent to a page
   // A follow-up line (CLIENT_KINDS): every signed-in staff member — the owner's decision (2026-11-23).
   // It carries the client's name and the date, nothing else. A viewer limited to their own cases gets
   // it without "Mark handled" (noHandle: they cannot open the record to check, and a mark hides the
@@ -1427,7 +1473,8 @@ function view(viewer, { ensure = false, opensRecords = false } = {}) {
     casesChecked: _snap ? _snap.casesChecked : 0,
     partial: _snap ? _snap.partial.concat(_snap.partialAlso || []) : [],
     error: _lastError,
-    kinds: { ...KINDS, ...CLIENT_KINDS },
+    // The Client ID groups only while that check is on (report / on) or the list holds one of its lines.
+    kinds: { ...KINDS, ...CLIENT_KINDS, ...((require('../../config/features').clientIdsActive() || entries.some((e) => CLIENT_ID_KINDS[e.kind])) ? CLIENT_ID_KINDS : {}) },
     entries,
   };
 }
@@ -1476,18 +1523,20 @@ async function markHandled({ key, viewer, actor }) {
   const entry = _snap.entries.find((e) => e.key === k);
   // An item about a client record with no case row: the note goes on the client's record (those who see every case).
   const onLead = !!(entry && !entry.rows.length && entry.leadId);
-  if (entry && !entry.rows.length && !onLead) throw fail(409, 'This item is about no case, so there is nowhere to note it. It leaves the list by itself once the row on the Reminder Templates board is fixed.');
+  // A Client ID item: the note goes on the client record (or the case) it is about (those who see every case).
+  const onItem = !!(entry && !entry.rows.length && !onLead && entry.noteItemId);
+  if (entry && !entry.rows.length && !onLead && !onItem) throw fail(409, 'This item is about no case, so there is nowhere to note it. It leaves the list by itself once the row on the Reminder Templates board is fixed.');
   const rows = entry ? visibleRows(entry, viewer) : [];
   // A follow-up line is shown to every signed-in staff member, but only those who see every case may mark it
   // handled: the mark is a note on the client's record and hides the line from everybody (see shapeFor).
   if (isForAllStaff(entry) && viewer && !seesEveryCase(viewer)) throw fail(403, 'Only an admin, or staff who see every case, can mark this handled. It leaves the list by itself once a new follow-up date is set or the outcome is changed.');
-  if (onLead ? !(viewer && (viewer.isAdmin || viewer.scope === 'all')) : !rows.length) throw fail(404, 'This item is no longer on the list. Press Check now to see the current list.');
+  if ((onLead || onItem) ? !(viewer && (viewer.isAdmin || viewer.scope === 'all')) : !rows.length) throw fail(404, 'This item is no longer on the list. Press Check now to see the current list.');
   if (_handledHere.has(k)) return { ok: true, already: true };
   if (_marking.has(k)) throw fail(409, 'Someone is marking this item right now.');
   _marking.add(k);
   try {
     // On a case this viewer may see (the note names only that case's item).
-    await io.postNote(onLead ? entry.leadId : rows[0].id, handledNoteBody(entry, s(actor) || 'staff'));
+    await io.postNote(onLead ? entry.leadId : onItem ? entry.noteItemId : rows[0].id, handledNoteBody(entry, s(actor) || 'staff'));
     // An item about a client record that is on a case: the same note on the record too, so it stays
     // handled if the case is later unlinked, moved off the board or deleted. Best-effort — the case note is the record.
     if (!onLead && entry.leadId) {
@@ -1515,5 +1564,5 @@ module.exports = {
   refresh, view, requestRefresh, markHandled, isTorontoHour,
   detect, parseCase, caseNotes, newestPaymentNote, heldFor, handledKeys, handledNoteBody,   // pure
   refsNeedingChecklist, refsNeedingWorkFolders, buildSnapshot,
-  io, KINDS, CLIENT_KINDS, NOTE, COL, CLOSED_STAGES, BEFORE_DOCS, NOT_CASE_GROUPS, DEADLINE_SINCE, PAID_UNSIGNED_WORKING_DAYS, paidUnsignedGraceEnd, _resetForTests,
+  io, KINDS, CLIENT_KINDS, CLIENT_ID_KINDS, clientIdEntries, NOTE, COL, CLOSED_STAGES, BEFORE_DOCS, NOT_CASE_GROUPS, DEADLINE_SINCE, PAID_UNSIGNED_WORKING_DAYS, paidUnsignedGraceEnd, _resetForTests,
 };
