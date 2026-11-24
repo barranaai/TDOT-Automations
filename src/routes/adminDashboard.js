@@ -494,6 +494,9 @@ const CM_CSS = `
     .cm-asg-rm { font-size:12.5px; color:#92400e; margin-top:6px; }
     .cm-asg-rm:empty { display:none; }
     .cm-asg-tell { font-size:12.5px; color:#475569; margin-top:6px; }
+    .cm-asg-also { display:flex; align-items:center; gap:8px; font-size:13px; color:#0f172a; margin-top:10px; cursor:pointer; overflow-wrap:anywhere; }
+    .cm-asg-also input { width:18px; height:18px; margin:0; flex:none; }
+    @media (max-width: 760px) { .cm-asg-also { min-height:44px; font-size:16px; } .cm-asg-also input { width:22px; height:22px; } }
     /* ── The view tabs' own columns (team meeting 2026-11-10, item 12; layout chosen 2026-11-12: one column each, like Monday).
        One wide table that scrolls sideways INSIDE its box (.tbl-wrap) — the page itself never does — with Case Ref and Client
        staying in view at the start (in the header and in every row) and a soft shadow on their edge. The All tab is not wide. */
@@ -2621,8 +2624,12 @@ function caseRow(c, v, today, wide) {
    The standard pop-up: who is there now, the staff list (people usually assigned first), what will happen.
    The server writes ONE Monday column (Case Support Officer), ADDING the person alongside who is there (Faran 2026-11-24:
    it used to replace them), and adds a note on the case.
+   Round 2 (the same as the case page): the list puts who usually holds the role first with their open-case count; an
+   unticked "Also take <name> off this case" makes a handover one step (one write, one note); a change made in Monday
+   meanwhile is not refused (the server builds the cell from its fresh read).
    The row is updated in place: the tab, the filters, the page and the scroll stay. */
 var CM_STAFF = null;     // the staff list, read once for this page (the server keeps it an hour)
+var CM_USUAL = null;     // the server's "usually" list for the role ({ id, open } fewest open first), null = not known (a cold cache)
 var CM_FLASH = {};       // item id → { text, until }: "✓ Assigned" beside the name for a few seconds
 function cmFlashText(id) { var f = CM_FLASH[String(id)]; return f && f.until > Date.now() ? f.text : ''; }
 function cmFlash(id, text) {
@@ -2664,6 +2671,7 @@ function cmAssignDlg(itemId) {
     '<label class="cm-asg-lbl" for="cm-asg-sel">Case Support Officer to add</label>' +
     '<select id="cm-asg-sel" class="cm-asg-sel" disabled><option value="">Loading the staff list…</option></select>' +
     '<div class="cm-asg-what">Adds the person as Case Support Officer in Monday — who is there now stays — and adds a note on the case. Nothing else changes.</div>' +
+    '<div id="cm-asg-also"></div>' +
     '<div class="cm-asg-rm" id="cm-asg-rm"></div>' +
     '<div class="cm-asg-tell" id="cm-asg-tell"></div>' +
     '<div class="tdlg-err" id="cm-asg-err" role="alert"></div>' +
@@ -2682,11 +2690,12 @@ function cmAssignDlg(itemId) {
       if (!c.still(id)) return;
       if (!res.ok) {
         sel.innerHTML = '<option value="">The staff list could not be loaded</option>';
-        c.box.querySelector('#cm-asg-err').innerHTML = res.status === 401 ? cmAsgSignIn(res.j) : escHtml((res.j && res.j.error) || 'The staff list could not be loaded. Close this and try again.');
+        c.box.querySelector('#cm-asg-err').innerHTML = cmAsgNeedsSignIn(res) ? cmAsgSignIn(res.j) : escHtml((res.j && res.j.error) || 'The staff list could not be loaded. Close this and try again.');
         cmAsgSync(c, st);
         return;
       }
       CM_STAFF = res.j.users || [];
+      CM_USUAL = res.j.usual && Array.isArray(res.j.usual.officer) ? res.j.usual.officer : null;
       cmAsgFill(c, st);
     })
     .catch(function() {
@@ -2696,20 +2705,53 @@ function cmAssignDlg(itemId) {
       cmAsgSync(c, st);
     });
 }
-/* The list: people who are Support Officers on other cases first ("usually assigned"), then everyone else; A → Z in each. */
+/* The list: who usually holds the role first — the server's count of their open cases, fewest first ("Name — 12 open") —
+   then everyone else A → Z. Without the server's counts (a cold cache): the Support Officers on the cases on this page first. */
 function cmAsgFill(c, st) {
-  var usual = {};
-  ((_data && _data.cases) || []).forEach(function(r) { cmIdsOf(r).personIds.forEach(function(p) { usual[p] = true; }); });
-  var a = [], b = [];
-  (CM_STAFF || []).forEach(function(u) { (usual[String(u.id)] ? a : b).push(u); });
-  var opt = function(u) { return '<option value="' + escHtml(String(u.id)) + '">' + escHtml(u.name) + '</option>'; };
+  var usual = {}, a = [], b = [], open = {};
+  if (CM_USUAL && CM_USUAL.length) {
+    var byId = {};
+    (CM_STAFF || []).forEach(function(u) { byId[String(u.id)] = u; });
+    CM_USUAL.forEach(function(x) { var u = byId[String(x.id)]; if (u && !usual[String(u.id)]) { usual[String(u.id)] = true; open[String(u.id)] = x.open; a.push(u); } });
+    (CM_STAFF || []).forEach(function(u) { if (!usual[String(u.id)]) b.push(u); });
+  } else {
+    ((_data && _data.cases) || []).forEach(function(r) { cmIdsOf(r).personIds.forEach(function(p) { usual[p] = true; }); });
+    (CM_STAFF || []).forEach(function(u) { (usual[String(u.id)] ? a : b).push(u); });
+  }
+  var opt = function(u) { var n = open[String(u.id)]; return '<option value="' + escHtml(String(u.id)) + '">' + escHtml(u.name) + (n != null ? ' — ' + n + ' open' : '') + '</option>'; };
   st.sel.innerHTML = '<option value="">Choose a person…</option>' +
     (a.length ? '<optgroup label="Usually assigned">' + a.map(opt).join('') + '</optgroup>' : '') +
     (b.length ? '<optgroup label="' + (a.length ? 'Everyone else' : 'Staff') + '">' + b.map(opt).join('') + '</optgroup>' : '');
   st.sel.disabled = false;
+  cmAsgAlso(c, st);
   cmAsgSync(c, st);
   try { st.sel.focus(); } catch (e) {}
 }
+/* The handover: an unticked box per person who is Support Officer now — named by id from the staff list (the row's
+   names are Monday's text, in Monday's order); the text only when the cell holds that one entry. A team never. */
+function cmAsgAlso(c, st) {
+  var byId = {}, n = st.expected.personIds.length + st.expected.teamIds.length;
+  (CM_STAFF || []).forEach(function(u) { byId[String(u.id)] = u.name; });
+  st.alsoNames = {};
+  var h = st.expected.personIds.map(function(p) {
+    var name = byId[String(p)] || (n === 1 && st.names.length === 1 ? st.names[0] : '');
+    if (!name) return '';
+    st.alsoNames[String(p)] = name;
+    return '<label class="cm-asg-also"><input type="checkbox" data-also="' + escHtml(String(p)) + '"> Also take ' + escHtml(name) + ' off this case</label>';
+  }).join('');
+  var box = c.box.querySelector('#cm-asg-also');
+  if (!box) return;
+  box.innerHTML = h;
+  Array.prototype.forEach.call(box.querySelectorAll('input[data-also]'), function(i) { i.onchange = function() { cmAsgSync(c, st); }; });
+}
+function cmAsgTicked(c, st) {
+  var out = [], box = c.box.querySelector('#cm-asg-also');
+  if (!box || !box.querySelectorAll) return out;
+  Array.prototype.forEach.call(box.querySelectorAll('input[data-also]'), function(i) { if (i.checked) out.push(i.getAttribute('data-also')); });
+  return out;
+}
+/* The Monday sign-in is gone (401), or only the team key is left (403 key-only): both need the sign-in link. */
+function cmAsgNeedsSignIn(res) { return res.status === 401 || !!(res.j && res.j.code === 'key-only'); }
 function cmAsgChosen(st) {
   var v = st.sel && st.sel.value;
   if (!v) return null;
@@ -2720,21 +2762,23 @@ function cmAsgChosen(st) {
 function cmAsgSync(c, st) {
   var box = c.box, ch = cmAsgChosen(st), n = st.expected.personIds.length + st.expected.teamIds.length;
   box.querySelector('#cm-asg-now').innerHTML = 'Now: <b>' + escHtml(st.names.length ? st.names.join(', ') : 'Nobody') + '</b>';
-  var rm = '';
+  var rm = '', ticked = cmAsgTicked(c, st);
   if (ch) {
     // decided by the id; the names are Monday's own text for the cell
     if (st.expected.personIds.indexOf(String(ch.id)) >= 0) rm = ch.name + ' is already a Case Support Officer on this case — nothing will change.';
+    else if (ticked.length) rm = 'Adds ' + ch.name + ' and takes ' + cmAnd(ticked.map(function(p) { return (st.alsoNames || {})[p] || p; })) + ' off.';
     else if (n >= 1 && st.names.length) rm = 'Keeps ' + cmAnd(st.names) + ' and adds ' + ch.name + '.';
   }
   box.querySelector('#cm-asg-rm').textContent = rm;
   var already = !!ch && st.expected.personIds.indexOf(String(ch.id)) >= 0;
   box.querySelector('#cm-asg-tell').textContent = already ? '' : ch ? 'Monday will tell ' + ch.name + ' they were assigned.' : 'Monday will tell the person you choose that they were assigned.';
-  // not a data-x button: the long-wait timer that lets Cancel and × close the pop-up must never let Assign be sent twice
+  // not a data-x button: the long-wait timer that lets Cancel and × close the pop-up must never let Assign be sent twice.
+  // Someone already there: nothing to send (the pop-up says so).
   var go = box.querySelector('#cm-asg-go');
-  if (go) go.disabled = !!c.busy || !ch;
+  if (go) go.disabled = !!c.busy || !ch || already;
 }
 function cmAsgSend(c, st) {
-  var ch = cmAsgChosen(st), err = c.box.querySelector('#cm-asg-err');
+  var ch = cmAsgChosen(st), err = c.box.querySelector('#cm-asg-err'), ticked = cmAsgTicked(c, st);
   if (!ch) { err.textContent = 'Choose a person first.'; return; }
   err.textContent = '';
   c.setBusy(true);
@@ -2743,13 +2787,13 @@ function cmAsgSend(c, st) {
   var id = c.openId, itemId = st.itemId;
   var done = function() { if (!c.still(id)) return false; c.setBusy(false); st.sel.disabled = false; cmAsgSync(c, st); return true; };
   fetch('/admin/client-master/assign', { method: 'POST', headers: cmAsgHeaders(true), credentials: 'same-origin',
-    body: JSON.stringify({ itemId: itemId, userId: String(ch.id), expected: st.expected }) })
+    body: JSON.stringify(ticked.length ? { itemId: itemId, userId: String(ch.id), expected: st.expected, alsoRemove: ticked } : { itemId: itemId, userId: String(ch.id), expected: st.expected }) })
     .then(function(r) { return r.json().catch(function() { return {}; }).then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
     .then(function(res) {
       var j = res.j || {};
       if (res.ok) {
         // the row follows what Monday kept, even when the pop-up was closed after the long wait
-        cmFlash(itemId, j.unchanged ? 'No change needed' : '✓ Assigned');
+        cmFlash(itemId, j.unchanged ? 'No change needed' : (j.removed && j.removed.length ? '✓ Handed over' : '✓ Assigned'));
         cmAsgApply(itemId, j.officer, j.canAssign);
         if (!c.still(id)) return;
         if (j.noteFailed) {
@@ -2766,18 +2810,8 @@ function cmAsgSend(c, st) {
         if (nb) { try { nb.focus(); } catch (e) {} }
         return;
       }
-      if (res.status === 409 && j.code === 'changed' && j.current) {
-        // Monday has someone else now: the row and the pop-up show it, and Assign asks again with the new value
-        cmAsgApply(itemId, j.current);
-        if (!c.still(id)) return;
-        st.expected = { personIds: (j.current.personIds || []).map(String), teamIds: (j.current.teamIds || []).map(String) };
-        st.names = (j.current.names || []).slice();
-        done();
-        err.textContent = (j.error || 'This changed since your page loaded.') + ' Press Assign again if you still want to add them.';
-        return;
-      }
       if (!done()) return;
-      if (res.status === 401) { err.innerHTML = cmAsgSignIn(j); return; }
+      if (cmAsgNeedsSignIn(res)) { err.innerHTML = cmAsgSignIn(j); return; }
       err.textContent = j.error || ('Something went wrong (' + res.status + '). The result is unknown — check the case before trying again.');
     })
     .catch(function() {

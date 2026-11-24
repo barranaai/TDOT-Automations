@@ -18,6 +18,17 @@
  *  - The case page highlights the role(s) that fit the case's stage (stageRoles, pure):
  *    the others are listed below and can still be set.
  *
+ * Round 2 (Faran 2026-11-24, "simple, efficient, intelligent"):
+ *  - A change made while the cell changed in Monday is NOT refused (no 409 "changed"): the new cell is
+ *    always built from the FRESH read, so the result is the same; the answer says changedMeanwhile.
+ *  - The picker and the one-tap suggestion come from the CACHED Cases rows only (never a Monday read):
+ *    per role, who holds it on open cases (the To-do tab's own "open" rule) with a count; a person who
+ *    holds MORE than half of the role's filled cells on open cases is suggested on an empty role that fits
+ *    the stage (and on an empty Ops Supervisor). A cold cache = the plain list, no suggestion.
+ *  - Undo (30 s on the page) = a remove of the person YOU just added on this case — checked here too.
+ *  - Handover: an ADD of a Case Support Officer may take named persons off the same cell in the SAME
+ *    write (alsoRemove) — one write, one note ("added X, removed Y").
+ *
  * Who may write: staff signed in WITH MONDAY (so the note can name them). The shared admin
  * key alone is refused, and the key never counts for the write's access check: that uses
  * the Monday identity only (ADMIN_EMAILS for admin), on a FRESH read of the case's seven
@@ -57,6 +68,8 @@ const NO_KEY_ONLY = 'Sign in with Monday to assign, so the note can say who did 
 const REF_RE = /^[A-Za-z0-9\- ]{1,100}$/;   // the case page's own rule for a case number
 const SOURCES = { 'client-master': 'the Client Master page', case: 'the case page' };
 const LOST_ACCESS = 'You took yourself off this case. You can no longer change who is on it, and you may not be able to open it after a reload.';
+const UNDO_MS = 60 * 1000;      // the page offers Undo for 30 s; the server allows a little longer (a slow answer)
+const ALSO_REMOVE_MAX = 20;
 
 function mondayApi() { return require('./mondayApi'); }
 
@@ -101,6 +114,8 @@ const io = {
   postNote: (itemId, body) => mondayApi().query(
     'mutation($i: ID!, $b: String!) { create_update(item_id: $i, body: $b) { id } }', { i: String(itemId), b: body }, 0),
   patchCache: (itemId, colId, cell) => require('./dashboardService').patchCachedColumn(itemId, colId, cell),
+  /** The cached Cases rows ({ items, version }) or null — never a Monday read (dashboardService.peekCachedItems). */
+  peekCache: () => require('./dashboardService').peekCachedItems(),
   now: () => Date.now(),
 };
 
@@ -122,6 +137,8 @@ const sameSet = (a, b) => { const A = new Set((a || []).map(String)), B = new Se
  * Monday's text is used only for the entries the ids cannot name (teams; people not on the staff
  * list): the text with the known names taken out, in order, when exactly one part is left for each
  * such entry. Otherwise "team <id>" / "user <id>".
+ * A PERSON named from the text while more than one entry is unknown is only a guess by position
+ * (`guess: true`): the page draws no ✕ for it, so a confirm never names the wrong person (round 2, A1).
  * @param {{ value?: string|null, text?: string }} cell
  * @param {?Map} names     id → name (the staff list), optional
  * @param {?object} extra  { [id]: name } for a person just added / removed, optional
@@ -153,6 +170,7 @@ function entriesOf(cell, names, extra) {
   return list.map((e, i) => {
     if (known[i]) return { ...e, name: known[i] };
     const t = fromText ? left[j++] : '';
+    if (t && e.kind === 'person' && unknown > 1) return { ...e, name: t, guess: true };
     return { ...e, name: t || (e.kind === 'team' ? `team ${e.id}` : `user ${e.id}`) };
   });
 }
@@ -169,7 +187,8 @@ function cellView(cell, names, extra, withEntries) {
 // listed below and can still be set. Ops Supervisor (set once) is never highlighted and comes last.
 const STAGE_FIT = [
   { re: /^(pre-?onboarding|document collection started)$/, roles: ['officer'], hint: 'At this stage: Case Support Officer (can be set early).' },
-  { re: /^internal review$/, roles: ['officer', 'manager'], hint: 'At this stage: the Case Support Officer prepares the file, then the Case Manager reviews it.' },
+  // Submission Preparation (where stageGateService moves a finished Internal Review): the same two roles (Faran 2026-11-24, A4)
+  { re: /^(internal review|submission preparation)$/, roles: ['officer', 'manager'], hint: 'At this stage: the Case Support Officer prepares the file, then the Case Manager reviews it.' },
   { re: /^submission ready$/, roles: ['submission'], hint: 'At this stage: Submission Team.' },
   { re: /^(stuck|adr)(\s*\/\s*(stuck|adr))?$/, roles: ['officer'], hint: 'At this stage: Case Support Officer.' },
 ];
@@ -224,6 +243,83 @@ async function warmUsersForPage(staff, { timeoutMs = 3000 } = {}) {
 }
 const warmUsers = () => (_users && io.now() - _users.at < USERS_TTL_MS ? _users : null);
 
+// ─── Who usually holds each role (the cached Cases rows only — never a Monday read) ───
+/**
+ * PURE: per role, over the OPEN rows only, how many cells hold someone (`filled`: a person or a team) and how
+ * many cells each person is in (`counts`).
+ * @param {{ open: boolean, cells: { [role]: { personIds: string[], teamIds: string[] } } }[]} rows
+ * @returns {{ [role]: { filled: number, counts: { [personId]: number } } }}
+ */
+function roleStatsOf(rows) {
+  const out = {};
+  for (const role of ROLE_KEYS) out[role] = { filled: 0, counts: Object.create(null) };
+  for (const r of rows || []) {
+    if (!r || !r.open) continue;
+    for (const role of ROLE_KEYS) {
+      const c = (r.cells && r.cells[role]) || { personIds: [], teamIds: [] };
+      if (!c.personIds.length && !c.teamIds.length) continue;
+      out[role].filled++;
+      for (const p of new Set(c.personIds.map(String))) out[role].counts[p] = (out[role].counts[p] || 0) + 1;
+    }
+  }
+  return out;
+}
+/** One cached Cases row → { open, cells } ("open" = the To-do tab's own rule: the row is in the Assigning view). */
+function rowFacts(item) {
+  const dash = require('./dashboardService');
+  const valueByCol = {};
+  for (const cv of (item && item.column_values) || []) valueByCol[cv.id] = cv.value;
+  const cells = {};
+  for (const role of ROLE_KEYS) cells[role] = peopleOf(valueByCol[ROLES[role].col]);
+  let open = false;
+  try { open = (dash.parseItem(item).views || []).includes(require('./todoListService').OPEN_VIEW); } catch (_) { open = false; }
+  return { open, cells };
+}
+let _stats = null;   // { version, items, stats }: worked out once per version of the cached rows
+/** The role stats from the cached rows, or null while there is no fresh-enough copy (a cold cache: no counts, no suggestion). */
+function roleStats() {
+  let peek = null;
+  try { peek = io.peekCache(); } catch (err) { console.warn(`[Assign] cached rows unreadable: ${err.message}`); peek = null; }
+  if (!peek || !Array.isArray(peek.items)) return null;
+  if (_stats && _stats.items === peek.items && _stats.version === peek.version) return _stats.stats;
+  const stats = roleStatsOf(peek.items.map(rowFacts));
+  _stats = { version: peek.version, items: peek.items, stats };
+  return stats;
+}
+/**
+ * PURE: the picker's "Usually <role>" people — on the staff list, holding the role on open cases — fewest open first
+ * (then A → Z), each with the count.
+ * @returns {{ id: string, name: string, open: number }[]}
+ */
+function usualFor(role, stats, list) {
+  const st = stats && stats[role];
+  if (!st) return [];
+  const byId = new Map((list || []).map((u) => [String(u.id), u]));
+  return Object.keys(st.counts).filter((id) => byId.has(id))
+    .map((id) => ({ id, name: byId.get(id).name, open: st.counts[id] }))
+    .sort((a, b) => (a.open - b.open) || a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+}
+/**
+ * PURE: the one person to suggest for a role — someone on the staff list who holds MORE than half of the role's
+ * filled cells on open cases. Nobody that clear → null.
+ * @returns {?{ id: string, name: string, open: number }}
+ */
+function suggestFor(role, stats, list) {
+  const st = stats && stats[role];
+  if (!st || !st.filled) return null;
+  const top = usualFor(role, stats, list).filter((u) => u.open * 2 > st.filled);
+  return top.length === 1 ? top[0] : null;
+}
+/** The picker hints for the staff-list route (Client Master page): { [role]: [{ id, open }] }, or null on a cold cache. */
+function pickerHints(list) {
+  const stats = roleStats();
+  if (!stats) return null;
+  const out = {};
+  for (const role of ROLE_KEYS) out[role] = usualFor(role, stats, list).map((u) => ({ id: u.id, open: u.open }));
+  return out;
+}
+function _resetStats() { _stats = null; }
+
 /**
  * Who is asking (pure). Monday sign-in → may go on; the shared key alone → 403;
  * nobody → 401. The viewer for the access check is built from the Monday
@@ -263,16 +359,30 @@ function describeForCase({ cells, stage, staff, assignees, cmUnavailable }) {
   const g = gate(staff, false);
   const canAssign = available && !!g.ok && caseAccess.viewerCanSee(assignees, g.viewer);
   const sr = stageRoles(stage);
-  const names = (warmUsers() || {}).names || null;   // the cached staff list only — never a Monday read for the page
+  const users = warmUsers();   // the cached staff list only — never a Monday read for the page
+  const names = (users || {}).names || null;
+  // the picker's counts and the one-tap suggestion: the cached Cases rows only, and only for someone who may change the case
+  const stats = canAssign && users ? roleStats() : null;
   const roles = sr.order.map((role) => {
     const cell = (available && cells[ROLES[role].col]) || { value: null, text: '' };
-    return { role, label: ROLES[role].label, highlight: sr.highlight.includes(role), ...cellView(cell, names, null, true) };
+    const highlight = sr.highlight.includes(role);
+    const view = cellView(cell, names, null, true);
+    const out = { role, label: ROLES[role].label, highlight, ...view };
+    if (stats) {
+      out.usual = usualFor(role, stats, users.list).map((u) => ({ id: u.id, open: u.open }));
+      // the suggestion: an EMPTY role that fits the stage, or an empty Ops Supervisor
+      const sug = !view.entries.length && (highlight || role === 'ops') ? suggestFor(role, stats, users.list) : null;
+      if (sug) out.suggest = { id: sug.id, name: sug.name };
+    }
+    return out;
   });
   return {
     available, stage: s(stage), hint: sr.hint, canAssign,
     signedIn: !!g.ok,   // false: the page says "Sign in with Monday to change who is on this case"
     me: g.ok && g.viewer && g.viewer.userId ? String(g.viewer.userId) : '',
     roles,
+    // the staff list sent with the page (round 2, B2): the Add pop-up opens ready, with no wait
+    ...(canAssign && users ? { staff: users.list.map((u) => ({ id: u.id, name: u.name })) } : {}),
   };
 }
 
@@ -291,8 +401,24 @@ function parseInput(b) {
       ![...ex.personIds, ...ex.teamIds].every((v) => DIGITS.test(s(v)))) {
     throw fail(400, 'Reload the page and try again.');
   }
-  return { role, op, userId, expected: { personIds: ex.personIds.map(s), teamIds: ex.teamIds.map(s) } };
+  // the handover box (round 2, C2): an ADD of a Case Support Officer may take named persons off the same cell, in the same write
+  let alsoRemove = [];
+  if (b.alsoRemove != null) {
+    if (!Array.isArray(b.alsoRemove) || b.alsoRemove.length > ALSO_REMOVE_MAX || !b.alsoRemove.every((v) => DIGITS.test(s(v)))) throw fail(400, 'Reload the page and try again.');
+    alsoRemove = [...new Set(b.alsoRemove.map(s))].filter((v) => v !== userId);
+    if (alsoRemove.length && (role !== 'officer' || op !== 'add')) throw fail(400, 'Reload the page and try again.');
+  }
+  // Undo (round 2, C1): a remove of the person this staffer just added on this case — checked in run()
+  const undo = b.undo === true;
+  if (undo && op !== 'remove') throw fail(400, 'Reload the page and try again.');
+  return { role, op, userId, expected: { personIds: ex.personIds.map(s), teamIds: ex.teamIds.map(s) }, alsoRemove, undo };
 }
+
+// Undo: the adds just made, by whom — itemId|role|userId → { by, at } (kept UNDO_MS; one Undo each)
+const _recentAdds = new Map();
+const undoKey = (itemId, role, userId) => `${itemId}|${role}|${userId}`;
+const whoKey = (g) => s((g.viewer && g.viewer.userId) || g.actor.email || g.actor.name);
+function _pruneAdds(now) { for (const [k, v] of _recentAdds) if (now - v.at > UNDO_MS) _recentAdds.delete(k); }
 
 /**
  * POST /admin/client-master/assign — the Client Master page (role defaults to the Case Support
@@ -311,7 +437,7 @@ async function assign({ staff, hasKey, body }) {
   // this page only ADDS a Case Support Officer (its Assign…): another role or a remove is the case page's, with its ✕ and confirm
   if (b.role != null && b.role !== '' && s(b.role) !== 'officer') throw fail(400, 'This role cannot be set here. Reload the page and try again.');
   if (b.op != null && b.op !== '' && s(b.op) !== 'add') throw fail(400, 'Reload the page and try again.');
-  const input = parseInput({ ...b, role: 'officer', op: 'add' });
+  const input = parseInput({ ...b, role: 'officer', op: 'add', undo: false });
   return run({ g, itemId, input, source: 'client-master' });
 }
 
@@ -335,9 +461,15 @@ async function assignOnCase({ staff, hasKey, caseRef, body }) {
 }
 
 async function run({ g, itemId, input, source, caseRef }) {
-  const { role, op, userId } = input, ex = input.expected;
+  const { role, op, userId, alsoRemove, undo } = input, ex = input.expected;
   const { col, label } = ROLES[role];
   const forCase = source === 'case';
+  // 2c. Undo: only the person THIS staffer added on this case in the last minute (the page offers it for 30 s), once
+  if (undo) {
+    _pruneAdds(io.now());
+    const ra = _recentAdds.get(undoKey(itemId, role, userId));
+    if (!forCase || !ra || ra.by !== whoKey(g)) throw fail(409, 'Undo is no longer possible here — use ✕ beside the name to take them off.', { code: 'undo-expired' });
+  }
   // 3. one at a time per case (before any Monday call: a busy request costs nothing)
   if (_inFlight.has(itemId)) throw fail(409, 'This case is already being assigned. Wait a moment, then check it.', { code: 'busy' });
   _inFlight.add(itemId);
@@ -381,38 +513,42 @@ async function run({ g, itemId, input, source, caseRef }) {
     if (!caseAccess.viewerCanSee(caseAccess.assigneesFromColumnValues(valueByCol), g.viewer)) {
       throw fail(403, 'You are not assigned to this case.');
     }
-    // 6. stale check
+    // 6. changed since the page loaded? NOT refused (round 2, B7): the new cell is built from this fresh read below,
+    // so the result is what the staffer asked for either way; the answer says so and carries the cell as it is now.
     const now = peopleOf(cell.value);
     const nowView = cellView(cell, names, null, forCase);
-    if (!sameSet(now.personIds, ex.personIds) || !sameSet(now.teamIds, ex.teamIds)) {
-      io.patchCache(rowId, col, { value: cell.value, text: cell.text });
-      throw fail(409, `This changed since your page loaded — it is now ${nowView.names.length ? nowView.names.join(', ') : 'nobody'}.`,
-        { code: 'changed', ...(forCase ? { role } : {}), current: nowView });
-    }
-    const answer = (o) => (role === 'officer' && !forCase ? { ok: true, ...o.flags, officer: o.view, canAssign: o.canAssign } : { ok: true, ...o.flags, role, cell: o.view, canAssign: o.canAssign });
-    // 7. no-op: an add of someone already there; a remove of someone not there
-    if (op === 'add' && now.personIds.includes(userId)) {
+    const changedMeanwhile = !sameSet(now.personIds, ex.personIds) || !sameSet(now.teamIds, ex.teamIds);
+    const answer = (o) => {
+      const flags = { ...(changedMeanwhile ? { changedMeanwhile: true } : {}), ...o.flags };
+      return role === 'officer' && !forCase ? { ok: true, ...flags, officer: o.view, canAssign: o.canAssign } : { ok: true, ...flags, role, cell: o.view, canAssign: o.canAssign };
+    };
+    // the handover: who of the persons to take off is in the cell now (someone already gone is simply not there)
+    const isTeamOnly = (id) => !now.personIds.includes(id) && now.teamIds.includes(id);
+    if (op === 'remove' && isTeamOnly(userId)) throw fail(400, 'A team cannot be removed here — change it in Monday. Nothing was changed.');
+    if (alsoRemove.some(isTeamOnly)) throw fail(400, 'A team cannot be removed here — change it in Monday. Nothing was changed.');
+    const removeIds = op === 'remove' ? (now.personIds.includes(userId) ? [userId] : []) : alsoRemove.filter((id) => now.personIds.includes(id));
+    const adding = op === 'add' && !now.personIds.includes(userId);
+    // 7. no-op: nothing to add and nothing to take off (an add of someone already there; a remove of someone not there)
+    if (!adding && !removeIds.length) {
+      if (changedMeanwhile) io.patchCache(rowId, col, { value: cell.value, text: cell.text });   // the cached rows follow what Monday has
+      if (undo) _recentAdds.delete(undoKey(itemId, role, userId));
       return answer({ flags: { unchanged: true }, view: nowView, canAssign: true });
     }
-    let removedName = '';
-    if (op === 'remove') {
-      if (!now.personIds.includes(userId)) {
-        if (now.teamIds.includes(userId)) throw fail(400, 'A team cannot be removed here — change it in Monday. Nothing was changed.');
-        return answer({ flags: { unchanged: true }, view: nowView, canAssign: true });
-      }
-      removedName = (entriesOf(cell, names).find((e) => e.kind === 'person' && e.id === userId) || {}).name || `user ${userId}`;
-    }
-    // 8. the write: the whole cell — the persons and teams there now (one person fewer on a remove), the new person last on an add
-    const kept = now.personIds.filter((p) => !(op === 'remove' && p === userId));
-    const persons = op === 'add' ? [...kept, userId] : kept;   // the persons the cell must hold afterwards
+    const named = entriesOf(cell, names);
+    const nameOfId = (id) => (named.find((e) => e.kind === 'person' && e.id === id) || {}).name || `user ${id}`;
+    const removed = removeIds.map((id) => ({ id, name: nameOfId(id) }));
+    // 8. the write: the whole cell — the persons and teams there now (minus the persons taken off), the new person last on an add
+    const kept = now.personIds.filter((p) => !removeIds.includes(p));
+    const persons = adding ? [...kept, userId] : kept;   // the persons the cell must hold afterwards
     const list = [...kept.map((p) => ({ id: Number(p), kind: 'person' })),
       ...now.teamIds.map((t) => ({ id: Number(t), kind: 'team' })),
-      ...(op === 'add' ? [{ id: Number(userId), kind: 'person' }] : [])];
+      ...(adding ? [{ id: Number(userId), kind: 'person' }] : [])];
     try { await io.writeCell(rowId, col, list); }
     catch (err) {
       console.error(`[Assign] write on item ${itemId} failed: ${err.message}`);
       throw fail(502, 'The result is unknown — check the case in Monday before trying again.');
     }
+    if (undo) _recentAdds.delete(undoKey(itemId, role, userId));   // one Undo, whatever the read-back says
     // 9. read-back: exactly the intended persons and teams
     let back;
     try { back = await io.readCell(rowId, col); }
@@ -422,24 +558,26 @@ async function run({ g, itemId, input, source, caseRef }) {
     }
     const got = back ? peopleOf(back.value) : null;
     if (!got || !sameSet(got.personIds, persons) || !sameSet(got.teamIds, now.teamIds)) {
-      console.error(`[Assign] item ${itemId}: Monday did not keep ${label} ${op} ${userId} (read back ${got ? JSON.stringify(got) : 'nothing'})`);
+      console.error(`[Assign] item ${itemId}: Monday did not keep ${label} ${adding ? '+' + userId : ''}${removeIds.length ? ' −' + removeIds.join(',') : ''} (read back ${got ? JSON.stringify(got) : 'nothing'})`);
       throw fail(502, 'Monday did not keep the change — check the case in Monday before trying again. Nothing else was touched.');
     }
     const view = cellView(back, names, person ? { [person.id]: person.name } : null, forCase);
-    // 10. the note (after the write; never retried)
+    // 10. the note (after the write; never retried): "added X", "removed Y", or "added X, removed Y" (the handover)
     const actorName = g.actor.name;
-    const who = op === 'add' ? person.name : removedName;
-    const note = `👤 <b>${esc(label)}: ${op === 'add' ? 'added' : 'removed'} ${esc(who)}</b> (now: ${esc(view.names.length ? view.names.join(', ') : 'nobody')}). ` +
+    const parts = [...(adding ? [`added ${esc(person.name)}`] : []), ...(removed.length ? [`removed ${esc(removed.map((r) => r.name).join(', '))}`] : [])];
+    const note = `👤 <b>${esc(label)}: ${parts.join(', ')}</b> (now: ${esc(view.names.length ? view.names.join(', ') : 'nobody')})${undo ? ' — Undo of the add a moment ago' : ''}. ` +
       `On ${SOURCES[source]} by ${esc(actorName)} · ${esc(torontoTime(io.now()))} (Toronto).`;
     let noteFailed = false;
     try { await io.postNote(rowId, note); }
     catch (err) { noteFailed = true; console.error(`[Assign] item ${itemId}${ref ? ` (${ref})` : ''}: the ${label} was changed but the note failed: ${err.message}`); }
     // 11. the cached rows follow the read-back (never invalidated)
     io.patchCache(rowId, col, { value: back.value, text: back.text });
-    console.log(`[Assign] item ${itemId}${ref ? ` (${ref})` : ''}: ${label} ${op === 'add' ? '+' : '−'} ${who} (now ${view.names.join(', ') || 'nobody'}), by ${actorName} on ${source}`);
+    if (adding && forCase) { _pruneAdds(io.now()); _recentAdds.set(undoKey(itemId, role, userId), { by: whoKey(g), at: io.now() }); }
+    console.log(`[Assign] item ${itemId}${ref ? ` (${ref})` : ''}: ${label}${adding ? ` + ${person.name}` : ''}${removed.length ? ` − ${removed.map((r) => r.name).join(', ')}` : ''}${undo ? ' (undo)' : ''} (now ${view.names.join(', ') || 'nobody'}), by ${actorName} on ${source}`);
     // may this person still change the case? (taking yourself off a case can end your access under "assigned")
     const canAssign = caseAccess.viewerCanSee(caseAccess.assigneesFromColumnValues({ ...valueByCol, [col]: back.value }), g.viewer);
-    const flags = { ...(noteFailed ? { noteFailed: true } : {}), ...(canAssign ? {} : { lostAccess: true, message: LOST_ACCESS }) };
+    const flags = { ...(noteFailed ? { noteFailed: true } : {}), ...(canAssign ? {} : { lostAccess: true, message: LOST_ACCESS }),
+      ...(op === 'add' && removed.length ? { removed } : {}), ...(op === 'add' && !adding ? { alreadyOn: true } : {}) };
     return answer({ flags, view, canAssign });
   } finally {
     _inFlight.delete(itemId);
@@ -448,6 +586,7 @@ async function run({ g, itemId, input, source, caseRef }) {
 
 module.exports = {
   assign, assignOnCase, assignableUsers, warmUsersForPage, gate, markAssignable, peopleOf, stageRoles, describeForCase, entriesOf,
-  ROLES, ROLE_KEYS, OFFICER_COL, NO_KEY_ONLY, LOST_ACCESS,
-  _io: io, _resetUsers, _inFlight,
+  roleStatsOf, roleStats, usualFor, suggestFor, pickerHints,
+  ROLES, ROLE_KEYS, OFFICER_COL, NO_KEY_ONLY, LOST_ACCESS, UNDO_MS,
+  _io: io, _resetUsers, _resetStats, _inFlight, _recentAdds,
 };

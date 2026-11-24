@@ -113,6 +113,7 @@ const OVERRIDE_MAX_MS  = 20 * 60 * 1000; // a patched cell outlives an older in-
 let _casesCache = { at: 0, startedAt: 0, items: null, gen: 0, meta: null };
 let _casesInFlight = null;     // { promise, gen }
 let _casesGen = 0, _casesInvalidatedAt = 0;
+let _casesVersion = 0;         // +1 whenever the cached rows change (a read landed, or a cell was patched) — peekCachedItems
 const _io = { now: () => Date.now() };
 // itemId|colId → { itemId, colId, value, text, at }: cells the app itself just wrote (patchCachedColumn).
 const _overrides = new Map();
@@ -236,7 +237,21 @@ function patchCachedColumn(itemId, colId, { value, text } = {}) {
   const v = value == null ? null : (typeof value === 'string' ? value : JSON.stringify(value));
   const o = { itemId: String(itemId), colId: String(colId), value: v, text: text == null ? '' : String(text), at };
   _overrides.set(o.itemId + '|' + o.colId, o);
-  return _patchItem(_casesCache.items, o.itemId, o.colId, o);
+  const patched = _patchItem(_casesCache.items, o.itemId, o.colId, o);
+  if (patched) _casesVersion++;
+  return patched;
+}
+
+/**
+ * The cached Cases rows as they are now, WITHOUT any Monday read (the case page's "Team on this case" picker and
+ * suggestion, 2026-11-24): { items, at, version } while the copy is at most CASES_HARD_MS (20 min) old, else null.
+ * `version` changes whenever the rows change (a read landed, or a cell was patched), so a caller may keep what it
+ * worked out from them until then. The rows are the shared cache: read only, never changed by the caller.
+ */
+function peekCachedItems() {
+  const c = _casesCache;
+  if (!c.items || _io.now() - c.at > CASES_HARD_MS) return null;
+  return { items: c.items, at: c.at, version: _casesVersion };
 }
 
 function _refreshCases() {
@@ -248,6 +263,7 @@ function _refreshCases() {
       _applyOverrides(items, startedAt);
       // a failed meta read keeps the last good one (it only orders the headings)
       _casesCache = { at: _io.now(), startedAt, items, gen, meta: meta || _casesCache.meta || null };
+      _casesVersion++;
       if (_casesInvalidatedAt <= gen) _casesInvalidatedAt = 0;
       return items;
     })
@@ -649,6 +665,6 @@ async function getDashboardStats(viewer, { fresh = false, contact = false, todo 
 }
 
 module.exports = {
-  fetchAllItems, invalidateCases, patchCachedColumn, getCasesMeta,
+  fetchAllItems, invalidateCases, patchCachedColumn, peekCachedItems, getCasesMeta,
   _casesIo: { refresh: _refreshCases, io: _io, overrides: _overrides, parseMeta: _parseMeta, FRESH_MIN_AGE_MS, OVERRIDE_MAX_MS, CASES_HARD_MS },
   getDashboardStats, parseItem: parseRow, peopleIds, COLS, CONTACT_FIELDS, TODO_FIELDS, MORE_FIELDS, MORE_KEYS };

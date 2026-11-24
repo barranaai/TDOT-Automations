@@ -804,6 +804,9 @@ app.get('/admin/case-data/:caseRef', async (req, res) => {
   res.set('Cache-Control', 'private, no-store');   // one case's details: never kept by the browser
   const viewer = resolveViewer(req);
   if (!viewer) return res.status(401).json({ error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' });
+  // the "Team on this case" staff list is made ready BESIDE the case read, not after it (round 2, B1): cached an hour,
+  // a Monday sign-in only, a short wait at most, never throws — so each person is named by id and the Add pop-up opens ready
+  const teamWarm = require('./services/caseAssignService').warmUsersForPage(tryStaffAuth(req));
   try {
     const overview = await caseCockpitService.getCaseOverview((req.params.caseRef || '').trim(), { team: true });
     // If the Client Master read failed, `assignees` is empty — do NOT run the
@@ -826,8 +829,8 @@ app.get('/admin/case-data/:caseRef', async (req, res) => {
     overview.canChangeDeadline = !overview.cmUnavailable && require('./services/caseDeadlineService').canChange(tryStaffAuth(req), overview.assignees);
     // "Team on this case" (2026-11-24): the four roles the page may set, the stage's highlight, and whether THIS person
     // may change them (a Monday sign-in who may see the case — the shared key never counts); the route re-checks on a fresh read.
-    // the staff list at hand first (cached an hour; a Monday sign-in only; a short wait at most) so each person is named by id
-    if (!overview.cmUnavailable) await require('./services/caseAssignService').warmUsersForPage(tryStaffAuth(req));
+    // the staff list started above, beside the case read (it never throws, never waits more than a short while)
+    await teamWarm;
     overview.team = require('./services/caseAssignService').describeForCase({ cells: overview.teamCells, stage: overview.caseStage, staff: tryStaffAuth(req), assignees: overview.assignees, cmUnavailable: overview.cmUnavailable });
     delete overview.teamCells;
     res.json(overview);
@@ -1535,7 +1538,8 @@ app.get('/admin/client-master/assignable-users', async (req, res) => {
   try {
     const u = await svc.assignableUsers();
     res.set('Cache-Control', 'no-store');
-    res.json({ ok: true, users: u.list.map((x) => ({ id: x.id, name: x.name })) });
+    // usual: per role, who holds it on open cases with a count (the cached Cases rows only; null on a cold cache = the plain list)
+    res.json({ ok: true, users: u.list.map((x) => ({ id: x.id, name: x.name })), usual: svc.pickerHints(u.list) });
   } catch (err) {
     console.warn('[Assign] staff list read failed:', err.message);
     res.status(502).json({ ok: false, error: 'The staff list could not be read from Monday. Please try again.' });

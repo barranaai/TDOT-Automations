@@ -166,23 +166,25 @@ test('409 while the same case is being assigned', async () => {
   await refused({ staff: STAFF, hasKey: false, body: body() }, 409, /already being assigned/);
 });
 
-test('409 "changed": the value on Monday is not the one the page showed → the current value comes back and the cache is patched; nothing written', async () => {
+test('changed in Monday since the page loaded: NOT refused any more — the cell is built from the fresh read, the answer says changedMeanwhile (round 2, B7)', async () => {
+  // the page showed [Bo]; Monday now has [Asha, Chen]: Bo's absence and the others are respected, the new person added
   const m = fakeMonday({ item: { officer: ppl(11, 13), officerText: 'Asha Officer, Chen Officer' } });
-  await assert.rejects(svc.assign({ staff: STAFF, hasKey: false, body: body() }), (e) => {
-    assert.equal(e.status, 409); assert.equal(e.body.code, 'changed');
-    assert.deepEqual(e.body.current, { names: ['Asha Officer', 'Chen Officer'], personIds: ['11', '13'], teamIds: [] });
-    assert.match(e.body.error, /it is now Asha Officer, Chen Officer/);
-    assert.ok(!/a moment ago/.test(e.body.error));
-    return true;
-  });
-  assert.equal(m.writes.length, 0); assert.equal(m.notes.length, 0);
-  assert.equal(patches.length, 1);
-  assert.deepEqual(patches[0], { itemId: ITEM, colId: OFFICER, cell: { value: ppl(11, 13), text: 'Asha Officer, Chen Officer' } });
-  // expected compared as SETS (order does not matter); a team on Monday that the page did not know is a change
+  const r = await svc.assign({ staff: STAFF, hasKey: false, body: body({ userId: '12' }) });
+  assert.deepEqual(r, { ok: true, changedMeanwhile: true, officer: { names: ['Asha Officer', 'Chen Officer', 'Bo <Officer>'], personIds: ['11', '13', '12'], teamIds: [] }, canAssign: true });
+  assert.equal(m.writes.length, 1);
+  assert.deepEqual(JSON.parse(m.writes[0].vars.c), { [OFFICER]: { personsAndTeams: [{ id: 11, kind: 'person' }, { id: 13, kind: 'person' }, { id: 12, kind: 'person' }] } });
+  assert.equal(m.notes.length, 1);
+  // expected compared as SETS (order does not matter): no flag
   fakeMonday({ item: { officer: ppl(13, 11), officerText: 'Chen Officer, Asha Officer' } });
-  assert.equal((await svc.assign({ staff: STAFF, hasKey: false, body: body({ userId: '12', expected: { personIds: ['11', '13'], teamIds: [] } }) })).ok, true);
-  fakeMonday({ item: { officer: ppl(12, { id: 5, kind: 'team' }), officerText: 'Bo <Officer>, Team' } });
-  await refused({ staff: STAFF, hasKey: false, body: body() }, 409, /changed since your page loaded/);
+  const r2 = await svc.assign({ staff: STAFF, hasKey: false, body: body({ userId: '12', expected: { personIds: ['11', '13'], teamIds: [] } }) });
+  assert.equal(r2.ok, true); assert.equal(r2.changedMeanwhile, undefined);
+  // someone already there now (added in Monday meanwhile): no write, the fresh cell comes back and the cache follows it
+  patches = [];
+  const m3 = fakeMonday({ item: { officer: ppl(12, 13), officerText: 'Bo <Officer>, Chen Officer' } });
+  const r3 = await svc.assign({ staff: STAFF, hasKey: false, body: body({ expected: { personIds: ['12'], teamIds: [] } }) });
+  assert.deepEqual(r3, { ok: true, changedMeanwhile: true, unchanged: true, officer: { names: ['Bo <Officer>', 'Chen Officer'], personIds: ['12', '13'], teamIds: [] }, canAssign: true });
+  assert.equal(m3.writes.length, 0); assert.equal(m3.notes.length, 0);
+  assert.deepEqual(patches, [{ itemId: ITEM, colId: OFFICER, cell: { value: ppl(12, 13), text: 'Bo <Officer>, Chen Officer' } }]);
 });
 
 test('200 unchanged when that person already is the one officer: no write, no note', async () => {
