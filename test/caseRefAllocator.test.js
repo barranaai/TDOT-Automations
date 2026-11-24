@@ -9,6 +9,7 @@
 const test   = require('node:test');
 const assert = require('node:assert/strict');
 const fs     = require('fs');
+const { torontoYear } = require('../src/utils/torontoTime');
 
 const fresh = () => { const p = require.resolve('../src/services/caseRefAllocator'); delete require.cache[p]; const m = require(p); m._resetForTests(); return m; };
 function harness({ board = [], folders = [], inUse = [], folderFail = 0, now = 1_000_000, mark = null, markFail = false } = {}) {
@@ -190,10 +191,30 @@ test('checkAssignedRef: another row with the same number → a note on the case;
 
 test('prefixFor: the year and the case type\'s letters; unknown types → MISC', () => {
   const { svc } = serviceHarness();
-  const y = new Date().getFullYear();
+  const y = torontoYear();
   assert.equal(svc.prefixFor('Visitor Visa'), `${y}-VV-`);
   assert.equal(svc.prefixFor('Canadian Experience Class (EE after ITA)'), `${y}-CEC-EE-`);
   assert.equal(svc.prefixFor('Something New'), `${y}-MISC-`);
+});
+
+test('prefixFor: the year is Toronto\'s, not the server clock\'s — 31 Dec 23:30 Toronto (1 Jan 04:30 UTC) is still the old year', () => {
+  const { svc } = serviceHarness();
+  // EST is UTC-5 on 31 Dec: 23:30 Toronto = 04:30 UTC on 1 Jan. A UTC server said 2027.
+  assert.equal(svc.prefixFor('Visitor Visa', Date.parse('2027-01-01T04:30:00Z')), '2026-VV-');
+  assert.equal(svc.prefixFor('Visitor Visa', new Date('2027-01-01T00:00:00Z')), '2026-VV-', '7 pm Toronto on 31 Dec — the first minute the old code went wrong');
+  assert.equal(svc.prefixFor('Visitor Visa', Date.parse('2027-01-01T04:59:59Z')), '2026-VV-', '23:59:59 Toronto');
+  assert.equal(svc.prefixFor('Visitor Visa', Date.parse('2027-01-01T05:00:00Z')), '2027-VV-', 'midnight in Toronto — the new year starts');
+  assert.equal(svc.prefixFor('Supervisa', Date.parse('2027-01-01T05:30:00Z')), '2027-SV-', '00:30 on 1 Jan Toronto');
+});
+
+test('case numbers never take the year from the server clock (getFullYear) — the allocator only reads years out of existing numbers', () => {
+  for (const rel of ['../src/services/caseRefService.js', '../src/services/caseRefAllocator.js']) {
+    const src = fs.readFileSync(require.resolve(rel), 'utf8');
+    assert.doesNotMatch(src, /getFullYear\s*\(|getUTCFullYear\s*\(/, rel);
+  }
+  const src = fs.readFileSync(require.resolve('../src/services/caseRefService.js'), 'utf8');
+  assert.match(src, /function prefixFor\(caseType, at\) \{\s*return `\$\{torontoYear\(at\)\}-/);
+  assert.match(src, /allocator\.allocate\(prefixFor\(caseType\)\)/, 'the live call asks for now');
 });
 
 test('the audit page is admin-only and read-only', () => {
@@ -242,10 +263,10 @@ function flowHarness({ refs = {}, board = [], folders = [] } = {}) {
 const settle = () => new Promise((r) => setTimeout(r, 20));
 
 test('onCaseTypeSet: a new case gets the next number that no leftover folder holds — written once, double-checked, no note when all is clear', quiet(async () => {
-  const h = flowHarness({ board: ['2026-VV-007'].map((r) => r.replace('2026', String(new Date().getFullYear()))), folders: [`Praj - ${new Date().getFullYear()}-VV-008`] });
+  const h = flowHarness({ board: ['2026-VV-007'].map((r) => r.replace('2026', String(torontoYear()))), folders: [`Praj - ${torontoYear()}-VV-008`] });
   await h.svc.onCaseTypeSet({ itemId: '111', caseType: 'Visitor Visa' });
   await settle();
-  const y = new Date().getFullYear();
+  const y = torontoYear();
   assert.deepEqual(h.writes, [['111', `${y}-VV-009`]]);
   assert.equal(h.notes.length, 0);
   assert.equal(h.mark().data[`${y}-VV-`], 9, 'the used-numbers record now holds it');
@@ -267,7 +288,7 @@ test('onCaseTypeSet: two different cases of the same type at the same moment get
   const h = flowHarness({ board: [] });
   await Promise.all([h.svc.onCaseTypeSet({ itemId: '111', caseType: 'Study Permit' }), h.svc.onCaseTypeSet({ itemId: '222', caseType: 'Study Permit' })]);
   await settle();
-  const y = new Date().getFullYear();
+  const y = torontoYear();
   assert.deepEqual(h.writes.map((w) => w[1]).sort(), [`${y}-SP-001`, `${y}-SP-002`]);
 }));
 
@@ -468,7 +489,7 @@ test('careful delete is never blocked by a damaged record: recordAssigned rebuil
 test('onCaseTypeSet RUNS the duplicate check: another row carrying the new number → a note on the case', quiet(async () => {
   const h = flowHarness({ board: [] });
   // a second row already carries the number this case is about to get (typed by hand elsewhere)
-  const y = new Date().getFullYear();
+  const y = torontoYear();
   h.writes.push(['999', `${y}-SP-001`]);
   const alloc = require('../src/services/caseRefAllocator');
   alloc.io.boardRefs = async () => [];   // the board read misses it (lag) — only the post-write search sees it
@@ -503,7 +524,7 @@ test('the record is reserved before the Monday write: if the write fails, the nu
   const realQuery = mon.query;
   mon.query = async (q, v) => { if (/change_column_value[\s\S]*text_mm142s49/.test(q)) throw new Error('Monday 500'); return realQuery(q, v); };
   await assert.rejects(() => h.svc.onCaseTypeSet({ itemId: '111', caseType: 'Study Permit' }), /Monday 500/);
-  const y = new Date().getFullYear();
+  const y = torontoYear();
   assert.equal(h.mark().data[`${y}-SP-`], 1, 'SP-001 is recorded although it was never written');
   mon.query = realQuery;
   await h.svc.onCaseTypeSet({ itemId: '222', caseType: 'Study Permit' });

@@ -12,7 +12,7 @@ const test   = require('node:test');
 const assert = require('node:assert/strict');
 const fs     = require('fs');
 
-const { torontoTime, torontoWallClock, torontoDay } = require('../src/utils/torontoTime');
+const { torontoTime, torontoWallClock, torontoDay, torontoYear } = require('../src/utils/torontoTime');
 
 test('torontoWallClock: instants with a zone become Toronto wall-clock — summer, winter, both DST changes, never "24"', () => {
   const cases = [
@@ -121,4 +121,33 @@ test('pages: the Leads list, its month filter and the detail chip use the Toront
 test('the case timeline and the client journey say the times are Toronto time', () => {
   assert.match(fs.readFileSync(require.resolve('../src/routes/adminCase'), 'utf8'), /document uploads\. Times are Toronto \(Eastern\) time\.<\/div>/);
   assert.match(fs.readFileSync(require.resolve('../src/services/clientPortalService'), 'utf8'), /Everything that has happened on your file so far\. Times are Toronto \(Eastern\) time\./);
+});
+
+test('torontoYear: the year boundary is Toronto midnight, not UTC midnight (31 Dec 23:30 Toronto = 1 Jan 04:30 UTC)', () => {
+  assert.equal(torontoYear(Date.parse('2027-01-01T04:30:00Z')), 2026, '31 Dec 23:30 Toronto');
+  assert.equal(torontoYear(new Date('2027-01-01T04:30:00Z')), 2026, 'a Date works too');
+  assert.equal(torontoYear('2027-01-01T04:30:00Z'), 2026, 'an ISO instant works too');
+  assert.equal(torontoYear('2026-12-31T23:30:00-05:00'), 2026, 'the same moment written with its offset');
+  assert.equal(torontoYear(Date.parse('2027-01-01T00:00:00Z')), 2026, '31 Dec 7 pm Toronto, already 2027 in UTC');
+  assert.equal(torontoYear(Date.parse('2027-01-01T04:59:59.999Z')), 2026, 'the last millisecond of the year in Toronto');
+  assert.equal(torontoYear(Date.parse('2027-01-01T05:00:00Z')), 2027, 'midnight Toronto');
+  assert.equal(torontoYear(Date.parse('2027-01-01T05:30:00Z')), 2027, '1 Jan 00:30 Toronto');
+  assert.equal(torontoYear(Date.parse('2026-07-01T12:00:00Z')), 2026, 'mid-year (EDT) is plain');
+});
+
+test('torontoYear: now when left out; NaN for a value that is not a time (never a made-up year)', () => {
+  const before = torontoYear(Date.now());
+  const y = torontoYear();
+  assert.ok(y === before || y === before + 1, 'now');
+  assert.equal(typeof y, 'number');
+  for (const bad of ['', 'not a date', NaN, {}]) assert.ok(Number.isNaN(torontoYear(bad)), JSON.stringify(bad));
+});
+
+test('torontoYear: the answer does not depend on the machine\'s own time zone', () => {
+  const { execFileSync } = require('child_process');
+  const code = "const {torontoYear}=require(process.argv[1]);process.stdout.write(String(torontoYear(Date.parse('2027-01-01T04:30:00Z'))))";
+  for (const TZ of ['UTC', 'Asia/Kolkata', 'America/Toronto', 'Pacific/Kiritimati']) {
+    const out = execFileSync(process.execPath, ['-e', code, require.resolve('../src/utils/torontoTime')], { env: { ...process.env, TZ, NODE_OPTIONS: '' } }).toString();
+    assert.equal(out, '2026', TZ);
+  }
 });

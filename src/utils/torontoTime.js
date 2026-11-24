@@ -48,4 +48,23 @@ function torontoWallClock(v) {
 /** The Toronto calendar day of the same value: 'YYYY-MM-DD' (a date-only value unchanged, '' stays ''). */
 function torontoDay(v) { return torontoWallClock(v).slice(0, 10); }
 
-module.exports = { torontoTime, torontoWallClock, torontoDay };
+// Built ONCE, like TORONTO_PARTS: case numbers ask for the year on every allocation.
+const TORONTO_YEAR = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric' });
+
+/**
+ * The year in Toronto at an instant (2026-11-25). Case numbers carry the year
+ * ("2026-VV-012"), and new Date().getFullYear() is the SERVER's year — UTC on
+ * Render, so a case made on 31 Dec after 7 pm Toronto (00:00 UTC on 1 Jan)
+ * got next year's number. Toronto's own year is the office's year.
+ *
+ * @param {Date|number|string} [at]  a Date, epoch milliseconds or an ISO instant; now when left out
+ * @returns {number}                 NaN when the value is not a time
+ */
+function torontoYear(at) {
+  const d = at == null ? new Date()
+    : new Date(at instanceof Date ? at.getTime() : (typeof at === 'number' ? at : String(at)));
+  if (Number.isNaN(d.getTime())) return NaN;
+  return Number(TORONTO_YEAR.format(d));
+}
+
+module.exports = { torontoTime, torontoWallClock, torontoDay, torontoYear };

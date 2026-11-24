@@ -3,6 +3,7 @@ const { clientMasterBoardId, cmColumns } = require('../../config/monday');
 const { SUB_TYPES_BY_CASE } = require('../../config/caseTypes');
 const { ensureAccessToken } = require('./accessTokenService');
 const portalSvc = require('./clientPortalService');
+const { torontoYear } = require('../utils/torontoTime');
 
 const CASE_REF_COL      = 'text_mm142s49';
 const CASE_TYPE_COL     = 'dropdown_mm0xd1qn';
@@ -87,9 +88,16 @@ async function getItemCaseRef(itemId) {
   return (data.items[0]?.column_values[0]?.text || '').trim();
 }
 
-/** "2026-VV-" for a case type (unknown types → MISC). */
-function prefixFor(caseType) {
-  return `${new Date().getFullYear()}-${CASE_TYPE_ABBR[caseType] || 'MISC'}-`;
+/**
+ * "2026-VV-" for a case type (unknown types → MISC). The year is Toronto's,
+ * never the server clock's (UTC on Render: 31 Dec after 7 pm Toronto is
+ * already next year there).
+ *
+ * @param {string} caseType
+ * @param {Date|number} [at]  the moment (now when left out; tests pass one)
+ */
+function prefixFor(caseType, at) {
+  return `${torontoYear(at)}-${CASE_TYPE_ABBR[caseType] || 'MISC'}-`;
 }
 
 

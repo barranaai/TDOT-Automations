@@ -39,6 +39,7 @@
 require('dotenv').config();
 
 const mondayApi = require('../src/services/mondayApi');
+const { torontoYear } = require('../src/utils/torontoTime');
 const { onItemCreated: assignToken } = require('../src/services/accessTokenService');
 const { onRetainerPaid }             = require('../src/services/retainerService');
 const { onDocumentCollectionStarted } = require('../src/services/checklistService');
@@ -494,7 +495,7 @@ async function main() {
     console.log(`  Q Readiness:         ${cols[CM.qReadiness]     || '(empty)'}%`);
 
     const criticalOk =
-      cols[CM.caseRef]?.startsWith(`${new Date().getFullYear()}-`) &&
+      cols[CM.caseRef]?.startsWith(`${torontoYear()}-`) &&
       cols[CM.accessToken]?.startsWith('TDOT-') &&
       cols[CM.caseStage] === 'Document Collection Started' &&
       cols[CM.checklistApplied] === 'Yes' &&
