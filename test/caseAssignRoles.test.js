@@ -244,8 +244,8 @@ test('REMOVE the last person: the cell is written empty ({"personsAndTeams":[]})
 test('REMOVE needs no staff list (a person who has left Monday can still be taken off); a person not there = no-op; a team → 400', async () => {
   let m = fakeMonday({ usersFail: true, cells: { [COL.ops]: { value: ppl(21, 12), text: 'Gone Person, Bo Manager' } } });
   const r = await onCase({ role: 'ops', op: 'remove', userId: '21', expected: { personIds: ['21', '12'], teamIds: [] } });
-  assert.equal(r.ok, true);
-  assert.equal(m.calls.filter((c) => /users\(kind/.test(c.gql)).length, 0, 'no user read');
+  assert.equal(r.ok, true, 'the staff list failing does not stop a remove (review 2026-11-24: it is read only to NAME the person)');
+  assert.equal(m.writes.length, 1);
   assert.match(m.notes[0].vars.b, /Ops Supervisor: removed Gone Person<\/b> \(now: Bo Manager\)/);
   m = fakeMonday({ cells: { [COL.ops]: { value: ppl(12, T(5)), text: 'Bo Manager, Team 5' } } });
   assert.equal((await onCase({ role: 'ops', op: 'remove', userId: '14', expected: { personIds: ['12'], teamIds: ['5'] } })).unchanged, true);
@@ -507,4 +507,191 @@ test('the staff guide: the Client Master how-to says it adds; the case page has 
   const h = g.howto.find((x) => x.q === 'How do I assign people to a case from the case page?');
   assert.ok(h && h.step_ids.includes('case-assign-team'));
   assert.ok(!/replaces/.test(g.howto.find((x) => x.q === 'How do I set who the Case Support Officer is?').answer));
+});
+
+// ── review 2026-11-24 ──
+test('review [1][3] entriesOf: a PERSON is named by id (staff list / just added), never by position in Monday\'s text; the text names only what the ids cannot', () => {
+  const names = new Map([['1', 'Ann'], ['2', 'Bob'], ['3', 'Alice']]);
+  // the text in another order than the value
+  assert.deepEqual(svc.entriesOf({ value: ppl(1, 2), text: 'Bob, Ann' }, names).map((e) => [e.id, e.name]), [['1', 'Ann'], ['2', 'Bob']]);
+  // a mixed cell: value [Alice, team 9, Bob], text persons-first — the team keeps its own name, Bob keeps his
+  assert.deepEqual(svc.entriesOf({ value: ppl(3, T(9), 2), text: 'Alice, Bob, Intake' }, names).map((e) => [e.kind, e.id, e.name]),
+    [['person', '3', 'Alice'], ['team', '9', 'Intake'], ['person', '2', 'Bob']]);
+  // the person just added (not yet on the cached list) by id too
+  assert.deepEqual(svc.entriesOf({ value: ppl(3, T(9), 44), text: 'Alice, Newbie, Intake' }, names, { 44: 'Newbie' }).map((e) => e.name), ['Alice', 'Intake', 'Newbie']);
+  // a known name missing from the text: the text does not line up → the team is "team <id>", never a person's name
+  assert.deepEqual(svc.entriesOf({ value: ppl(1, T(9)), text: 'Ann B, Intake' }, names).map((e) => e.name), ['Ann', 'team 9']);
+  // a person NOT on the staff list among known ones: the leftover text part, in order
+  assert.deepEqual(svc.entriesOf({ value: ppl(1, 77), text: 'Ann, Former Staff' }, names).map((e) => e.name), ['Ann', 'Former Staff']);
+  // nothing known (cold cache): the text in order, as before
+  assert.deepEqual(svc.entriesOf({ value: ppl(1, T(9)), text: 'Ann, Intake' }).map((e) => e.name), ['Ann', 'Intake']);
+  // a prototype key is never a name
+  assert.deepEqual(svc.entriesOf({ value: ppl(5), text: '' }, null, Object.create({ 5: 'Inherited' })).map((e) => e.name), ['user 5']);
+});
+
+test('review [1][3] REMOVE with Monday\'s text in another order: the note and the answer name the person whose id was removed (warm or cold staff list)', async () => {
+  for (const warm of [true, false]) {
+    svc._resetUsers(); svc._inFlight.clear();
+    const m = fakeMonday({ cells: { [COL.manager]: { value: ppl(11, 14), text: 'Monica Paola, Asha Officer' } } });
+    if (warm) await svc.assignableUsers();
+    const r = await onCase({ role: 'manager', op: 'remove', userId: '11', expected: { personIds: ['11', '14'], teamIds: [] } });
+    assert.match(m.notes[0].vars.b, /<b>Case Manager: removed Asha Officer<\/b> \(now: Monica Paola\)/, warm ? 'warm' : 'cold');
+    assert.deepEqual(r.cell.entries, [{ id: '14', kind: 'person', name: 'Monica Paola' }]);
+    assert.equal(m.calls.filter((c) => /users\(kind/.test(c.gql)).length, warm ? 1 : 1, 'one list read at most (the warm-up, or the remove\'s own when cold)');
+  }
+});
+
+test('review [1][3] ADD into a cell with a team: the team keeps its name and the new person is named by id, whatever order Monday\'s text comes back in', async () => {
+  const m = fakeMonday({ cells: { [COL.officer]: { value: ppl(11, T(9)), text: 'Asha Officer, Intake' } },
+    keep: (col, cell) => ({ value: JSON.stringify(cell), text: 'Asha Officer, Monica Paola, Intake' }) });   // persons first in the text
+  const r = await onCase({ role: 'officer', userId: '14', expected: { personIds: ['11'], teamIds: ['9'] } });
+  assert.deepEqual(r.cell.entries, [{ id: '11', kind: 'person', name: 'Asha Officer' }, { id: '9', kind: 'team', name: 'Intake' }, { id: '14', kind: 'person', name: 'Monica Paola' }]);
+  assert.match(m.notes[0].vars.b, /added Monica Paola<\/b> \(now: Asha Officer, Intake, Monica Paola\)/);
+});
+
+test('review [1] the page load: warmUsersForPage reads the staff list once for a Monday sign-in (never for the key alone / nobody), never throws, never waits long; the box then names by id', async () => {
+  let m = fakeMonday();
+  await svc.warmUsersForPage(null); await svc.warmUsersForPage({});
+  assert.equal(m.calls.length, 0, 'no read without a Monday sign-in');
+  await Promise.all([svc.warmUsersForPage(STAFF), svc.warmUsersForPage(STAFF)]);
+  assert.equal(m.calls.filter((c) => /users\(kind/.test(c.gql)).length, 1, 'one read for two page loads at once');
+  await svc.warmUsersForPage(STAFF);
+  assert.equal(m.calls.length, 1, 'kept (an hour)');
+  const t = svc.describeForCase({ cells: { [COL.manager]: { value: ppl(11, 14), text: 'Monica Paola, Asha Officer' } }, stage: '', staff: STAFF, assignees: { personIds: ['11', '14'], teamIds: [] } });
+  assert.deepEqual(t.roles.find((x) => x.role === 'manager').entries.map((e) => [e.id, e.name]), [['11', 'Asha Officer'], ['14', 'Monica Paola']]);
+  // a failing read: no throw, the page goes on
+  svc._resetUsers();
+  m = fakeMonday({ usersFail: true });
+  await svc.warmUsersForPage(STAFF);
+  // a read that hangs: the page waits at most timeoutMs
+  svc._resetUsers();
+  mondayApi.query = () => new Promise(() => {});
+  const t0 = Date.now();
+  await svc.warmUsersForPage(STAFF, { timeoutMs: 30 });
+  assert.ok(Date.now() - t0 < 1000);
+  svc._resetUsers();
+  // the route warms the list before the box is described (and not when the row could not be read)
+  const src = fs.readFileSync(require.resolve('../src/server'), 'utf8');
+  assert.ok(src.includes("    if (!overview.cmUnavailable) await require('./services/caseAssignService').warmUsersForPage(tryStaffAuth(req));\n    overview.team = require('./services/caseAssignService').describeForCase("));
+});
+
+test('review [2] the Client Master route only ADDS a Case Support Officer: another role or a remove → 400 before any Monday call; "officer" / "add" named outright still work', async () => {
+  const m = fakeMonday({ cells: { [COL.officer]: { value: ppl(11), text: 'Asha Officer' }, [COL.manager]: { value: ppl(12), text: 'Bo Manager' } } });
+  const cm = (extra) => svc.assign({ staff: STAFF, hasKey: false, body: { itemId: ITEM, userId: '12', expected: { personIds: ['12'], teamIds: [] }, ...extra } });
+  await refused(cm({ role: 'manager', op: 'remove' }), 400, /This role cannot be set here/);
+  await refused(cm({ role: 'manager' }), 400, /This role cannot be set here/);
+  await refused(cm({ op: 'remove' }), 400, /Reload the page/);
+  await refused(cm({ role: 'officer', op: 'remove' }), 400, /Reload the page/);
+  assert.equal(m.calls.length, 0); assert.equal(m.writes.length, 0);
+  const r = await svc.assign({ staff: STAFF, hasKey: false, body: { itemId: ITEM, role: 'officer', op: 'add', userId: '14', expected: { personIds: ['11'], teamIds: [] } } });
+  assert.equal(r.ok, true); assert.deepEqual(r.officer.personIds, ['11', '14']);
+  assert.deepEqual(Object.keys(JSON.parse(m.writes[0].vars.c)), [COL.officer]);
+  assert.match(m.notes[0].vars.b, /Case Support Officer: added Monica Paola.*On the Client Master page/);
+});
+
+/** The box's send code with a fake pop-up and a fake fetch. */
+function sendHarness(answer) {
+  const h = boxHarness();
+  const { ctx, el } = h;
+  ctx.msgs = []; ctx.loads = 0;
+  ctx.actMsg = (id, cls, txt) => { ctx.msgs.push([id, cls, txt]); const e = el(id); e.className = 'act-msg ' + cls; e.textContent = txt; };
+  ctx.loadCase = () => { ctx.loads++; };
+  ctx.CASE_REF = '2026-EE-001';
+  ctx.sent = [];
+  ctx.fetch = (url, o) => {
+    ctx.sent.push({ url, body: o && o.body ? JSON.parse(o.body) : null });
+    if (/assignable-users/.test(url)) return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, users: [{ id: '11', name: 'Asha Officer' }, { id: '12', name: 'Bo' }, { id: '14', name: 'Monica Paola' }] }) });
+    const a = typeof answer === 'function' ? answer() : answer;
+    if (a instanceof Error) return Promise.reject(a);
+    return Promise.resolve({ ok: a.status < 300, status: a.status, json: async () => a.j });
+  };
+  const dlg = { open: true, closed: 0 };
+  ctx.tdotDialogNew = () => {
+    const els = {};
+    const box = { innerHTML: '', querySelector: (sel) => (els[sel] = els[sel] || { innerHTML: '', textContent: '', value: '', disabled: false, focus() {} }) };
+    dlg.c = { box, openId: 1, busy: false, still: () => dlg.open, setBusy: (b) => { dlg.c.busy = b; }, close: () => { dlg.closed++; dlg.open = false; }, tryClose: () => { dlg.open = false; } };
+    return dlg.c;
+  };
+  ctx.LAST_D = { caseRef: '2026-EE-001', clientName: 'X', manager: 'Bo', team: TEAM() };
+  return { ...h, dlg };
+}
+const ticks = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
+
+test('review [4] an error after the pop-up was closed is never dropped: it goes under the box (non-ok answer and no answer); no whole-case reload', async () => {
+  for (const answer of [{ status: 502, j: { ok: false, error: 'The result is unknown — check the case in Monday before trying again. Nothing else was touched.' } }, new Error('network')]) {
+    const { ctx, dlg } = sendHarness(answer);
+    ctx.teamRmDlg('manager', '12');
+    dlg.c.box.querySelector('#team-go').onclick();
+    dlg.open = false;   // closed after the long wait, before the answer
+    await ticks();
+    assert.equal(ctx.msgs.length, 1);
+    assert.equal(ctx.msgs[0][0], 'team-msg'); assert.equal(ctx.msgs[0][1], 'err');
+    assert.match(ctx.msgs[0][2], answer instanceof Error ? /No answer — the result is unknown/ : /The result is unknown — check the case in Monday/);
+    assert.equal(ctx.loads, 0, 'no whole-case reload: a next change on an out-of-date box is caught by the server (409 "changed")');
+  }
+  // still open: the pop-up shows it, nothing under the box, no reload
+  const { ctx, dlg } = sendHarness({ status: 502, j: { ok: false, error: 'Monday did not keep the change.' } });
+  ctx.teamRmDlg('manager', '12');
+  dlg.c.box.querySelector('#team-go').onclick();
+  await ticks();
+  assert.equal(dlg.c.box.querySelector('#team-err').textContent, 'Monday did not keep the change.');
+  assert.equal(ctx.msgs.length, 0); assert.equal(ctx.loads, 0);
+});
+
+test('review [5] a 409 "changed" in the Add pop-up rebuilds the staff list for the new cell (someone taken off can be picked again), the choice kept when still allowed', async () => {
+  const cur = { names: ['Bo'], personIds: ['12'], teamIds: [], entries: [{ id: '12', kind: 'person', name: 'Bo' }] };
+  const { ctx, dlg } = sendHarness({ status: 409, j: { ok: false, code: 'changed', error: 'This changed since your page loaded — it is now Bo.', current: cur } });
+  ctx.LAST_D.team.roles[0] = { ...ctx.LAST_D.team.roles[0], names: ['Asha Officer', 'Monica Paola'], personIds: ['11', '14'], entries: [] };
+  ctx.teamAddDlg('officer');
+  await ticks();
+  const sel = dlg.c.box.querySelector('#team-sel');
+  assert.match(sel.innerHTML, /<option value="11" disabled>Asha Officer — already on<\/option>/);
+  sel.value = '12';
+  dlg.c.box.querySelector('#team-go').onclick();
+  await ticks();
+  assert.deepEqual(ctx.sent.pop().body.expected, { personIds: ['11', '14'], teamIds: [] });
+  assert.match(sel.innerHTML, /<option value="11">Asha Officer<\/option>/, 'Asha was taken off in Monday: she can be picked again');
+  assert.match(sel.innerHTML, /<option value="14">Monica Paola<\/option>/);
+  assert.match(sel.innerHTML, /<option value="12" disabled>Bo — already on<\/option>/);
+  assert.equal(sel.value, '', 'the choice (Bo) is now already on, so it is cleared');
+  assert.match(dlg.c.box.querySelector('#team-err').textContent, /it is now Bo\. Check it, then press the button again/);
+});
+
+test('review [6] a 403 key-only (the Monday sign-in expired, the team key left) shows the sign-in link like a 401, and the box stops offering Add… / ✕', async () => {
+  for (const a of [{ status: 403, j: { ok: false, code: 'key-only', error: 'Sign in with Monday to assign, so the note can say who did it.' } },
+    { status: 401, j: { ok: false, error: 'Sign in with Monday to assign.', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' } }]) {
+    const { ctx, el, dlg } = sendHarness(a);
+    ctx.renderTeam(ctx.LAST_D.team);
+    ctx.teamRmDlg('manager', '12');
+    dlg.c.box.querySelector('#team-go').onclick();
+    await ticks();
+    const e = dlg.c.box.querySelector('#team-err').innerHTML;
+    assert.ok(e.includes(a.j.error) && e.includes('<a href="/q/auth/monday?returnTo=%2Fadmin%2Fcase%2F2026-EE-001">Sign in with Monday</a>'), String(a.status));
+    assert.equal(ctx.LAST_D.team.canAssign, false); assert.equal(ctx.LAST_D.team.signedIn, false);
+    const h = el('team-card').innerHTML;
+    assert.ok(!/data-team-(add|rm)/.test(h) && h.includes('To change who is on this case, sign in with Monday'));
+  }
+  // any other 403 (not assigned) stays plain text, the box unchanged
+  const { ctx, dlg } = sendHarness({ status: 403, j: { ok: false, error: 'You are not assigned to this case.' } });
+  ctx.teamRmDlg('manager', '12');
+  dlg.c.box.querySelector('#team-go').onclick();
+  await ticks();
+  assert.equal(dlg.c.box.querySelector('#team-err').textContent, 'You are not assigned to this case.');
+  assert.equal(ctx.LAST_D.team.canAssign, true);
+  // the staff list route says key-only too (so the Add pop-up can show the link)
+  const src = fs.readFileSync(require.resolve('../src/server'), 'utf8');
+  const g = src.slice(src.indexOf("app.get('/admin/client-master/assignable-users'"));
+  assert.ok(g.slice(0, 600).includes("...(g.loginUrl ? { loginUrl: g.loginUrl } : { code: g.code })"));
+});
+
+test('review [7] the staff guide: the case page entry and the Overview step name the Team on this case box and link its how-to; the Manager pill is no longer called read-only', () => {
+  const g = JSON.parse(require('../src/services/staffGuideService').data());
+  const open = g.steps.find((s) => s.id === 'case-page-open');
+  assert.match(open.options.find((o) => o.label === 'Overview').does, /^Tab: the Team on this case box \(who is on the case by role; Add… \/ ✕ when signed in with Monday\)/);
+  assert.ok(open.related.includes('case-assign-team'));
+  const pill = open.options.find((o) => o.label.startsWith('Stage · Payment'));
+  assert.ok(!/Read-only/.test(pill.does) && /Manager pill follows a Case Manager change made in the Team on this case box/.test(pill.does));
+  const ov = g.steps.find((s) => s.id === 'case-readiness-overview');
+  assert.match(ov.where, /Overview tab → "👥 Team on this case"/);
+  assert.ok(ov.related.includes('case-assign-team'));
 });

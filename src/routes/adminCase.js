@@ -558,6 +558,14 @@ function teamRole(role) {
 }
 function teamArticle(label) { return /^[AEIOU]/.test(String(label || '')) ? 'an ' : 'a '; }
 function teamSignIn(j) { return remSignInHtml({ j: j || {} }); }   // the reminders' sign-in link: back to THIS case page
+/* The Monday sign-in is gone (401), or only the team key is left (403 key-only): both need the sign-in link. */
+function teamNeedsSignIn(res) { return res.status === 401 || !!(res.j && res.j.code === 'key-only'); }
+/* ...and the box stops offering Add… / ✕ (they would keep failing): it shows the sign-in footer instead. */
+function teamSignedOut() {
+  if (!LAST_D || !LAST_D.team) return;
+  LAST_D.team.signedIn = false; LAST_D.team.canAssign = false;
+  renderTeam(LAST_D.team);
+}
 function renderTeam(t) {
   var card = document.getElementById('team-card');
   if (!card) return;
@@ -640,17 +648,28 @@ function teamSend(c, st, op, userId, okText) {
         st.expected = { personIds: (j.current.personIds || []).map(String), teamIds: (j.current.teamIds || []).map(String) };
         var now = c.box.querySelector('#team-now');
         if (now) now.textContent = (j.current.names || []).length ? j.current.names.join(', ') : 'Nobody';
+        if (st.refill) st.refill(true);   // the list follows the new cell ("— already on"), the choice kept while it is still allowed
         done();
         err.textContent = (j.error || 'This changed since your page loaded.') + ' Check it, then press the button again if you still want this.';
         return;
       }
-      if (!done()) return;
-      if (res.status === 401) { err.innerHTML = teamSignIn(j); return; }
-      err.textContent = j.error || ('Something went wrong (' + res.status + '). The result is unknown — check the case before trying again.');
+      var signIn = teamNeedsSignIn(res);
+      if (signIn) teamSignedOut();
+      var said = j.error || ('Something went wrong (' + res.status + '). The result is unknown — check the case before trying again.');
+      if (!done()) {
+        // the pop-up was closed after the long wait: the answer goes under the box (never dropped). No whole-case
+        // reload: a next Add… / ✕ on a box that is out of date is caught by the server's own check (409 "changed").
+        if (signIn) { var m = document.getElementById('team-msg'); if (m) { m.className = 'act-msg err'; m.innerHTML = teamSignIn(j); } return; }
+        actMsg('team-msg', 'err', said);
+        return;
+      }
+      if (signIn) { err.innerHTML = teamSignIn(j); return; }
+      err.textContent = said;
     })
     .catch(function() {
-      if (!done()) return;
-      err.textContent = 'No answer — the result is unknown. Check the case before trying again.';
+      var said = 'No answer — the result is unknown. Check the case before trying again.';
+      if (!done()) { actMsg('team-msg', 'err', said); return; }
+      err.textContent = said;
     });
 }
 function teamAddDlg(role) {
@@ -676,16 +695,18 @@ function teamAddDlg(role) {
     teamSend(c, st, 'add', v, '✓ ' + (name || 'The person') + ' added as ' + r.label + '.');
   };
   var id = c.openId;
-  var fill = function() {
-    var on = {};
+  var fill = function(again) {
+    var on = {}, keep = st.sel.value;
     st.expected.personIds.forEach(function(p) { on[String(p)] = true; });
     st.sel.innerHTML = '<option value="">Choose a person…</option>' + (TEAM_STAFF || []).map(function(u) {
       var already = on[String(u.id)];
       return '<option value="' + escHtml(String(u.id)) + '"' + (already ? ' disabled' : '') + '>' + escHtml(u.name) + (already ? ' — already on' : '') + '</option>';
     }).join('');
+    st.sel.value = keep && !on[keep] ? keep : '';
     st.sel.disabled = false;
-    try { st.sel.focus(); } catch (e) {}
+    if (!again) { try { st.sel.focus(); } catch (e) {} }
   };
+  st.refill = function(again) { if (TEAM_STAFF) fill(again); };
   if (TEAM_STAFF) { fill(); return; }
   fetch('/admin/client-master/assignable-users', { headers: teamHeaders(false), credentials: 'same-origin' })
     .then(function(res) { return res.json().catch(function() { return {}; }).then(function(j) { return { ok: res.ok && j.ok, status: res.status, j: j }; }); })
@@ -694,7 +715,7 @@ function teamAddDlg(role) {
       if (!res.ok) {
         st.sel.innerHTML = '<option value="">The staff list could not be loaded</option>';
         var e1 = c.box.querySelector('#team-err');
-        if (res.status === 401) e1.innerHTML = teamSignIn(res.j); else e1.textContent = (res.j && res.j.error) || 'The staff list could not be loaded. Close this and try again.';
+        if (teamNeedsSignIn(res)) { teamSignedOut(); e1.innerHTML = teamSignIn(res.j); } else e1.textContent = (res.j && res.j.error) || 'The staff list could not be loaded. Close this and try again.';
         return;
       }
       TEAM_STAFF = res.j.users || [];

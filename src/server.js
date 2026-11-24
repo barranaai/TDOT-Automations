@@ -826,6 +826,8 @@ app.get('/admin/case-data/:caseRef', async (req, res) => {
     overview.canChangeDeadline = !overview.cmUnavailable && require('./services/caseDeadlineService').canChange(tryStaffAuth(req), overview.assignees);
     // "Team on this case" (2026-11-24): the four roles the page may set, the stage's highlight, and whether THIS person
     // may change them (a Monday sign-in who may see the case — the shared key never counts); the route re-checks on a fresh read.
+    // the staff list at hand first (cached an hour; a Monday sign-in only; a short wait at most) so each person is named by id
+    if (!overview.cmUnavailable) await require('./services/caseAssignService').warmUsersForPage(tryStaffAuth(req));
     overview.team = require('./services/caseAssignService').describeForCase({ cells: overview.teamCells, stage: overview.caseStage, staff: tryStaffAuth(req), assignees: overview.assignees, cmUnavailable: overview.cmUnavailable });
     delete overview.teamCells;
     res.json(overview);
@@ -1529,7 +1531,7 @@ app.get('/admin/client-master/assignable-users', async (req, res) => {
   const svc = require('./services/caseAssignService');
   const { staff, hasKey } = assignWho(req);
   const g = svc.gate(staff, hasKey);
-  if (!g.ok) return res.status(g.status).json({ ok: false, error: g.error, ...(g.loginUrl ? { loginUrl: g.loginUrl } : {}) });
+  if (!g.ok) return res.status(g.status).json({ ok: false, error: g.error, ...(g.loginUrl ? { loginUrl: g.loginUrl } : { code: g.code }) });
   try {
     const u = await svc.assignableUsers();
     res.set('Cache-Control', 'no-store');

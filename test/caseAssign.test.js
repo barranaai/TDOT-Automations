@@ -327,11 +327,12 @@ test('the answer says whether this person may still assign the case (under "assi
   fakeMonday({ item: { officer: ppl(11), officerText: 'Asha Officer' } });
   let r = await svc.assign({ staff: STAFF, hasKey: false, body: body({ expected: { personIds: ['11'], teamIds: [] } }) });
   assert.equal(r.ok, true); assert.equal(r.canAssign, true);
-  // she takes herself off (op remove): the answer says she no longer may
+  // a remove is the case page's (its ✕ and confirm) — this route refuses it before any Monday call (review 2026-11-24 [2]);
+  // taking yourself off and losing access is tested on the case route (caseAssignRoles.test.js, "REMOVE yourself")
   svc._resetUsers();
-  fakeMonday({ item: { officer: ppl(11, 13), officerText: 'Asha Officer, Chen Officer' } });
-  r = await svc.assign({ staff: STAFF, hasKey: false, body: body({ op: 'remove', userId: '11', expected: { personIds: ['11', '13'], teamIds: [] } }) });
-  assert.equal(r.ok, true); assert.equal(r.canAssign, false); assert.equal(r.lostAccess, true);
+  const m = fakeMonday({ item: { officer: ppl(11, 13), officerText: 'Asha Officer, Chen Officer' } });
+  await assert.rejects(svc.assign({ staff: STAFF, hasKey: false, body: body({ op: 'remove', userId: '11', expected: { personIds: ['11', '13'], teamIds: [] } }) }), (e) => e.status === 400);
+  assert.equal(m.writes.length, 0);
   // still Case Manager → still allowed
   svc._resetUsers();
   fakeMonday({ item: { officer: ppl(11), officerText: 'Asha Officer', otherPeople: { multiple_person_mm0xhmgk: ppl(11) } } });

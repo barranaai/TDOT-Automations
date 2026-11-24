@@ -115,8 +115,13 @@ function peopleOf(raw) { return require('./dashboardService').peopleIds(raw); }
 const sameSet = (a, b) => { const A = new Set((a || []).map(String)), B = new Set((b || []).map(String)); return A.size === B.size && [...A].every((x) => B.has(x)); };
 
 /**
- * The entries of a people cell in the cell's own order, each with a name (pure): Monday's text
- * when it lines up with the entries (one name per entry), else the names we know, else "user <id>" / "team <id>".
+ * The entries of a people cell in the cell's own order, each with a name (pure).
+ * A PERSON is named by their id — the person just added (extra), else the staff list — never by
+ * position in Monday's text: nothing says Monday writes its text in the value's order, and the ✕,
+ * its confirm and the note must name the person whose id is removed (review 2026-11-24).
+ * Monday's text is used only for the entries the ids cannot name (teams; people not on the staff
+ * list): the text with the known names taken out, in order, when exactly one part is left for each
+ * such entry. Otherwise "team <id>" / "user <id>".
  * @param {{ value?: string|null, text?: string }} cell
  * @param {?Map} names     id → name (the staff list), optional
  * @param {?object} extra  { [id]: name } for a person just added / removed, optional
@@ -134,14 +139,22 @@ function entriesOf(cell, names, extra) {
     seen.add(kind + '|' + id);
     list.push({ id, kind });
   }
-  const parts = s(cell && cell.text) ? s(cell.text).split(/\s*,\s*/).filter(Boolean) : [];
-  const aligned = parts.length === list.length;
-  return list.map((e, i) => ({
-    ...e,
-    name: aligned ? parts[i]
-      : e.kind === 'team' ? `team ${e.id}`
-      : (extra && extra[e.id]) || (names && names.get && names.get(e.id)) || `user ${e.id}`,
-  }));
+  const known = list.map((e) => (e.kind === 'person' ? s((extra && own(extra, e.id) && extra[e.id]) || (names && names.get && names.get(e.id))) : ''));
+  // the text's parts left once every known name is taken out (null: the text does not line up — a known name is missing from it)
+  let left = s(cell && cell.text) ? s(cell.text).split(/\s*,\s*/).filter(Boolean) : [];
+  for (const k of known) {
+    if (!k || !left) continue;
+    const at = left.indexOf(k);
+    if (at < 0) left = null; else left.splice(at, 1);
+  }
+  const unknown = known.filter((k) => !k).length;
+  const fromText = !!left && left.length === unknown;
+  let j = 0;
+  return list.map((e, i) => {
+    if (known[i]) return { ...e, name: known[i] };
+    const t = fromText ? left[j++] : '';
+    return { ...e, name: t || (e.kind === 'team' ? `team ${e.id}` : `user ${e.id}`) };
+  });
 }
 /** A cell as the pages get it: { names, personIds, teamIds } (+ entries for the case page). */
 function cellView(cell, names, extra, withEntries) {
@@ -192,7 +205,23 @@ async function assignableUsers({ fresh = false } = {}) {
   _users = { at: io.now(), list, names };
   return _users;
 }
-function _resetUsers() { _users = null; }
+function _resetUsers() { _users = null; _pageWarm = null; }
+/**
+ * The case page load: make sure the staff list is at hand so the box names each person by id (entriesOf),
+ * for a Monday sign-in only (the people who get the ✕). At most one read at a time, never longer than
+ * `timeoutMs` for the page, and a failure only leaves the names to Monday's text. Never throws.
+ */
+let _pageWarm = null;
+async function warmUsersForPage(staff, { timeoutMs = 3000 } = {}) {
+  if (warmUsers() || !gate(staff, false).ok) return;
+  if (!_pageWarm) {
+    _pageWarm = assignableUsers().catch((err) => { console.warn(`[Assign] staff list read for the case page failed: ${err.message}`); })
+      .then(() => { _pageWarm = null; });
+  }
+  let timer;
+  await Promise.race([_pageWarm, new Promise((r) => { timer = setTimeout(r, timeoutMs); })]);
+  clearTimeout(timer);
+}
 const warmUsers = () => (_users && io.now() - _users.at < USERS_TTL_MS ? _users : null);
 
 /**
@@ -279,7 +308,10 @@ async function assign({ staff, hasKey, body }) {
   // 2. validate (the item id is checked against Monday below; the page's row is never trusted for anything else)
   const itemId = s(b.itemId);
   if (!DIGITS.test(itemId) || !DIGITS.test(s(b.userId))) throw fail(400, 'Choose a person and try again.');
-  const input = parseInput(b);
+  // this page only ADDS a Case Support Officer (its Assign…): another role or a remove is the case page's, with its ✕ and confirm
+  if (b.role != null && b.role !== '' && s(b.role) !== 'officer') throw fail(400, 'This role cannot be set here. Reload the page and try again.');
+  if (b.op != null && b.op !== '' && s(b.op) !== 'add') throw fail(400, 'Reload the page and try again.');
+  const input = parseInput({ ...b, role: 'officer', op: 'add' });
   return run({ g, itemId, input, source: 'client-master' });
 }
 
@@ -312,7 +344,7 @@ async function run({ g, itemId, input, source, caseRef }) {
   try {
     // 2b. an ADD: the person must be on the staff list — the hour-long cached list when it has them
     // (plan §5.4 step 2), else ONE fresh read (someone just added to Monday can still be assigned).
-    // A REMOVE needs no list: the person only has to be in the cell (they may have left Monday since).
+    // A REMOVE does not need the list: the person only has to be in the cell (they may have left Monday since).
     let users = warmUsers();
     let person = null;
     if (op === 'add') {
@@ -322,6 +354,11 @@ async function run({ g, itemId, input, source, caseRef }) {
       }
       person = users.list.find((u) => u.id === userId);
       if (!person) throw fail(400, 'Not a staff member who can be assigned. Nothing was changed.');
+    } else if (!users) {
+      // a REMOVE: the staff list only NAMES the person in the note (by id); it is never required —
+      // a failed read leaves the names to Monday's text, and the remove goes on
+      try { users = await assignableUsers(); }
+      catch (err) { console.warn(`[Assign] staff list read failed (names only): ${err.message}`); users = null; }
     }
     const names = users ? users.names : null;
     // 4. fresh read
@@ -410,7 +447,7 @@ async function run({ g, itemId, input, source, caseRef }) {
 }
 
 module.exports = {
-  assign, assignOnCase, assignableUsers, gate, markAssignable, peopleOf, stageRoles, describeForCase, entriesOf,
+  assign, assignOnCase, assignableUsers, warmUsersForPage, gate, markAssignable, peopleOf, stageRoles, describeForCase, entriesOf,
   ROLES, ROLE_KEYS, OFFICER_COL, NO_KEY_ONLY, LOST_ACCESS,
   _io: io, _resetUsers, _inFlight,
 };
