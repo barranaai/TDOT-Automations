@@ -1,26 +1,36 @@
 'use strict';
 
 /**
- * Assign the Case Support Officer from the Client Master page (block 3, step 3).
+ * Who works on a case — set from the Client Master page (block 3, step 3) and from the
+ * case page's "Team on this case" box (Faran 2026-11-24).
  *
- * Faran's decisions: the button writes ONE Monday column — Case Support Officer
- * (multiple_person_mm0xm710) — and nothing else. It REPLACES the value (teams
- * and extra people in the old value go too) and leaves a note on the case that
- * says who did it and what it was before. Monday itself then tells the new
- * person they were assigned (its own "assigned you" bell / email), shown as
- * coming from the app's Monday account — accepted by Faran.
+ * Faran's decisions:
+ *  - Four people columns may be written, and only these (ROLES): Case Support Officer,
+ *    Case Manager, Submission Team, Ops Supervisor. Never Retained by, Dup. of Retained by,
+ *    Stage Owner or Override Approved By — the body cannot name a column, only a role key.
+ *  - ADD alongside: the persons AND teams already in the cell stay, the new person is
+ *    appended. Adding someone already there writes nothing ("No change needed").
+ *    (The Client Master page's Assign… used to REPLACE the Case Support Officer; it adds now too.)
+ *  - REMOVE one person (the case page's ✕): just that person; the teams and the others stay.
+ *    A team entry is never removed here.
+ *  - Each write leaves a note on the case naming who did it (Monday then tells an added
+ *    person they were assigned — its own bell / email, from the app's Monday account).
+ *  - The case page highlights the role(s) that fit the case's stage (stageRoles, pure):
+ *    the others are listed below and can still be set.
  *
- * Who may assign: staff signed in WITH MONDAY (so the note can name them). The
- * shared admin key alone is refused, and the key never counts for the write's
- * access check: that uses the Monday identity only (ADMIN_EMAILS for admin), on
- * a FRESH read of the case's seven people columns. Under the default policy
- * "all" any signed-in staffer passes.
+ * Who may write: staff signed in WITH MONDAY (so the note can name them). The shared admin
+ * key alone is refused, and the key never counts for the write's access check: that uses
+ * the Monday identity only (ADMIN_EMAILS for admin), on a FRESH read of the case's seven
+ * people columns. Under the default policy "all" any signed-in staffer passes. A person
+ * who takes THEMSELVES off a case may lose access to it (policy "assigned"): the answer
+ * says so (canAssign false, lostAccess, message).
  *
- * Order of a write (plan-v2 §5.4): who → validate → one at a time per case →
- * the staff list (the cached one; re-read only when the person is not on it) →
- * fresh read → access → stale check → no-op → the write → read-back → the note
- * (never retried) → the cached Cases rows PATCHED (never invalidated: that
- * would make the next page load by anyone wait for a whole board read).
+ * Order of a write (plan-v2 §5.4): who → validate → (the case page: the case found from its
+ * number, never from an item id the page sends) → one at a time per case → the staff list
+ * for an add (the cached one; re-read only when the person is not on it) → fresh read →
+ * access → stale check → no-op → the write → read-back (must equal the intended cell
+ * exactly) → the note (never retried) → the cached Cases rows PATCHED (never invalidated:
+ * that would make the next page load by anyone wait for a whole board read).
  *
  * All Monday I/O goes through `io` so the tests stub every seam.
  */
@@ -30,12 +40,23 @@ const { actorFromStaff } = require('../utils/staffIdentity');
 const { torontoTime } = require('../utils/torontoTime');
 const { clientMasterBoardId } = require('../../config/monday');
 
-const OFFICER_COL = 'multiple_person_mm0xm710';
+/** The ONLY columns this service ever writes: role key → { col, label }. Ordered as the case page lists them. */
+const ROLES = Object.freeze({
+  officer:    Object.freeze({ col: 'multiple_person_mm0xm710', label: 'Case Support Officer' }),
+  manager:    Object.freeze({ col: 'multiple_person_mm0xhmgk', label: 'Case Manager' }),
+  submission: Object.freeze({ col: 'multiple_person_mm2nhsx1', label: 'Submission Team' }),
+  ops:        Object.freeze({ col: 'multiple_person_mm0xp0sq', label: 'Ops Supervisor' }),
+});
+const ROLE_KEYS = Object.freeze(Object.keys(ROLES));
+const OFFICER_COL = ROLES.officer.col;
 const CASE_REF_COL = 'text_mm142s49';
 const USERS_TTL_MS = 60 * 60 * 1000;   // the staff list is read at most once an hour (a write reads it again only when the person is not on it)
 const USERS_PAGE = 200, USERS_MAX_PAGES = 10;
 const LOGIN_URL = '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard';
 const NO_KEY_ONLY = 'Sign in with Monday to assign, so the note can say who did it.';
+const REF_RE = /^[A-Za-z0-9\- ]{1,100}$/;   // the case page's own rule for a case number
+const SOURCES = { 'client-master': 'the Client Master page', case: 'the case page' };
+const LOST_ACCESS = 'You took yourself off this case. You can no longer change who is on it, and you may not be able to open it after a reload.';
 
 function mondayApi() { return require('./mondayApi'); }
 
@@ -54,6 +75,8 @@ const io = {
     }
     throw new Error(`the Monday user list did not end after ${USERS_MAX_PAGES} pages`);
   },
+  /** The case page: the Client Master item of a case number (the board's own lookup) → { itemId } or null. */
+  lookupCase: (caseRef) => require('./htmlQuestionnaireService').lookupCase(caseRef),
   /** The case as Monday has it now: state, board, the seven people columns and the case number. */
   readItem: async (itemId) => {
     const d = await mondayApi().query(
@@ -61,17 +84,17 @@ const io = {
       { ids: [String(itemId)] });
     return (d && d.items && d.items[0]) || null;
   },
-  /** THE write: one key, the Case Support Officer, replaced by one person. */
-  writeOfficer: (itemId, userId) => mondayApi().query(
+  /** THE write: one key — the role's column — set to the whole intended cell (persons, then teams). */
+  writeCell: (itemId, colId, list) => mondayApi().query(
     'mutation($b: ID!, $i: ID!, $c: JSON!) { change_multiple_column_values(board_id: $b, item_id: $i, column_values: $c) { id } }',
-    { b: String(clientMasterBoardId), i: String(itemId), c: JSON.stringify({ [OFFICER_COL]: { personsAndTeams: [{ id: Number(userId), kind: 'person' }] } }) }),
+    { b: String(clientMasterBoardId), i: String(itemId), c: JSON.stringify({ [colId]: { personsAndTeams: list } }) }),
   /** Read back the one column just written. */
-  readOfficer: async (itemId) => {
+  readCell: async (itemId, colId) => {
     const d = await mondayApi().query(
-      'query($ids: [ID!]) { items(ids: $ids, limit: 1) { id column_values(ids: ["' + OFFICER_COL + '"]) { id text value } } }',
+      'query($ids: [ID!]) { items(ids: $ids, limit: 1) { id column_values(ids: ["' + colId + '"]) { id text value } } }',
       { ids: [String(itemId)] });
     const it = d && d.items && d.items[0];
-    const cv = it && (it.column_values || []).find((c) => c.id === OFFICER_COL);
+    const cv = it && (it.column_values || []).find((c) => c.id === colId);
     return it ? { value: cv ? cv.value : null, text: cv ? cv.text : '' } : null;
   },
   /** The note — retries 0: a timed-out note may still have been posted, so it is never sent twice. */
@@ -83,12 +106,72 @@ const io = {
 
 const s = (v) => String(v == null ? '' : v).trim();
 const DIGITS = /^\d{1,20}$/;
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function fail(status, error, extra) { const e = new Error(error); e.status = status; e.body = { ok: false, error, ...(extra || {}) }; return e; }
 
 /** One people cell (Monday's JSON string) → { personIds, teamIds } — the SAME parser as the Cases rows' officerIds. */
 function peopleOf(raw) { return require('./dashboardService').peopleIds(raw); }
 const sameSet = (a, b) => { const A = new Set((a || []).map(String)), B = new Set((b || []).map(String)); return A.size === B.size && [...A].every((x) => B.has(x)); };
+
+/**
+ * The entries of a people cell in the cell's own order, each with a name (pure): Monday's text
+ * when it lines up with the entries (one name per entry), else the names we know, else "user <id>" / "team <id>".
+ * @param {{ value?: string|null, text?: string }} cell
+ * @param {?Map} names     id → name (the staff list), optional
+ * @param {?object} extra  { [id]: name } for a person just added / removed, optional
+ * @returns {{ id: string, kind: 'person'|'team', name: string }[]}
+ */
+function entriesOf(cell, names, extra) {
+  let parsed = null;
+  try { parsed = cell && cell.value ? JSON.parse(cell.value) : null; } catch (_) { parsed = null; }
+  const list = [], seen = new Set();
+  for (const pt of (parsed && parsed.personsAndTeams) || []) {
+    if (pt == null || pt.id == null) continue;
+    const kind = pt.kind === 'team' ? 'team' : 'person';
+    const id = String(pt.id);
+    if (seen.has(kind + '|' + id)) continue;
+    seen.add(kind + '|' + id);
+    list.push({ id, kind });
+  }
+  const parts = s(cell && cell.text) ? s(cell.text).split(/\s*,\s*/).filter(Boolean) : [];
+  const aligned = parts.length === list.length;
+  return list.map((e, i) => ({
+    ...e,
+    name: aligned ? parts[i]
+      : e.kind === 'team' ? `team ${e.id}`
+      : (extra && extra[e.id]) || (names && names.get && names.get(e.id)) || `user ${e.id}`,
+  }));
+}
+/** A cell as the pages get it: { names, personIds, teamIds } (+ entries for the case page). */
+function cellView(cell, names, extra, withEntries) {
+  const ids = peopleOf(cell && cell.value);
+  const entries = entriesOf(cell, names, extra);
+  const out = { names: entries.map((e) => e.name), personIds: ids.personIds, teamIds: ids.teamIds };
+  return withEntries ? { ...out, entries } : out;
+}
+
+// ─── The stage map (Faran 2026-11-24) ─────────────────────────────────────────
+// The role(s) that fit the case's stage are listed FIRST and highlighted; the other roles are
+// listed below and can still be set. Ops Supervisor (set once) is never highlighted and comes last.
+const STAGE_FIT = [
+  { re: /^(pre-?onboarding|document collection started)$/, roles: ['officer'], hint: 'At this stage: Case Support Officer (can be set early).' },
+  { re: /^internal review$/, roles: ['officer', 'manager'], hint: 'At this stage: the Case Support Officer prepares the file, then the Case Manager reviews it.' },
+  { re: /^submission ready$/, roles: ['submission'], hint: 'At this stage: Submission Team.' },
+  { re: /^(stuck|adr)(\s*\/\s*(stuck|adr))?$/, roles: ['officer'], hint: 'At this stage: Case Support Officer.' },
+];
+/**
+ * PURE: the roles for a Case Stage label.
+ * @param {string} stage  the Case Stage label as on the board
+ * @returns {{ highlight: string[], order: string[], hint: string }}  order = every role, the highlighted ones first, Ops Supervisor last
+ */
+function stageRoles(stage) {
+  const k = s(stage).toLowerCase().replace(/\s+/g, ' ');
+  const fit = STAGE_FIT.find((f) => f.re.test(k));
+  const highlight = fit ? fit.roles.slice() : [];
+  const rest = ROLE_KEYS.filter((r) => r !== 'ops' && !highlight.includes(r));
+  return { highlight, order: [...highlight, ...rest, 'ops'], hint: fit ? fit.hint : '' };
+}
 
 // ─── The staff list (cached one hour) ────────────────────────────────────────
 let _users = null;   // { at, list: [{id,name}], names: Map(id → name, every user read) }
@@ -110,14 +193,7 @@ async function assignableUsers({ fresh = false } = {}) {
   return _users;
 }
 function _resetUsers() { _users = null; }
-
-/** The names of a people cell: Monday's own text when it lines up with the ids, else the names we know. */
-function namesOf(cell, ids, names) {
-  const n = ids.personIds.length + ids.teamIds.length;
-  const parts = s(cell && cell.text) ? s(cell.text).split(/\s*,\s*/).filter(Boolean) : [];
-  if (parts.length === n) return parts;
-  return [...ids.personIds.map((id) => (names && names.get(id)) || `user ${id}`), ...ids.teamIds.map((id) => `team ${id}`)];
-}
+const warmUsers = () => (_users && io.now() - _users.at < USERS_TTL_MS ? _users : null);
 
 /**
  * Who is asking (pure). Monday sign-in → may go on; the shared key alone → 403;
@@ -146,10 +222,52 @@ function markAssignable(cases, staff) {
   return canAssign;
 }
 
-const _inFlight = new Set();   // item ids being assigned right now
+/**
+ * The case page's "Team on this case" box (pure): the four roles in the stage's order, each cell's
+ * entries, the stage's highlight, and whether THIS viewer may change them (a Monday sign-in who may
+ * see the case — the route re-checks on a fresh read).
+ * @param {{ cells: ?object, stage: string, staff: ?object, assignees: object, cmUnavailable?: boolean }} p
+ *   cells: { [colId]: { text, value } } from the case read (null when the row could not be read)
+ */
+function describeForCase({ cells, stage, staff, assignees, cmUnavailable }) {
+  const available = !cmUnavailable && !!cells;
+  const g = gate(staff, false);
+  const canAssign = available && !!g.ok && caseAccess.viewerCanSee(assignees, g.viewer);
+  const sr = stageRoles(stage);
+  const names = (warmUsers() || {}).names || null;   // the cached staff list only — never a Monday read for the page
+  const roles = sr.order.map((role) => {
+    const cell = (available && cells[ROLES[role].col]) || { value: null, text: '' };
+    return { role, label: ROLES[role].label, highlight: sr.highlight.includes(role), ...cellView(cell, names, null, true) };
+  });
+  return {
+    available, stage: s(stage), hint: sr.hint, canAssign,
+    signedIn: !!g.ok,   // false: the page says "Sign in with Monday to change who is on this case"
+    me: g.ok && g.viewer && g.viewer.userId ? String(g.viewer.userId) : '',
+    roles,
+  };
+}
+
+const _inFlight = new Set();   // item ids being assigned right now (any role)
+
+/** Validate the request's own fields (pure): role (whitelist), op, person, the cell the page showed. */
+function parseInput(b) {
+  const role = b.role == null || b.role === '' ? 'officer' : s(b.role);
+  if (!own(ROLES, role)) throw fail(400, 'This role cannot be set here. Reload the page and try again.');
+  const op = b.op == null || b.op === '' ? 'add' : s(b.op);
+  if (op !== 'add' && op !== 'remove') throw fail(400, 'Reload the page and try again.');
+  const userId = s(b.userId);
+  if (!DIGITS.test(userId)) throw fail(400, 'Choose a person and try again.');
+  const ex = b.expected;
+  if (!ex || typeof ex !== 'object' || !Array.isArray(ex.personIds) || !Array.isArray(ex.teamIds) ||
+      ![...ex.personIds, ...ex.teamIds].every((v) => DIGITS.test(s(v)))) {
+    throw fail(400, 'Reload the page and try again.');
+  }
+  return { role, op, userId, expected: { personIds: ex.personIds.map(s), teamIds: ex.teamIds.map(s) } };
+}
 
 /**
- * POST /admin/client-master/assign — see the order at the top.
+ * POST /admin/client-master/assign — the Client Master page (role defaults to the Case Support
+ * Officer, op to add). The item id comes from the page's row and is checked against Monday.
  * @param {{ staff, hasKey, body }} p
  * @returns {Promise<object>} the 200 answer; a refusal throws an Error with .status and .body
  */
@@ -159,26 +277,53 @@ async function assign({ staff, hasKey, body }) {
   if (!g.ok) throw fail(g.status, g.error, g.loginUrl ? { loginUrl: g.loginUrl } : { code: g.code });
   const b = body || {};
   // 2. validate (the item id is checked against Monday below; the page's row is never trusted for anything else)
-  const itemId = s(b.itemId), userId = s(b.userId);
-  if (!DIGITS.test(itemId) || !DIGITS.test(userId)) throw fail(400, 'Choose a person and try again.');
-  const ex = b.expected;
-  if (!ex || typeof ex !== 'object' || !Array.isArray(ex.personIds) || !Array.isArray(ex.teamIds) ||
-      ![...ex.personIds, ...ex.teamIds].every((v) => DIGITS.test(s(v)))) {
-    throw fail(400, 'Reload the page and try again.');
-  }
+  const itemId = s(b.itemId);
+  if (!DIGITS.test(itemId) || !DIGITS.test(s(b.userId))) throw fail(400, 'Choose a person and try again.');
+  const input = parseInput(b);
+  return run({ g, itemId, input, source: 'client-master' });
+}
+
+/**
+ * POST /admin/case-action/:caseRef/assign — the case page. The case is found from its number
+ * (the URL), never from an item id in the body; the fresh read must carry that same number.
+ * @param {{ staff, hasKey, caseRef, body }} p
+ */
+async function assignOnCase({ staff, hasKey, caseRef, body }) {
+  const g = gate(staff, hasKey);
+  if (!g.ok) throw fail(g.status, g.error, g.loginUrl ? { loginUrl: g.loginUrl } : { code: g.code });
+  const ref = s(caseRef);
+  if (!REF_RE.test(ref)) throw fail(404, 'Case not found.');
+  const input = parseInput(body || {});
+  let found;
+  try { found = await io.lookupCase(ref); }
+  catch (err) { console.warn(`[Assign] lookup of ${ref} failed: ${err.message}`); throw fail(502, 'The case could not be read from Monday. Nothing was changed — please try again.'); }
+  const itemId = s(found && found.itemId);
+  if (!DIGITS.test(itemId)) throw fail(404, 'This case was not found on the Client Master board (it may be archived or deleted). Nothing was changed.');
+  return run({ g, itemId, input, source: 'case', caseRef: ref });
+}
+
+async function run({ g, itemId, input, source, caseRef }) {
+  const { role, op, userId } = input, ex = input.expected;
+  const { col, label } = ROLES[role];
+  const forCase = source === 'case';
   // 3. one at a time per case (before any Monday call: a busy request costs nothing)
   if (_inFlight.has(itemId)) throw fail(409, 'This case is already being assigned. Wait a moment, then check it.', { code: 'busy' });
   _inFlight.add(itemId);
   try {
-    // 2b. the person must be on the staff list: the hour-long cached list when it has them
-    // (plan §5.4 step 2), else ONE fresh read — someone just added to Monday can still be assigned
-    let users = _users && io.now() - _users.at < USERS_TTL_MS ? _users : null;
-    if (!users || !users.list.some((u) => u.id === userId)) {
-      try { users = await assignableUsers({ fresh: true }); }
-      catch (err) { console.warn(`[Assign] staff list read failed: ${err.message}`); throw fail(502, 'The staff list could not be read from Monday. Nothing was changed — please try again.'); }
+    // 2b. an ADD: the person must be on the staff list — the hour-long cached list when it has them
+    // (plan §5.4 step 2), else ONE fresh read (someone just added to Monday can still be assigned).
+    // A REMOVE needs no list: the person only has to be in the cell (they may have left Monday since).
+    let users = warmUsers();
+    let person = null;
+    if (op === 'add') {
+      if (!users || !users.list.some((u) => u.id === userId)) {
+        try { users = await assignableUsers({ fresh: true }); }
+        catch (err) { console.warn(`[Assign] staff list read failed: ${err.message}`); throw fail(502, 'The staff list could not be read from Monday. Nothing was changed — please try again.'); }
+      }
+      person = users.list.find((u) => u.id === userId);
+      if (!person) throw fail(400, 'Not a staff member who can be assigned. Nothing was changed.');
     }
-    const person = users.list.find((u) => u.id === userId);
-    if (!person) throw fail(400, 'Not a staff member who can be assigned. Nothing was changed.');
+    const names = users ? users.names : null;
     // 4. fresh read
     let item;
     try { item = await io.readItem(itemId); }
@@ -189,62 +334,83 @@ async function assign({ staff, hasKey, body }) {
     const rowId = s(item.id);   // every write below names the row Monday just gave back
     const valueByCol = {};
     for (const cv of item.column_values || []) valueByCol[cv.id] = cv.value;
-    const officerCell = (item.column_values || []).find((c) => c.id === OFFICER_COL) || { value: null, text: '' };
+    const cell = (item.column_values || []).find((c) => c.id === col) || { value: null, text: '' };
     const ref = s(((item.column_values || []).find((c) => c.id === CASE_REF_COL) || {}).text);
+    // the case page: the row must be the case the URL names (a lookup that drifted is never written)
+    if (forCase && ref.toLowerCase() !== s(caseRef).toLowerCase()) {
+      throw fail(404, 'This case was not found on the Client Master board (it may be archived or deleted). Nothing was changed.');
+    }
     // 5. access, on the Monday identity and the fresh assignees
     if (!caseAccess.viewerCanSee(caseAccess.assigneesFromColumnValues(valueByCol), g.viewer)) {
       throw fail(403, 'You are not assigned to this case.');
     }
     // 6. stale check
-    const now = peopleOf(officerCell.value);
-    const nowNames = namesOf(officerCell, now, users.names);
+    const now = peopleOf(cell.value);
+    const nowView = cellView(cell, names, null, forCase);
     if (!sameSet(now.personIds, ex.personIds) || !sameSet(now.teamIds, ex.teamIds)) {
-      io.patchCache(rowId, OFFICER_COL, { value: officerCell.value, text: officerCell.text });
-      throw fail(409, `This changed since your page loaded — it is now ${nowNames.length ? nowNames.join(', ') : 'nobody'}.`,
-        { code: 'changed', current: { names: nowNames, personIds: now.personIds, teamIds: now.teamIds } });
+      io.patchCache(rowId, col, { value: cell.value, text: cell.text });
+      throw fail(409, `This changed since your page loaded — it is now ${nowView.names.length ? nowView.names.join(', ') : 'nobody'}.`,
+        { code: 'changed', ...(forCase ? { role } : {}), current: nowView });
     }
-    // 7. no-op
-    if (!now.teamIds.length && now.personIds.length === 1 && now.personIds[0] === userId) {
-      return { ok: true, unchanged: true, officer: { names: nowNames, personIds: now.personIds, teamIds: [] }, canAssign: true };
+    const answer = (o) => (role === 'officer' && !forCase ? { ok: true, ...o.flags, officer: o.view, canAssign: o.canAssign } : { ok: true, ...o.flags, role, cell: o.view, canAssign: o.canAssign });
+    // 7. no-op: an add of someone already there; a remove of someone not there
+    if (op === 'add' && now.personIds.includes(userId)) {
+      return answer({ flags: { unchanged: true }, view: nowView, canAssign: true });
     }
-    // 8. the write
-    try { await io.writeOfficer(rowId, person.id); }
+    let removedName = '';
+    if (op === 'remove') {
+      if (!now.personIds.includes(userId)) {
+        if (now.teamIds.includes(userId)) throw fail(400, 'A team cannot be removed here — change it in Monday. Nothing was changed.');
+        return answer({ flags: { unchanged: true }, view: nowView, canAssign: true });
+      }
+      removedName = (entriesOf(cell, names).find((e) => e.kind === 'person' && e.id === userId) || {}).name || `user ${userId}`;
+    }
+    // 8. the write: the whole cell — the persons and teams there now (one person fewer on a remove), the new person last on an add
+    const kept = now.personIds.filter((p) => !(op === 'remove' && p === userId));
+    const persons = op === 'add' ? [...kept, userId] : kept;   // the persons the cell must hold afterwards
+    const list = [...kept.map((p) => ({ id: Number(p), kind: 'person' })),
+      ...now.teamIds.map((t) => ({ id: Number(t), kind: 'team' })),
+      ...(op === 'add' ? [{ id: Number(userId), kind: 'person' }] : [])];
+    try { await io.writeCell(rowId, col, list); }
     catch (err) {
       console.error(`[Assign] write on item ${itemId} failed: ${err.message}`);
       throw fail(502, 'The result is unknown — check the case in Monday before trying again.');
     }
-    // 9. read-back
+    // 9. read-back: exactly the intended persons and teams
     let back;
-    try { back = await io.readOfficer(rowId); }
+    try { back = await io.readCell(rowId, col); }
     catch (err) {
       console.error(`[Assign] item ${itemId}: written, but the read-back failed: ${err.message}`);
       throw fail(502, 'The result is unknown — check the case in Monday before trying again. Nothing else was touched.');
     }
     const got = back ? peopleOf(back.value) : null;
-    if (!got || got.teamIds.length || got.personIds.length !== 1 || got.personIds[0] !== userId) {
-      console.error(`[Assign] item ${itemId}: Monday did not keep Case Support Officer = ${userId} (read back ${got ? JSON.stringify(got) : 'nothing'})`);
+    if (!got || !sameSet(got.personIds, persons) || !sameSet(got.teamIds, now.teamIds)) {
+      console.error(`[Assign] item ${itemId}: Monday did not keep ${label} ${op} ${userId} (read back ${got ? JSON.stringify(got) : 'nothing'})`);
       throw fail(502, 'Monday did not keep the change — check the case in Monday before trying again. Nothing else was touched.');
     }
+    const view = cellView(back, names, person ? { [person.id]: person.name } : null, forCase);
     // 10. the note (after the write; never retried)
     const actorName = g.actor.name;
-    const note = `👤 <b>Case Support Officer set</b>: ${esc(nowNames.length ? nowNames.join(', ') : 'nobody')} → ${esc(person.name)}. ` +
-      `Assigned on the Client Master page by ${esc(actorName)} · ${esc(torontoTime(io.now()))} (Toronto).`;
+    const who = op === 'add' ? person.name : removedName;
+    const note = `👤 <b>${esc(label)}: ${op === 'add' ? 'added' : 'removed'} ${esc(who)}</b> (now: ${esc(view.names.length ? view.names.join(', ') : 'nobody')}). ` +
+      `On ${SOURCES[source]} by ${esc(actorName)} · ${esc(torontoTime(io.now()))} (Toronto).`;
     let noteFailed = false;
     try { await io.postNote(rowId, note); }
-    catch (err) { noteFailed = true; console.error(`[Assign] item ${itemId}${ref ? ` (${ref})` : ''}: the officer was set but the note failed: ${err.message}`); }
+    catch (err) { noteFailed = true; console.error(`[Assign] item ${itemId}${ref ? ` (${ref})` : ''}: the ${label} was changed but the note failed: ${err.message}`); }
     // 11. the cached rows follow the read-back (never invalidated)
-    io.patchCache(rowId, OFFICER_COL, { value: back.value, text: back.text });
-    console.log(`[Assign] item ${itemId}${ref ? ` (${ref})` : ''}: Case Support Officer ${nowNames.join(', ') || 'nobody'} → ${person.name}, by ${actorName}`);
-    const officer = { names: [s(back.text) || person.name], personIds: [userId], teamIds: [] };
-    const canAssign = caseAccess.viewerCanSee(caseAccess.assigneesFromColumnValues({ ...valueByCol, [OFFICER_COL]: back.value }), g.viewer);
-    return noteFailed ? { ok: true, noteFailed: true, officer, canAssign } : { ok: true, officer, canAssign };
+    io.patchCache(rowId, col, { value: back.value, text: back.text });
+    console.log(`[Assign] item ${itemId}${ref ? ` (${ref})` : ''}: ${label} ${op === 'add' ? '+' : '−'} ${who} (now ${view.names.join(', ') || 'nobody'}), by ${actorName} on ${source}`);
+    // may this person still change the case? (taking yourself off a case can end your access under "assigned")
+    const canAssign = caseAccess.viewerCanSee(caseAccess.assigneesFromColumnValues({ ...valueByCol, [col]: back.value }), g.viewer);
+    const flags = { ...(noteFailed ? { noteFailed: true } : {}), ...(canAssign ? {} : { lostAccess: true, message: LOST_ACCESS }) };
+    return answer({ flags, view, canAssign });
   } finally {
     _inFlight.delete(itemId);
   }
 }
 
 module.exports = {
-  assign, assignableUsers, gate, markAssignable, peopleOf,
-  OFFICER_COL, NO_KEY_ONLY,
+  assign, assignOnCase, assignableUsers, gate, markAssignable, peopleOf, stageRoles, describeForCase, entriesOf,
+  ROLES, ROLE_KEYS, OFFICER_COL, NO_KEY_ONLY, LOST_ACCESS,
   _io: io, _resetUsers, _inFlight,
 };

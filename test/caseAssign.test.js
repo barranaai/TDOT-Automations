@@ -1,6 +1,8 @@
 'use strict';
 
 // Assign the Case Support Officer from the Client Master page (block 3, step 3).
+// Faran 2026-11-24: Assign… now ADDS the person alongside who is there (it used to replace them) —
+// the tests marked "(add, 2026-11-24)" were changed for that; the case page's roles are in caseAssignRoles.test.js.
 // Every Monday call goes through a fake mondayApi.query (no network): the tests
 // read the EXACT mutation the service sends, and that nothing else is written.
 
@@ -46,7 +48,7 @@ function fakeMonday(o = {}) {
     if (/^mutation/.test(gql) && /change_multiple_column_values/.test(gql)) {
       if (st.writeFail) throw new Error('timeout');
       st.writes.push({ gql, vars, retries });
-      if (st.keep) { const c = JSON.parse(vars.c)[OFFICER]; st.item.officer = JSON.stringify(c); st.item.officerText = USERS.find((u) => u.id === c.personsAndTeams[0].id).name; }
+      if (st.keep) { const c = JSON.parse(vars.c)[OFFICER]; st.item.officer = JSON.stringify(c); st.item.officerText = c.personsAndTeams.map((x) => (x.kind === 'team' ? 'Ops Team' : USERS.find((u) => u.id === x.id).name)).join(', '); }
       return { change_multiple_column_values: { id: vars.i } };
     }
     if (/^mutation/.test(gql) && /create_update/.test(gql)) {
@@ -191,10 +193,10 @@ test('200 unchanged when that person already is the one officer: no write, no no
 });
 
 // ── the write ──
-test('success: ONE mutation, on the Client Master board, the item Monday gave back, exactly one key = Case Support Officer, one person (replace)', async () => {
+test('success: ONE mutation, on the Client Master board, the item Monday gave back, exactly one key = Case Support Officer — the person ADDED, the persons and teams there kept (add, 2026-11-24)', async () => {
   const m = fakeMonday({ item: { officer: ppl(11, 12, { id: 5, kind: 'team' }), officerText: 'Asha Officer, Bo <Officer>, Ops Team' } });
   const r = await svc.assign({ staff: STAFF, hasKey: false, body: body({ expected: { personIds: ['12', '11'], teamIds: ['5'] } }) });
-  assert.deepEqual(r, { ok: true, officer: { names: ['Chen Officer'], personIds: ['13'], teamIds: [] }, canAssign: true });
+  assert.deepEqual(r, { ok: true, officer: { names: ['Asha Officer', 'Bo <Officer>', 'Ops Team', 'Chen Officer'], personIds: ['11', '12', '13'], teamIds: ['5'] }, canAssign: true });
   assert.equal(m.writes.length, 1);
   const w = m.writes[0];
   assert.match(w.gql, /change_multiple_column_values\(board_id: \$b, item_id: \$i, column_values: \$c\)/);
@@ -203,34 +205,34 @@ test('success: ONE mutation, on the Client Master board, the item Monday gave ba
   assert.equal(w.vars.i, ITEM);
   const cols = JSON.parse(w.vars.c);
   assert.deepEqual(Object.keys(cols), [OFFICER], 'one column only');
-  assert.deepEqual(cols[OFFICER], { personsAndTeams: [{ id: 13, kind: 'person' }] });
-  assert.equal(typeof cols[OFFICER].personsAndTeams[0].id, 'number');
+  assert.deepEqual(cols[OFFICER], { personsAndTeams: [{ id: 11, kind: 'person' }, { id: 12, kind: 'person' }, { id: 5, kind: 'team' }, { id: 13, kind: 'person' }] });
+  assert.ok(cols[OFFICER].personsAndTeams.every((x) => typeof x.id === 'number'));
   // no other mutation of any kind except the one note
   const muts = m.calls.filter((c) => /^mutation/.test(c.gql));
   assert.equal(muts.length, 2); assert.match(muts[1].gql, /create_update/);
   // the cache is PATCHED with the read-back, never invalidated
   assert.equal(invalidations, 0);
   assert.equal(patches.length, 1);
-  assert.deepEqual(patches[0], { itemId: ITEM, colId: OFFICER, cell: { value: ppl(13), text: 'Chen Officer' } });
+  assert.deepEqual(patches[0], { itemId: ITEM, colId: OFFICER, cell: { value: ppl(11, 12, { id: 5, kind: 'team' }, 13), text: 'Asha Officer, Bo <Officer>, Ops Team, Chen Officer' } });
   // every items(ids:) read has an explicit limit
   for (const c of m.calls.filter((x) => /items\(ids:/.test(x.gql))) assert.match(c.gql, /items\(ids: \$ids, limit: 1\)/);
 });
 
-test('the note: old → new (every removed officer, escaped), who did it, Toronto time — sent once, never retried', async () => {
+test('the note: who was added, who is there now (escaped), who did it, Toronto time — sent once, never retried (add, 2026-11-24)', async () => {
   const m = fakeMonday({ item: { officer: ppl(11, 12), officerText: 'Asha Officer, Bo <Officer>' } });
   await svc.assign({ staff: { id: '11', name: 'Asha <b>Officer</b>', email: 'asha@example.com' }, hasKey: true, body: body({ expected: { personIds: ['11', '12'], teamIds: [] } }) });
   assert.equal(m.notes.length, 1);
   const n = m.notes[0];
   assert.equal(n.retries, 0, 'retries 0');
   assert.equal(n.vars.i, ITEM);
-  assert.match(n.vars.b, /^👤 <b>Case Support Officer set<\/b>: Asha Officer, Bo &lt;Officer&gt; → Chen Officer\. Assigned on the Client Master page by Asha &lt;b&gt;Officer&lt;\/b&gt; · \d{1,2} [A-Z][a-z]{2} \d{4}, \d{1,2}:\d{2} (am|pm) \(Toronto\)\.$/);
+  assert.match(n.vars.b, /^👤 <b>Case Support Officer: added Chen Officer<\/b> \(now: Asha Officer, Bo &lt;Officer&gt;, Chen Officer\)\. On the Client Master page by Asha &lt;b&gt;Officer&lt;\/b&gt; · \d{1,2} [A-Z][a-z]{2} \d{4}, \d{1,2}:\d{2} (am|pm) \(Toronto\)\.$/);
   assert.ok(!/Unidentified|shared admin key/.test(n.vars.b), 'the Monday person, never the key');
 });
 
-test('the note says "nobody" when the case had no officer', async () => {
+test('the note on a case that had no officer names only the one added (add, 2026-11-24)', async () => {
   const m = fakeMonday({ item: { officer: null, officerText: '' } });
   await svc.assign({ staff: STAFF, hasKey: false, body: body({ expected: { personIds: [], teamIds: [] } }) });
-  assert.match(m.notes[0].vars.b, /Case Support Officer set<\/b>: nobody → Chen Officer\./);
+  assert.match(m.notes[0].vars.b, /Case Support Officer: added Chen Officer<\/b> \(now: Chen Officer\)\./);
 });
 
 test('a failed note → 200 noteFailed (the officer IS set); the cache still follows the read-back', async () => {
@@ -319,12 +321,17 @@ test('502 only when there is no usable list: an empty or hour-old cache and a fa
   } finally { svc._io.now = realNow; }
 });
 
-test('the answer says whether this person may still assign the case (under "assigned" they can take themselves off it)', async () => {
+test('the answer says whether this person may still assign the case (under "assigned" they can take themselves off it) (add, 2026-11-24)', async () => {
   process.env.CASE_VISIBILITY = 'assigned';
-  // Asha (11) is on the case only as its Support Officer and hands it to Chen (13)
+  // Asha (11) is on the case only as its Support Officer and adds Chen (13): she stays, so she may still assign
   fakeMonday({ item: { officer: ppl(11), officerText: 'Asha Officer' } });
   let r = await svc.assign({ staff: STAFF, hasKey: false, body: body({ expected: { personIds: ['11'], teamIds: [] } }) });
-  assert.equal(r.ok, true); assert.equal(r.canAssign, false);
+  assert.equal(r.ok, true); assert.equal(r.canAssign, true);
+  // she takes herself off (op remove): the answer says she no longer may
+  svc._resetUsers();
+  fakeMonday({ item: { officer: ppl(11, 13), officerText: 'Asha Officer, Chen Officer' } });
+  r = await svc.assign({ staff: STAFF, hasKey: false, body: body({ op: 'remove', userId: '11', expected: { personIds: ['11', '13'], teamIds: [] } }) });
+  assert.equal(r.ok, true); assert.equal(r.canAssign, false); assert.equal(r.lostAccess, true);
   // still Case Manager → still allowed
   svc._resetUsers();
   fakeMonday({ item: { officer: ppl(11), officerText: 'Asha Officer', otherPeople: { multiple_person_mm0xhmgk: ppl(11) } } });

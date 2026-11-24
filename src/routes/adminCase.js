@@ -244,6 +244,34 @@ function buildCockpitHTML(caseRef, opts = {}) {
       .rem-in { font-size:16px; }
     }
 
+    /* Team on this case (2026-11-24): the four roles the case page may set; the role(s) that fit the stage first, tinted */
+    .team-card { margin-bottom:16px; }
+    .team-hint { font-size:12px; color:var(--muted); margin:-4px 0 10px; line-height:1.5; }
+    .team-row { display:flex; align-items:center; gap:10px; padding:9px 10px; border-top:1px solid #f6f8fb; flex-wrap:wrap; }
+    .team-rows > .team-row:first-child { border-top:none; }
+    .team-row.fit { background:var(--st-blue-bg); border-radius:8px; border-top-color:transparent; margin:2px 0; }
+    .team-role { min-width:180px; font-size:13px; font-weight:700; color:var(--navy); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+    .team-fit { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; padding:2px 8px; border-radius:10px; background:var(--navy); color:#fff; }
+    .team-people { display:flex; gap:6px; flex-wrap:wrap; align-items:center; flex:1; min-width:0; }
+    .team-chip { display:inline-flex; align-items:center; gap:2px; background:#fff; border:1px solid var(--border); border-radius:16px; padding:3px 4px 3px 10px; font-size:12.5px; color:var(--navy); font-weight:600; max-width:100%; overflow-wrap:anywhere; }
+    .team-chip.team { padding-right:10px; background:#f8fafc; }
+    .team-kind { font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.3px; margin-left:4px; }
+    .team-x { border:none; background:none; cursor:pointer; color:var(--muted); font-size:13px; line-height:1; padding:0; border-radius:50%; width:26px; height:26px; display:inline-flex; align-items:center; justify-content:center; font-family:inherit; }
+    .team-x:hover { color:#dc2626; background:#fef2f2; }
+    .team-none { font-size:12px; color:var(--light); }
+    .team-foot { font-size:12px; color:var(--muted); margin-top:10px; line-height:1.5; }
+    .team-dcase, .team-dnow { font-size:13px; color:var(--navy); margin:4px 0 8px; overflow-wrap:anywhere; }
+    .team-lbl { display:block; font-size:12px; font-weight:700; color:var(--navy); margin:12px 0 4px; }
+    .team-sel { width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid var(--border); border-radius:7px; font-size:16px; font-family:inherit; background:#fff; color:var(--navy); }
+    .team-what { font-size:12px; color:var(--muted); margin-top:10px; line-height:1.5; }
+    /* Phones: every button a 44px target, the role above its people */
+    @media (max-width: 600px) {
+      .team-role { min-width:0; flex-basis:100%; }
+      .team-x { width:44px; height:44px; font-size:16px; }
+      .team-add { min-height:44px; font-size:16px; }
+      .team-sel { min-height:44px; }
+    }
+
     .tl { position:relative; padding-left:24px; }
     .tl::before { content:""; position:absolute; left:7px; top:6px; bottom:6px; width:2px; background:#e8edf4; border-radius:1px; }
     .tl-ev { position:relative; padding:0 0 16px 8px; }
@@ -300,6 +328,10 @@ ${buildNavHeader('dashboard')}
 
     <!-- Overview -->
     <div class="tab-panel active" id="panel-overview">
+      <!-- Team on this case (2026-11-24): who is on the case by role; Add… / ✕ for a Monday sign-in who may change it -->
+      <div class="card team-card" id="team-card" style="display:none"></div>
+      <div class="act-msg" id="team-msg" role="status" style="margin:-4px 0 16px"></div>
+
       <div class="grid grid-2" style="margin-bottom:16px">
         <div class="card">
           <div class="card-title">📝 Questionnaire readiness</div>
@@ -511,6 +543,189 @@ function caseDeadlineDlg() {
   });
 }
 
+/* ── Team on this case (2026-11-24) ─────────────────────────────────────
+   The four roles the app may set (Case Support Officer, Case Manager, Submission Team, Ops Supervisor), the
+   role(s) that fit the case's stage first and tinted. Add… adds a person ALONGSIDE who is there; ✕ removes
+   that one person (teams are shown, never removed here). The server writes one Monday column and adds a note
+   on the case; only the box (and the Manager pill) is redrawn from its answer. */
+var TEAM_STAFF = null;   // the staff list, read once for this page (the server keeps it an hour)
+var TEAM_LOST = '';      // the server's words when this person took themselves off the case
+function teamHeaders(json) { var k = peekKey(), h = k ? { 'X-Api-Key': k } : {}; if (json) h['Content-Type'] = 'application/json'; return h; }
+function teamRole(role) {
+  var t = LAST_D && LAST_D.team, rs = (t && t.roles) || [];
+  for (var i = 0; i < rs.length; i++) if (rs[i].role === role) return rs[i];
+  return null;
+}
+function teamArticle(label) { return /^[AEIOU]/.test(String(label || '')) ? 'an ' : 'a '; }
+function teamSignIn(j) { return remSignInHtml({ j: j || {} }); }   // the reminders' sign-in link: back to THIS case page
+function renderTeam(t) {
+  var card = document.getElementById('team-card');
+  if (!card) return;
+  if (!t || !t.roles) { card.style.display = 'none'; card.innerHTML = ''; return; }
+  var h = '<div class="card-title">👥 Team on this case' + (t.stage ? '<span class="cnt">Stage: ' + escHtml(t.stage) + '</span>' : '') + '</div>';
+  if (!t.available) {
+    card.innerHTML = h + '<div class="muted">Who is on this case could not be read just now. Reload the page in a moment.</div>';
+    card.style.display = '';
+    return;
+  }
+  if (t.hint) h += '<div class="team-hint">' + escHtml(t.hint) + ' The other roles can still be set.</div>';
+  h += '<div class="team-rows">' + t.roles.map(function(r) {
+    var people = (r.entries || []).map(function(e) {
+      var x = (t.canAssign && e.kind === 'person')
+        ? '<button type="button" class="team-x" data-team-rm="' + escHtml(r.role) + '" data-uid="' + escHtml(e.id) + '" aria-label="Remove ' + escHtml(e.name) + ' as ' + escHtml(r.label) + '" title="Remove ' + escHtml(e.name) + '">✕</button>'
+        : '';
+      return '<span class="team-chip' + (e.kind === 'team' ? ' team' : '') + '">' + escHtml(e.name) + (e.kind === 'team' ? '<span class="team-kind">team</span>' : '') + x + '</span>';
+    }).join('') || '<span class="team-none">Nobody</span>';
+    var add = t.canAssign ? '<button type="button" class="sbtn team-add" data-team-add="' + escHtml(r.role) + '" title="Add someone as ' + escHtml(r.label) + ' (who is there stays; a note is added on the case)">+ Add…</button>' : '';
+    return '<div class="team-row' + (r.highlight ? ' fit' : '') + '" data-role="' + escHtml(r.role) + '"><div class="team-role">' + escHtml(r.label) +
+      (r.highlight ? ' <span class="team-fit">Fits this stage</span>' : '') + '</div><div class="team-people">' + people + add + '</div></div>';
+  }).join('') + '</div>';
+  if (!t.canAssign) {
+    if (TEAM_LOST) h += '<div class="team-foot">' + escHtml(TEAM_LOST) + '</div>';
+    else if (!t.signedIn) h += '<div class="team-foot">' + teamSignIn({ error: 'To change who is on this case, sign in with Monday (the note on the case names you).' }) + '</div>';
+    else h += '<div class="team-foot">Only staff on this case can change who is on it.</div>';
+  }
+  card.innerHTML = h;
+  card.style.display = '';
+}
+/* One click handler for the box (the buttons are redrawn after every change). */
+function teamClick(e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-team-add],[data-team-rm]') : null;
+  if (!b) return;
+  if (b.getAttribute('data-team-add')) teamAddDlg(b.getAttribute('data-team-add'));
+  else teamRmDlg(b.getAttribute('data-team-rm'), b.getAttribute('data-uid'));
+}
+/* The answer's cell into the page: the box, and the Manager pill when it was the Case Manager. */
+function teamApply(role, cell, canAssign, message) {
+  var r = teamRole(role);
+  if (!r || !cell) return;
+  r.names = (cell.names || []).slice();
+  r.personIds = (cell.personIds || []).map(String);
+  r.teamIds = (cell.teamIds || []).map(String);
+  r.entries = (cell.entries || []).slice();
+  if (canAssign === false) { LAST_D.team.canAssign = false; TEAM_LOST = message || 'You can no longer change who is on this case.'; }
+  if (role === 'manager') { LAST_D.manager = r.names.length ? r.names.join(', ') : 'Unassigned'; renderPills(LAST_D); }
+  renderTeam(LAST_D.team);
+}
+function teamFocus(sel) { var b = document.querySelector(sel); if (b) { try { b.focus(); } catch (e) {} } }
+/* Send one change. Answers land in this pop-up only while it is the same opening (c.still). */
+function teamSend(c, st, op, userId, okText) {
+  var err = c.box.querySelector('#team-err');
+  err.textContent = '';
+  c.setBusy(true);
+  if (st.sel) st.sel.disabled = true;
+  var go = c.box.querySelector('#team-go');
+  if (go) go.disabled = true;
+  var id = c.openId;
+  var done = function() { if (!c.still(id)) return false; c.setBusy(false); if (st.sel) st.sel.disabled = false; if (go) go.disabled = st.sel ? !st.sel.value : false; return true; };
+  fetch('/admin/case-action/' + encodeURIComponent(CASE_REF) + '/assign', { method: 'POST', headers: teamHeaders(true), credentials: 'same-origin',
+    body: JSON.stringify({ role: st.role, op: op, userId: String(userId), expected: st.expected }) })
+    .then(function(r) { return r.json().catch(function() { return {}; }).then(function(j) { return { ok: r.ok && j.ok, status: r.status, j: j }; }); })
+    .then(function(res) {
+      var j = res.j || {};
+      if (res.ok) {
+        // the box follows what Monday kept, even when the pop-up was closed after the long wait
+        teamApply(st.role, j.cell, j.canAssign, j.message);
+        actMsg('team-msg', j.noteFailed ? 'err' : 'ok', j.unchanged ? 'No change needed.'
+          : okText + (j.noteFailed ? ' The note may not have been added — check the case’s updates before adding it by hand.' : '') + (j.lostAccess ? ' ' + (j.message || '') : ''));
+        if (!c.still(id)) return;
+        c.close(true, 'done');
+        teamFocus('[data-team-add="' + st.role + '"]');
+        return;
+      }
+      if (res.status === 409 && j.code === 'changed' && j.current) {
+        // Monday has something else now: the box and the pop-up show it, and the button asks again with the new value
+        teamApply(st.role, j.current);
+        if (!c.still(id)) return;
+        st.expected = { personIds: (j.current.personIds || []).map(String), teamIds: (j.current.teamIds || []).map(String) };
+        var now = c.box.querySelector('#team-now');
+        if (now) now.textContent = (j.current.names || []).length ? j.current.names.join(', ') : 'Nobody';
+        done();
+        err.textContent = (j.error || 'This changed since your page loaded.') + ' Check it, then press the button again if you still want this.';
+        return;
+      }
+      if (!done()) return;
+      if (res.status === 401) { err.innerHTML = teamSignIn(j); return; }
+      err.textContent = j.error || ('Something went wrong (' + res.status + '). The result is unknown — check the case before trying again.');
+    })
+    .catch(function() {
+      if (!done()) return;
+      err.textContent = 'No answer — the result is unknown. Check the case before trying again.';
+    });
+}
+function teamAddDlg(role) {
+  var r = teamRole(role);
+  if (!r || !LAST_D.team.canAssign || typeof tdotDialogNew !== 'function') return;
+  var st = { role: role, expected: { personIds: r.personIds.slice(), teamIds: r.teamIds.slice() } };
+  var c = tdotDialogNew({ cls: 'team-dlg', group: 'team', labelledBy: 'team-h' });
+  c.box.innerHTML = '<h3 id="team-h">Add ' + teamArticle(r.label) + escHtml(r.label) + '</h3>' +
+    '<div class="team-dcase"><b>' + escHtml(LAST_D.caseRef || CASE_REF) + '</b> · ' + escHtml(LAST_D.clientName || '') + '</div>' +
+    '<div class="team-dnow">Now: <b id="team-now">' + escHtml(r.names.length ? r.names.join(', ') : 'Nobody') + '</b></div>' +
+    '<label class="team-lbl" for="team-sel">Person to add</label>' +
+    '<select id="team-sel" class="team-sel" disabled><option value="">Loading the staff list…</option></select>' +
+    '<div class="team-what">Adds the person as ' + escHtml(r.label) + ' in Monday — who is there now stays — and adds a note on the case. Monday tells them they were assigned. Nothing else changes.</div>' +
+    '<div class="tdlg-err" id="team-err" role="alert"></div>' +
+    '<div class="tdlg-actions"><button type="button" class="tdlg-btn" data-x="1" id="team-cancel">Cancel</button><button type="button" class="tdlg-btn primary" id="team-go" disabled>Add</button></div>';
+  st.sel = c.box.querySelector('#team-sel');
+  c.box.querySelector('#team-cancel').onclick = function() { c.tryClose('cancel'); };
+  st.sel.onchange = function() { c.box.querySelector('#team-go').disabled = !!c.busy || !st.sel.value; };
+  c.box.querySelector('#team-go').onclick = function() {
+    var v = st.sel.value, name = '';
+    if (!v) { c.box.querySelector('#team-err').textContent = 'Choose a person first.'; return; }
+    for (var i = 0; i < (TEAM_STAFF || []).length; i++) if (String(TEAM_STAFF[i].id) === v) name = TEAM_STAFF[i].name;
+    teamSend(c, st, 'add', v, '✓ ' + (name || 'The person') + ' added as ' + r.label + '.');
+  };
+  var id = c.openId;
+  var fill = function() {
+    var on = {};
+    st.expected.personIds.forEach(function(p) { on[String(p)] = true; });
+    st.sel.innerHTML = '<option value="">Choose a person…</option>' + (TEAM_STAFF || []).map(function(u) {
+      var already = on[String(u.id)];
+      return '<option value="' + escHtml(String(u.id)) + '"' + (already ? ' disabled' : '') + '>' + escHtml(u.name) + (already ? ' — already on' : '') + '</option>';
+    }).join('');
+    st.sel.disabled = false;
+    try { st.sel.focus(); } catch (e) {}
+  };
+  if (TEAM_STAFF) { fill(); return; }
+  fetch('/admin/client-master/assignable-users', { headers: teamHeaders(false), credentials: 'same-origin' })
+    .then(function(res) { return res.json().catch(function() { return {}; }).then(function(j) { return { ok: res.ok && j.ok, status: res.status, j: j }; }); })
+    .then(function(res) {
+      if (!c.still(id)) return;
+      if (!res.ok) {
+        st.sel.innerHTML = '<option value="">The staff list could not be loaded</option>';
+        var e1 = c.box.querySelector('#team-err');
+        if (res.status === 401) e1.innerHTML = teamSignIn(res.j); else e1.textContent = (res.j && res.j.error) || 'The staff list could not be loaded. Close this and try again.';
+        return;
+      }
+      TEAM_STAFF = res.j.users || [];
+      fill();
+    })
+    .catch(function() {
+      if (!c.still(id)) return;
+      st.sel.innerHTML = '<option value="">The staff list could not be loaded</option>';
+      c.box.querySelector('#team-err').textContent = 'The staff list could not be loaded (no answer). Close this and try again.';
+    });
+}
+function teamRmDlg(role, uid) {
+  var r = teamRole(role), e = null;
+  if (!r || !LAST_D.team.canAssign || typeof tdotDialogNew !== 'function') return;
+  for (var i = 0; i < (r.entries || []).length; i++) if (r.entries[i].kind === 'person' && String(r.entries[i].id) === String(uid)) e = r.entries[i];
+  if (!e) return;
+  var self = LAST_D.team.me && String(uid) === String(LAST_D.team.me);
+  var st = { role: role, expected: { personIds: r.personIds.slice(), teamIds: r.teamIds.slice() } };
+  var c = tdotDialogNew({ cls: 'team-dlg', group: 'team', labelledBy: 'team-h' });
+  c.box.innerHTML = '<h3 id="team-h">Remove ' + escHtml(e.name) + ' as ' + escHtml(r.label) + '?</h3>' +
+    '<div class="team-dcase"><b>' + escHtml(LAST_D.caseRef || CASE_REF) + '</b> · ' + escHtml(LAST_D.clientName || '') + '</div>' +
+    '<div class="team-dnow">Now: <b id="team-now">' + escHtml(r.names.join(', ')) + '</b></div>' +
+    '<div class="team-what">Removes only ' + escHtml(e.name) + ' from ' + escHtml(r.label) + ' in Monday and adds a note on the case. Everyone else stays.</div>' +
+    (self ? '<div class="rem-warn" style="margin-top:10px">This is you. If staff see only their own cases, you may no longer be able to open this case afterwards.</div>' : '') +
+    '<div class="tdlg-err" id="team-err" role="alert"></div>' +
+    '<div class="tdlg-actions"><button type="button" class="tdlg-btn" data-x="1" id="team-cancel">Cancel</button><button type="button" class="tdlg-btn danger" id="team-go">Remove</button></div>';
+  c.box.querySelector('#team-cancel').onclick = function() { c.tryClose('cancel'); };
+  c.box.querySelector('#team-go').onclick = function() { teamSend(c, st, 'remove', uid, '✓ ' + e.name + ' removed as ' + r.label + '.'); };
+  try { c.box.querySelector('#team-cancel').focus(); } catch (x) {}
+}
+
 function render(d) {
   document.getElementById('c-name').textContent = d.clientName || d.caseRef;
   document.getElementById('c-sub').textContent =
@@ -534,6 +749,8 @@ function render(d) {
 
   // Pills
   renderPills(d);
+  // Team on this case (2026-11-24)
+  renderTeam(d.team);
 
   // Readiness meters
   var q = d.qReadinessPct || 0, dd = d.docReadinessPct || 0;
@@ -1512,6 +1729,9 @@ function loadCase() {
       el.style.display = 'block';
     });
 }
+
+// Team on this case: one handler for the box's buttons
+document.getElementById('team-card').addEventListener('click', teamClick);
 
 // Tab switching
 document.getElementById('tabbar').addEventListener('click', function(e) {

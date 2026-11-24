@@ -2534,7 +2534,7 @@ function caseRow(c, v, today, wide) {
   if (due === 'internalDeadline') pr += duePill;
   var off = (c.officer ? escHtml(c.officer) : '<span style="color:var(--light);font-size:11px">Nobody</span>') +
     // Assign… (block 3): only where the server says the write is allowed (a Monday sign-in; the access check on that person)
-    (c.canAssign ? ' <button type="button" class="cm-assign" data-assign="' + escHtml(String(c.id)) + '" title="Set the Case Support Officer in Monday (replaces who is there now; a note is added on the case)">Assign…</button>' : '') +
+    (c.canAssign ? ' <button type="button" class="cm-assign" data-assign="' + escHtml(String(c.id)) + '" title="Add a Case Support Officer in Monday (who is there now stays; a note is added on the case)">Assign…</button>' : '') +
     (cmFlashText(c.id) ? ' <span class="cm-asg-ok" data-asg-ok="' + escHtml(String(c.id)) + '" role="status">' + escHtml(cmFlashText(c.id)) + '</span>' : '');
   var del = '<td class="cm-del">' + (window.TDOT_IS_ADMIN && c.caseRef
       ? '<button class="del-btn" type="button" data-del-case="' + escHtml(c.caseRef) + '" title="Delete this case (careful — removes its Monday rows; the consultation record and the OneDrive folder are kept)">' + TDOT_DEL_SVG + '</button>'
@@ -2619,7 +2619,8 @@ function caseRow(c, v, today, wide) {
 
 /* ── Assign the Case Support Officer (block 3) ───────────────────────
    The standard pop-up: who is there now, the staff list (people usually assigned first), what will happen.
-   The server writes ONE Monday column (Case Support Officer), replacing it, and adds a note on the case.
+   The server writes ONE Monday column (Case Support Officer), ADDING the person alongside who is there (Faran 2026-11-24:
+   it used to replace them), and adds a note on the case.
    The row is updated in place: the tab, the filters, the page and the scroll stay. */
 var CM_STAFF = null;     // the staff list, read once for this page (the server keeps it an hour)
 var CM_FLASH = {};       // item id → { text, until }: "✓ Assigned" beside the name for a few seconds
@@ -2660,9 +2661,9 @@ function cmAssignDlg(itemId) {
   c.box.innerHTML = '<h3 id="cm-asg-h">Assign a Case Support Officer</h3>' +
     '<div class="cm-asg-case"><b>' + escHtml(row.caseRef || 'No case number yet') + '</b> · ' + escHtml(row.clientName || '') + '</div>' +
     '<div class="cm-asg-now" id="cm-asg-now"></div>' +
-    '<label class="cm-asg-lbl" for="cm-asg-sel">New Case Support Officer</label>' +
+    '<label class="cm-asg-lbl" for="cm-asg-sel">Case Support Officer to add</label>' +
     '<select id="cm-asg-sel" class="cm-asg-sel" disabled><option value="">Loading the staff list…</option></select>' +
-    '<div class="cm-asg-what">Replaces the Case Support Officer in Monday and adds a note on the case. Nothing else changes.</div>' +
+    '<div class="cm-asg-what">Adds the person as Case Support Officer in Monday — who is there now stays — and adds a note on the case. Nothing else changes.</div>' +
     '<div class="cm-asg-rm" id="cm-asg-rm"></div>' +
     '<div class="cm-asg-tell" id="cm-asg-tell"></div>' +
     '<div class="tdlg-err" id="cm-asg-err" role="alert"></div>' +
@@ -2715,25 +2716,19 @@ function cmAsgChosen(st) {
   for (var i = 0; i < (CM_STAFF || []).length; i++) if (String(CM_STAFF[i].id) === v) return CM_STAFF[i];
   return null;
 }
-/* The Now line, who will be removed (two or more there now), who Monday will tell, and the Assign button. */
+/* The Now line, what will happen (who stays, or that the person is already there), who Monday will tell, and the Assign button. */
 function cmAsgSync(c, st) {
   var box = c.box, ch = cmAsgChosen(st), n = st.expected.personIds.length + st.expected.teamIds.length;
   box.querySelector('#cm-asg-now').innerHTML = 'Now: <b>' + escHtml(st.names.length ? st.names.join(', ') : 'Nobody') + '</b>';
   var rm = '';
-  if (n >= 2) {
-    if (!ch) rm = 'There are ' + n + ' on this case now. The one you choose replaces all of them.';
-    else {
-      // who stays is decided by the id; the names are Monday's own text for the cell
-      var at = st.expected.personIds.indexOf(String(ch.id)), keep = at >= 0;
-      var gone = st.names.filter(function(x) { return x !== ch.name; });
-      if (keep && gone.length === st.names.length && !st.expected.teamIds.length && st.names.length === st.expected.personIds.length) {
-        gone = st.names.filter(function(x, i) { return i !== at; });   // the name is spelled differently on the cell: drop it by its place
-      }
-      rm = 'This removes ' + cmAnd(gone) + (keep ? ' and keeps ' : ' and sets ') + ch.name + '.';
-    }
+  if (ch) {
+    // decided by the id; the names are Monday's own text for the cell
+    if (st.expected.personIds.indexOf(String(ch.id)) >= 0) rm = ch.name + ' is already a Case Support Officer on this case — nothing will change.';
+    else if (n >= 1 && st.names.length) rm = 'Keeps ' + cmAnd(st.names) + ' and adds ' + ch.name + '.';
   }
   box.querySelector('#cm-asg-rm').textContent = rm;
-  box.querySelector('#cm-asg-tell').textContent = ch ? 'Monday will tell ' + ch.name + ' they were assigned.' : 'Monday will tell the person you choose that they were assigned.';
+  var already = !!ch && st.expected.personIds.indexOf(String(ch.id)) >= 0;
+  box.querySelector('#cm-asg-tell').textContent = already ? '' : ch ? 'Monday will tell ' + ch.name + ' they were assigned.' : 'Monday will tell the person you choose that they were assigned.';
   // not a data-x button: the long-wait timer that lets Cancel and × close the pop-up must never let Assign be sent twice
   var go = box.querySelector('#cm-asg-go');
   if (go) go.disabled = !!c.busy || !ch;
@@ -2778,7 +2773,7 @@ function cmAsgSend(c, st) {
         st.expected = { personIds: (j.current.personIds || []).map(String), teamIds: (j.current.teamIds || []).map(String) };
         st.names = (j.current.names || []).slice();
         done();
-        err.textContent = (j.error || 'This changed since your page loaded.') + ' Press Assign again to replace it.';
+        err.textContent = (j.error || 'This changed since your page loaded.') + ' Press Assign again if you still want to add them.';
         return;
       }
       if (!done()) return;

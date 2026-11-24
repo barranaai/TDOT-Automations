@@ -805,7 +805,7 @@ app.get('/admin/case-data/:caseRef', async (req, res) => {
   const viewer = resolveViewer(req);
   if (!viewer) return res.status(401).json({ error: 'Sign in required', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' });
   try {
-    const overview = await caseCockpitService.getCaseOverview((req.params.caseRef || '').trim());
+    const overview = await caseCockpitService.getCaseOverview((req.params.caseRef || '').trim(), { team: true });
     // If the Client Master read failed, `assignees` is empty — do NOT run the
     // RBAC check against it (an assigned staffer would get a misleading
     // 'not-assigned'). Surface the outage as 503 so the page shows a retry.
@@ -824,6 +824,10 @@ app.get('/admin/case-data/:caseRef', async (req, res) => {
     // "Change" beside the Client deadline pill (2026-11-10): a Monday sign-in who may see the case
     // (the shared key never counts — the note must name a person); the route re-checks on a fresh read.
     overview.canChangeDeadline = !overview.cmUnavailable && require('./services/caseDeadlineService').canChange(tryStaffAuth(req), overview.assignees);
+    // "Team on this case" (2026-11-24): the four roles the page may set, the stage's highlight, and whether THIS person
+    // may change them (a Monday sign-in who may see the case — the shared key never counts); the route re-checks on a fresh read.
+    overview.team = require('./services/caseAssignService').describeForCase({ cells: overview.teamCells, stage: overview.caseStage, staff: tryStaffAuth(req), assignees: overview.assignees, cmUnavailable: overview.cmUnavailable });
+    delete overview.teamCells;
     res.json(overview);
   } catch (err) {
     const notFound = /not found/i.test(err.message || '');
@@ -1516,9 +1520,10 @@ app.post('/admin/case-action/:caseRef/folder', express.json(), async (req, res) 
   } catch (err) { caseFolderError(res, caseRef, err); }
 });
 
-// ─── Assign the Case Support Officer from the Client Master page (block 3) ────
-// Monday sign-in only (the note names the person; the shared key alone is refused).
-// Writes ONE column (Case Support Officer), replacing it, then a note — see caseAssignService.
+// ─── Assign people to a case: the Client Master page (block 3) and the case page (2026-11-24) ────
+// Monday sign-in only (the note names the person; the shared key alone is refused). Writes ONE of the four
+// role columns (Case Support Officer / Case Manager / Submission Team / Ops Supervisor), ADDING the person
+// alongside who is there (or, on the case page, removing one person), then a note — see caseAssignService.
 function assignWho(req) { return { staff: tryStaffAuth(req), hasKey: hasAdminKey(req) }; }
 app.get('/admin/client-master/assignable-users', async (req, res) => {
   const svc = require('./services/caseAssignService');
@@ -1541,6 +1546,20 @@ app.post('/admin/client-master/assign', express.json(), async (req, res) => {
   } catch (err) {
     if (err.status && err.body) return res.status(err.status).json(err.body);
     console.error('[Assign] failed:', err.stack || err.message);
+    res.status(500).json({ ok: false, error: 'The result is unknown — check the case in Monday before trying again.' });
+  }
+});
+// The case page's "Team on this case" box: { role, op: 'add'|'remove', userId, expected }. The case is found from the
+// case number in the URL (never from an item id in the body); the role is a key of the service's whitelist.
+app.post('/admin/case-action/:caseRef/assign', express.json(), async (req, res) => {
+  const { staff, hasKey } = assignWho(req);
+  const caseRef = (req.params.caseRef || '').trim();
+  res.set('Cache-Control', 'no-store');
+  try {
+    res.json(await require('./services/caseAssignService').assignOnCase({ staff, hasKey, caseRef, body: req.body }));
+  } catch (err) {
+    if (err.status && err.body) return res.status(err.status).json(err.body);
+    console.error(`[Assign] ${caseRef} failed:`, err.stack || err.message);
     res.status(500).json({ ok: false, error: 'The result is unknown — check the case in Monday before trying again.' });
   }
 });

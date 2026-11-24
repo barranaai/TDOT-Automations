@@ -123,6 +123,8 @@ async function readClientMaster(itemId) {
     portalLink:      linkUrl(by[CM.portalLink]?.value) || txt(CM.portalLink),
     folderLink:      linkUrl(by[CM.folderLink]?.value) || txt(CM.folderLink),
     assignees:       caseAccess.assigneesFromColumnValues(valueByColId), // { personIds, teamIds }
+    // the people cells as read ({ [colId]: { text, value } }) — the case page's "Team on this case" box (getCaseOverview { team: true })
+    peopleCells:     Object.fromEntries(caseAccess.PEOPLE_COLUMNS.map((c) => [c, { text: by[c]?.text || '', value: by[c]?.value ?? null }])),
     group:           { id: (item.group && item.group.id) || '', title: (item.group && item.group.title) || '' },
     automationLock:  txt(CM.automationLock),
     manualOverride:  txt(CM.manualOverride),
@@ -418,9 +420,12 @@ async function getReminderFacts(caseRef) {
 /**
  * Aggregate one case into a single overview snapshot for the staff cockpit.
  * @param {string} caseRef
+ * @param {{ team?: boolean }} [opts]  team: also hand back `teamCells` — the case's people cells as read
+ *   ({ [colId]: { text, value } }, null when the row could not be read) for the case page's "Team on this
+ *   case" box (the /admin/case-data route turns them into `team` and drops them). Off = the keys as before.
  * @returns {Promise<object>} the unified snapshot (throws only if the case itself can't be resolved)
  */
-async function getCaseOverview(caseRef) {
+async function getCaseOverview(caseRef, opts = {}) {
   // the family board read needs only the case ref: it runs beside everything else
   const compositionP = compositionAdapter.readForCase(caseRef).catch((e) => { console.warn(`[Cockpit] family read failed for ${caseRef}: ${e.message}`); return { members: [] }; });
   // ── Lead link → meetings, payments, timeline (all best-effort) ────────────
@@ -472,7 +477,7 @@ async function getCaseOverview(caseRef) {
     questionnaire,                // the buttons also work when only the questionnaire is unfinished (Gauri's texts, 2026-11-07)
   });
 
-  return {
+  const overview = {
     caseRef,
     itemId,
     clientName,
@@ -522,6 +527,8 @@ async function getCaseOverview(caseRef) {
     timeline,
     sponsor,
   };
+  if (opts && opts.team) overview.teamCells = cm._unavailable ? null : (cm.peopleCells || null);
+  return overview;
 }
 
 module.exports = { getCaseOverview, getReminderFacts, readReminderCore, getLeadExtras, buildTimeline, summariseDocuments, pickLeadFields, readClientMaster, _CM: CM };
