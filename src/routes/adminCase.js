@@ -586,15 +586,19 @@ function teamSignedOut() {
 function teamStaff() { return TEAM_STAFF || (LAST_D && LAST_D.team && LAST_D.team.staff) || null; }
 /* Which rows show: the roles that fit the stage or have someone in them; the rest behind "+ Other role".
    An empty role with a one-tap name shows too (the empty Ops Supervisor: its chip must be seen to be used).
-   Nothing fits and nobody is set: the Case Support Officer shows, with the fold. */
+   Nothing fits and nobody is set: the Case Support Officer shows, with the fold — decided BEFORE the chip rows,
+   so an Ops Supervisor chip never hides it. */
 function teamSplit(t) {
-  var shown = [], rest = [];
-  (t.roles || []).forEach(function(r) { ((r.highlight || (r.entries || []).length || (t.canAssign && r.suggest && r.suggest.id)) ? shown : rest).push(r); });
-  if (!shown.length && rest.length) {
-    var at = 0;
-    for (var i = 0; i < rest.length; i++) if (rest[i].role === 'officer') { at = i; break; }
-    shown.push(rest.splice(at, 1)[0]);
+  var roles = t.roles || [];
+  var base = function(r) { return !!(r.highlight || (r.entries || []).length); };
+  var chip = function(r) { return !!(t.canAssign && r.suggest && r.suggest.id); };
+  var fallback = null;
+  if (roles.length && !roles.some(base)) {
+    fallback = roles[0];
+    for (var i = 0; i < roles.length; i++) if (roles[i].role === 'officer') { fallback = roles[i]; break; }
   }
+  var shown = [], rest = [];
+  roles.forEach(function(r) { ((base(r) || chip(r) || r === fallback) ? shown : rest).push(r); });
   return { shown: shown, rest: rest };
 }
 function teamRowHtml(t, r) {

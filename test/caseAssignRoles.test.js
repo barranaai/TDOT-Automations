@@ -248,7 +248,8 @@ test('REMOVE needs no staff list (a person who has left Monday can still be take
   const r = await onCase({ role: 'ops', op: 'remove', userId: '21', expected: { personIds: ['21', '12'], teamIds: [] } });
   assert.equal(r.ok, true, 'the staff list failing does not stop a remove (review 2026-11-24: it is read only to NAME the person)');
   assert.equal(m.writes.length, 1);
-  assert.match(m.notes[0].vars.b, /Ops Supervisor: removed Gone Person<\/b> \(now: Bo Manager\)/);
+  // two people and no staff list: Monday's text could only GUESS who is who by position — the note names the id (review round 2)
+  assert.match(m.notes[0].vars.b, /Ops Supervisor: removed user 21<\/b> \(now: Bo Manager\)/);
   m = fakeMonday({ cells: { [COL.ops]: { value: ppl(12, T(5)), text: 'Bo Manager, Team 5' } } });
   assert.equal((await onCase({ role: 'ops', op: 'remove', userId: '14', expected: { personIds: ['12'], teamIds: ['5'] } })).unchanged, true);
   await refused(onCase({ role: 'ops', op: 'remove', userId: '5', expected: { personIds: ['12'], teamIds: ['5'] } }), 400, /A team cannot be removed here/);
@@ -836,6 +837,12 @@ test('round 2 the fold: nothing fits the stage and nobody is set → the Case Su
   let h = el('team-card').innerHTML;
   assert.deepEqual([...h.matchAll(/data-role="([a-z]+)"/g)].map((m) => m[1]), ['officer']);
   assert.ok(h.includes('+ Other role'));
+  // review: all empty, nothing fits, but the Ops Supervisor has a one-tap name → the Case Support Officer still shows, beside the chip
+  ctx.LAST_D.team.roles[3] = empty('ops', 'Ops Supervisor', { suggest: { id: '13', name: 'Chen Sub' } });
+  ctx.renderTeam(ctx.LAST_D.team);
+  h = el('team-card').innerHTML;
+  assert.deepEqual([...h.matchAll(/data-role="([a-z]+)"/g)].map((m) => m[1]), ['officer', 'ops']);
+  assert.ok(h.includes('data-team-sug="ops"') && h.includes('+ Other role'));
   // Ops Supervisor set → shown, without a highlight
   ctx.LAST_D.team.roles[3] = empty('ops', 'Ops Supervisor', { names: ['Chen'], personIds: ['13'], entries: [{ id: '13', kind: 'person', name: 'Chen' }] });
   ctx.renderTeam(ctx.LAST_D.team);
@@ -952,6 +959,58 @@ test('round 2 C1 server: Undo removes only YOUR add made a moment ago on this ca
   // undo is a remove only, and never through the Client Master route
   await refused(onCase({ role: 'manager', op: 'add', userId: '14', undo: true, expected: { personIds: [], teamIds: [] } }), 400);
   await refused(svc.assign({ staff: STAFF, hasKey: false, body: { itemId: ITEM, op: 'remove', undo: true, userId: '14', expected: { personIds: ['14'], teamIds: [] } } }), 400);
+});
+
+test('review: the note names a removed person by id only — the staff list cannot be read and the cell has two people in Monday\'s reverse text order → "user 14", never the other person; an expired list still names them', async () => {
+  const m = fakeMonday({ usersFail: true, cells: { [COL.manager]: { value: ppl(14, 15), text: 'Bob B, Monica P' } } });
+  const r = await onCase({ role: 'manager', op: 'remove', userId: '14', expected: { personIds: ['14', '15'], teamIds: [] } });
+  assert.equal(r.ok, true); assert.deepEqual(r.cell.personIds, ['15']);
+  assert.match(m.notes[0].vars.b, /<b>Case Manager: removed user 14<\/b>/);
+  assert.ok(!/removed Bob B/.test(m.notes[0].vars.b));
+  // the list read once (warm), then expired and unreadable: its names still name by id
+  svc._resetUsers(); svc._inFlight.clear();
+  const m2 = fakeMonday({ cells: { [COL.manager]: { value: ppl(14, 15), text: 'Bob B, Monica P' } } });
+  await svc.assignableUsers();
+  m2.usersFail = true;
+  const realNow = svc._io.now;
+  svc._io.now = () => realNow() + 3 * 60 * 60 * 1000;
+  try { await onCase({ role: 'manager', op: 'remove', userId: '14', expected: { personIds: ['14', '15'], teamIds: [] } }); }
+  finally { svc._io.now = realNow; }
+  assert.match(m2.notes[0].vars.b, /<b>Case Manager: removed Monica Paola<\/b>/);
+});
+
+test('review: Undo never removes someone another staffer took off and put back, or after the cell changed in any other way', async () => {
+  const other = { id: '12', name: 'Bo Manager', email: 'bo@example.com', teamIds: [] };
+  const undoBody = { role: 'manager', op: 'remove', userId: '14', undo: true, expected: { personIds: ['14'], teamIds: [] } };
+  // ✕ by another staffer, then put back from the Client Master route? (manager: the case page) — here: ✕ then a re-add on Monday
+  let m = fakeMonday({ cells: { [COL.manager]: { value: null, text: '' } } });
+  await onCase({ role: 'manager', userId: '14', expected: { personIds: [], teamIds: [] } });
+  await onCase({ role: 'manager', op: 'remove', userId: '14', expected: { personIds: ['14'], teamIds: [] } }, { staff: other });
+  m.cells[COL.manager] = { value: ppl(14), text: 'Monica Paola' };   // put back directly in Monday
+  await refused(onCase(undoBody), 409, /Undo is no longer possible/);
+  assert.equal(m.writes.length, 2, 'the Undo wrote nothing');
+  // the officer: ✕ by another staffer, then re-added from the Client Master page
+  svc._recentAdds.clear();
+  m = fakeMonday({ cells: { [COL.officer]: { value: null, text: '' } } });
+  const oBody = { role: 'officer', op: 'remove', userId: '13', undo: true, expected: { personIds: ['13'], teamIds: [] } };
+  await onCase({ role: 'officer', userId: '13', expected: { personIds: [], teamIds: [] } });
+  await onCase({ role: 'officer', op: 'remove', userId: '13', expected: { personIds: ['13'], teamIds: [] } }, { staff: other });
+  await svc.assign({ staff: other, hasKey: false, body: { itemId: ITEM, userId: '13', expected: { personIds: [], teamIds: [] } } });
+  await refused(onCase(oBody), 409, /Undo is no longer possible/);
+  assert.equal(m.writes.length, 3);
+  // someone else added beside the person in the meantime: the cell is no longer what the add left → refused
+  svc._recentAdds.clear();
+  m = fakeMonday({ cells: { [COL.manager]: { value: null, text: '' } } });
+  await onCase({ role: 'manager', userId: '14', expected: { personIds: [], teamIds: [] } });
+  m.cells[COL.manager] = { value: ppl(14, 12), text: 'Monica Paola, Bo Manager' };
+  await refused(onCase({ ...undoBody, expected: { personIds: ['14', '12'], teamIds: [] } }), 409, /Undo is no longer possible/);
+  assert.equal(m.writes.length, 1);
+  // unchanged: the Undo still works
+  svc._recentAdds.clear();
+  m = fakeMonday({ cells: { [COL.manager]: { value: null, text: '' } } });
+  await onCase({ role: 'manager', userId: '14', expected: { personIds: [], teamIds: [] } });
+  const r = await onCase(undoBody);
+  assert.equal(r.ok, true); assert.deepEqual(r.cell.personIds, []);
 });
 
 test('round 2 C2 handover: add a Case Support Officer and take the other off in ONE write with ONE note ("added X, removed Y"); the case route and the Client Master route', async () => {

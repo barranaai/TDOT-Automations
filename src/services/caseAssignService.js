@@ -414,7 +414,9 @@ function parseInput(b) {
   return { role, op, userId, expected: { personIds: ex.personIds.map(s), teamIds: ex.teamIds.map(s) }, alsoRemove, undo };
 }
 
-// Undo: the adds just made, by whom — itemId|role|userId → { by, at } (kept UNDO_MS; one Undo each)
+// Undo: the adds just made, by whom — itemId|role|userId → { by, at, personIds, teamIds } (kept UNDO_MS; one Undo each).
+// personIds/teamIds: the cell as that add left it (its read-back). An Undo is allowed only while the cell is still
+// exactly that, and any later take-off of the person ends it — so an Undo never removes someone another staffer put back.
 const _recentAdds = new Map();
 const undoKey = (itemId, role, userId) => `${itemId}|${role}|${userId}`;
 const whoKey = (g) => s((g.viewer && g.viewer.userId) || g.actor.email || g.actor.name);
@@ -490,7 +492,7 @@ async function run({ g, itemId, input, source, caseRef }) {
       // a REMOVE: the staff list only NAMES the person in the note (by id); it is never required —
       // a failed read leaves the names to Monday's text, and the remove goes on
       try { users = await assignableUsers(); }
-      catch (err) { console.warn(`[Assign] staff list read failed (names only): ${err.message}`); users = null; }
+      catch (err) { console.warn(`[Assign] staff list read failed (names only): ${err.message}`); users = _users || null; }   // an expired list still names by id
     }
     const names = users ? users.names : null;
     // 4. fresh read
@@ -518,6 +520,14 @@ async function run({ g, itemId, input, source, caseRef }) {
     const now = peopleOf(cell.value);
     const nowView = cellView(cell, names, null, forCase);
     const changedMeanwhile = !sameSet(now.personIds, ex.personIds) || !sameSet(now.teamIds, ex.teamIds);
+    // an Undo: only while the cell is still exactly what that add left (someone else changed it meanwhile → ✕ instead)
+    if (undo) {
+      const ra = _recentAdds.get(undoKey(itemId, role, userId));
+      if (!ra || !sameSet(now.personIds, ra.personIds) || !sameSet(now.teamIds, ra.teamIds)) {
+        _recentAdds.delete(undoKey(itemId, role, userId));
+        throw fail(409, 'Undo is no longer possible here — use ✕ beside the name to take them off.', { code: 'undo-expired' });
+      }
+    }
     const answer = (o) => {
       const flags = { ...(changedMeanwhile ? { changedMeanwhile: true } : {}), ...o.flags };
       return role === 'officer' && !forCase ? { ok: true, ...flags, officer: o.view, canAssign: o.canAssign } : { ok: true, ...flags, role, cell: o.view, canAssign: o.canAssign };
@@ -535,7 +545,8 @@ async function run({ g, itemId, input, source, caseRef }) {
       return answer({ flags: { unchanged: true }, view: nowView, canAssign: true });
     }
     const named = entriesOf(cell, names);
-    const nameOfId = (id) => (named.find((e) => e.kind === 'person' && e.id === id) || {}).name || `user ${id}`;
+    // the note, the log and `removed` name a person by id only — never by a guess from Monday's text order
+    const nameOfId = (id) => { const e = named.find((x) => x.kind === 'person' && x.id === id); return (e && !e.guess && e.name) || `user ${id}`; };
     const removed = removeIds.map((id) => ({ id, name: nameOfId(id) }));
     // 8. the write: the whole cell — the persons and teams there now (minus the persons taken off), the new person last on an add
     const kept = now.personIds.filter((p) => !removeIds.includes(p));
@@ -549,6 +560,7 @@ async function run({ g, itemId, input, source, caseRef }) {
       throw fail(502, 'The result is unknown — check the case in Monday before trying again.');
     }
     if (undo) _recentAdds.delete(undoKey(itemId, role, userId));   // one Undo, whatever the read-back says
+    for (const id of removeIds) _recentAdds.delete(undoKey(itemId, role, id));   // a ✕ / handover ends any Undo of that person
     // 9. read-back: exactly the intended persons and teams
     let back;
     try { back = await io.readCell(rowId, col); }
@@ -572,7 +584,8 @@ async function run({ g, itemId, input, source, caseRef }) {
     catch (err) { noteFailed = true; console.error(`[Assign] item ${itemId}${ref ? ` (${ref})` : ''}: the ${label} was changed but the note failed: ${err.message}`); }
     // 11. the cached rows follow the read-back (never invalidated)
     io.patchCache(rowId, col, { value: back.value, text: back.text });
-    if (adding && forCase) { _pruneAdds(io.now()); _recentAdds.set(undoKey(itemId, role, userId), { by: whoKey(g), at: io.now() }); }
+    if (adding && forCase) { _pruneAdds(io.now()); _recentAdds.set(undoKey(itemId, role, userId), { by: whoKey(g), at: io.now(), personIds: got.personIds.map(s), teamIds: got.teamIds.map(s) }); }
+    else if (adding) _recentAdds.delete(undoKey(itemId, role, userId));   // added again elsewhere: no earlier Undo removes this one
     console.log(`[Assign] item ${itemId}${ref ? ` (${ref})` : ''}: ${label}${adding ? ` + ${person.name}` : ''}${removed.length ? ` − ${removed.map((r) => r.name).join(', ')}` : ''}${undo ? ' (undo)' : ''} (now ${view.names.join(', ') || 'nobody'}), by ${actorName} on ${source}`);
     // may this person still change the case? (taking yourself off a case can end your access under "assigned")
     const canAssign = caseAccess.viewerCanSee(caseAccess.assigneesFromColumnValues({ ...valueByCol, [col]: back.value }), g.viewer);
