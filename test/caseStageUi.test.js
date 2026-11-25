@@ -342,3 +342,23 @@ test('pop-up: no refused stage but the current one → no toggle; a locked case 
   assert.equal(sb2.el('stc-moved').textContent, 'The stage changed since your page loaded — it is now No stage.');
   assert.equal(sb2.el('stc-now').innerHTML, 'Now: <b>No stage</b>');
 });
+
+test('pop-up: saved but something to check (note failed / lock not confirmed) → the top lines follow what Monday kept: the new stage, no stale "changed" line, " · locked" gone after an unlock and kept when the unlock is not confirmed', async () => {
+  const P = { ...PREVIEW, locked: true, current: { index: 9, label: 'Cancelled' }, options: [OPT(1, 'Internal Review', { reasonRequired: true, unlocks: true }), OPT(9, 'Cancelled', { allowed: false, why: 'This is the stage now.' })] };
+  const go = async (answer) => {
+    const sb = sandbox([{ status: 200, j: P }, { status: 200, j: answer }]);
+    sb.open(); await sb.flush();
+    assert.equal(sb.el('stc-moved').textContent, 'The stage changed since your page loaded — it is now Cancelled.');
+    assert.equal(sb.el('stc-now').innerHTML, 'Now: <b>Cancelled</b><span class="stc-lk"> · locked</span>');
+    sb.el('stc-sel').value = '1'; sb.el('stc-sel').onchange();
+    sb.el('stc-reason').value = 'Client came back'; sb.el('stc-reason').oninput();
+    sb.el('stc-go').onclick(); await sb.flush();
+    assert.equal(sb.dlg.closed, false);
+    assert.equal(sb.el('stc-moved').textContent, '', 'no "it is now Cancelled" after this person moved it');
+    return sb;
+  };
+  let sb = await go({ ok: true, noteFailed: true, unlocked: true, stage: { index: 1, label: 'Internal Review' } });
+  assert.equal(sb.el('stc-now').innerHTML, 'Now: <b>Internal Review</b>', 'unlocked: no " · locked"');
+  sb = await go({ ok: true, lockUnconfirmed: true, unlocked: false, warning: 'Monday still shows the Automation Lock as “Yes”.', stage: { index: 1, label: 'Internal Review' } });
+  assert.equal(sb.el('stc-now').innerHTML, 'Now: <b>Internal Review</b><span class="stc-lk"> · locked</span>', 'the unlock not confirmed: still said locked');
+});

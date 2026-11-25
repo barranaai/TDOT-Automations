@@ -195,6 +195,10 @@ window.tdotStageChange = function(o){
           /* changed, but something to check (the note, the lock, a renamed stage): say it, and let the person close */
           if (j.noteFailed || j.warning) {
             c.setBusy(false);
+            /* the lines at the top follow what Monday kept: the new stage; no "changed since your page loaded" (this person
+               changed it); "locked" only when it was locked and this change did not unlock it */
+            q('stc-moved').textContent = '';
+            if (j.stage) showNow(j.stage.label, !!(st.preview && st.preview.locked) && !j.unlocked);
             err.textContent = 'Stage changed.' +
               (j.noteFailed ? ' The note may not have been added — check the case’s updates and add it by hand (who, what, why).' : '') +
               (j.warning ? ' ' + j.warning : '');
