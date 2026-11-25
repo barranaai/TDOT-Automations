@@ -144,6 +144,7 @@ const io = {
         Object.defineProperty(lead, CONTACT, { value: { phone: String(lead.phone || ''), email: String(lead.email || ''), clientId: require('./clientIdDisplay').shownId(cidCell && cidCell.text) }, enumerable: false });
         delete lead.email;
         delete lead.phone;
+        delete lead.clientId;   // kept in CONTACT (above) — the copy's shape is what it was before
         // The case-gate facts (the Client Master "Waiting for" label): reduced here, server only;
         // the signing link, envelope ids, bank references and staff names never stay on the copy.
         Object.defineProperty(lead, GATE, { value: Object.freeze(gateFactsOf(lead)), enumerable: false });

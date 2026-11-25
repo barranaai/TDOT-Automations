@@ -135,7 +135,8 @@ const CONSULT_PAGE_CSS = `
   .cq-month select:focus-visible, .cq-month .cm-b:focus-visible { outline:2px solid var(--st-focus); outline-offset:1px; }
   .time { font-variant-numeric:tabular-nums; white-space:nowrap; font-weight:600; color:var(--navy); }
   .time .d { font-weight:500; color:#64748b; }
-  /* The recording code under the client's name (2026-11-14): what staff type as the Otter recording title. */
+  /* Under the client's name: what staff type as the Otter recording title — the Client ID when the client has one
+     (Faran 2026-11-26), else the recording code (2026-11-14). */
   .rec-code { display:block; font-size:11px; font-weight:500; color:#94a3b8; font-variant-numeric:tabular-nums; letter-spacing:.02em; margin-top:1px; white-space:nowrap; }
 `;
 
@@ -319,7 +320,7 @@ function rowHtml(c,ready){
   var pd=unpaid?'<span class="pill red" title="No payment is recorded and the consultation is not marked free. Open it and use “Record payment / Waived”.">Not paid</span>':paidPill(c);
   return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
     '<td>'+dateCell(c)+'</td><td>'+timeCell(c)+'</td>'+
-    '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+directPill(c)+(c.recCode?'<span class="rec-code" title="Recording code: type it as the Otter recording title before you stop the recording">'+escHtml(c.recCode)+'</span>':'')+'</td>'+
+    '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+directPill(c)+(c.clientId?'<span class="rec-code" title="Client ID: type it as the Otter recording title before you stop the recording">'+escHtml(c.clientId)+'</span>':c.recCode?'<span class="rec-code" title="Recording code (this client has no Client ID yet): type it as the Otter recording title before you stop the recording">'+escHtml(c.recCode)+'</span>':'')+'</td>'+
     '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
     '<td>'+escHtml(c.consultant||'—')+'</td>'+
     '<td>'+(c.meetingType?escHtml(c.meetingType):'—')+'</td>'+
@@ -1233,7 +1234,7 @@ ${buildNavHeader(fromRetainers ? 'retainers' : 'consultations')}
           <div class="avatar" id="c-avatar">—</div>
           <div><h1 class="cname" id="c-name">—</h1><div class="csub" id="c-sub">—</div>
             <div class="rec-code-box" id="c-code" hidden>
-              <span class="rc-l">Recording code</span> <b class="rc-v" id="c-code-v"></b>
+              <span class="rc-l" id="c-code-l">Type in Otter</span> <b class="rc-v" id="c-code-v"></b>
               <button type="button" class="rc-copy" id="c-code-copy">Copy</button><span class="rc-done" id="c-code-done" role="status" aria-live="polite"></span>
               <div class="rc-hint">Type this as the Otter recording title before you stop the recording</div>
             </div></div>
@@ -1822,13 +1823,16 @@ function render(d){
   document.getElementById('c-avatar').textContent=initials(d.name||d.leadId);
   document.getElementById('c-name').textContent=d.name||d.leadId;
   document.getElementById('c-sub').textContent=(d.serviceRequired||'—')+'  ·  '+(d.tier?('Tier '+d.tier):'')+'  ·  lead '+d.leadId;
-  /* The recording code: display only (made on the server from the record's id — recordingCode.js). */
+  /* What to type as the Otter title: the client's Client ID when they have one (Faran 2026-11-26), else the recording
+     code (made on the server from the record's id — recordingCode.js). Display only. */
   var rcBox=document.getElementById('c-code');
   if(rcBox){
-    rcBox.hidden=!d.recordingCode;
-    document.getElementById('c-code-v').textContent=d.recordingCode||'';
+    var otterText=String(d.clientId||d.recordingCode||'');
+    rcBox.hidden=!otterText;
+    document.getElementById('c-code-l').textContent=d.clientId?'Type in Otter':'Type in Otter (no Client ID yet)';
+    document.getElementById('c-code-v').textContent=otterText;
     document.getElementById('c-code-copy').onclick=function(){
-      var done=document.getElementById('c-code-done'), code=String(d.recordingCode||'');
+      var done=document.getElementById('c-code-done'), code=otterText;
       function said(ok){ done.textContent=ok?'Copied':'Select the code and copy it'; setTimeout(function(){ done.textContent=''; },4000); }
       try { if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(code).then(function(){ said(true); },function(){ said(false); }); return; } } catch(e){}
       said(false);

@@ -122,6 +122,7 @@ function shapeLead(lead, via, withEmail = false) {
     bookedSlot: s(lead.bookedSlot),
     consultationHeld: s(lead.consultationHeld),
     consultant: s(lead.assignedConsultant),
+    clientId: s(lead.clientId),   // the Lead Board "Client ID" copy ('' when none): typed as the Otter title (2026-11-26)
     via,
     ...(withEmail ? { email: s(lead.email) } : {}),
     _when: whenKey(lead),

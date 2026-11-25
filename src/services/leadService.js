@@ -428,6 +428,15 @@ function parseItem(item) {
       lead[key] = cv.text || '';
     }
   }
+  // The person's readable Client ID ("CL-2026-00042"): the Lead Board "Client ID" copy — a plain text column the
+  // app writes (clientAccountService) and the hourly healer keeps right. Set ONLY when this read carried that
+  // column (a read without it never makes a blank); a stored ID only (clientIdDisplay.shownId), else ''. Staff
+  // type it as the Otter recording title (Faran 2026-11-26) — the consultation record shows it.
+  const cidCol = require('./clientIdDisplay').columns().lead;
+  if (cidCol) {
+    const cv = (item.column_values || []).find((c) => c && c.id === cidCol);
+    if (cv) lead.clientId = require('./clientIdDisplay').shownId(cv.text);
+  }
   // Column may be empty on staff-created rows — fall back to the item name,
   // but never to the "Unnamed Lead" placeholder (handoff should fail loudly
   // for those rather than create a junk-named case + folder).

@@ -4,9 +4,14 @@
 // read as a CASE NUMBER by any of the app's case-ref readers — the info@ email
 // filer, the mail stamps, the case Emails tab, the delete-folder guard, the
 // case-number allocator (its scans and high-water file), the portal-link
-// healer — nor as an Otter recording code. Tested THROUGH the live exported
+// healer — nor as an Otter TD- recording code. Tested THROUGH the live exported
 // functions / constants, so a change to any of those readers that starts
 // catching CL- IDs fails here.
+//
+// The Otter reader is the ONE reader that reads a CL- ID on purpose (Faran
+// 2026-11-26: staff type the Client ID as the Otter recording title; the TD-
+// code stays as the backup) — as a Client ID, never as a TD- code, and a
+// case number "2026-CL-00042" is never read as one.
 //
 // And the opposite, which documents why the owner's first idea was turned
 // down: "2026-VV-00042" (year first, then letters) IS a case number to every
@@ -108,8 +113,17 @@ test('portal-link healer (CURRENT_REF): a CL- ID is not a current case ref', () 
   assert.equal(CURRENT_REF.test('2026-VV-004'), true);
 });
 
-test('Otter reader (otterMatch.readTitle): a CL- ID is not a recording code; TD- still is', () => {
-  for (const s of CL_SHAPES) assert.equal(readTitle(s).code, '', s);
+test('Otter reader (otterMatch.readTitle): a CL- ID is read as a Client ID (Faran 2026-11-26), never as a TD- code; TD- still is a code; a case number is neither', () => {
+  for (const s of CL_SHAPES) {
+    assert.equal(readTitle(s).code, '', s);
+    const want = s.includes('100000') ? { n: 100000, year: 2026 } : { n: 42, year: 2026 };
+    assert.deepEqual(readTitle(s).clientId, want, s);
+  }
   assert.equal(readTitle('TD-00042').code, 'TD-00042');
+  assert.equal(readTitle('TD-00042').clientId, null, 'a TD- code is not a Client ID');
   assert.equal(parseClientId('TD-00042'), null, 'and the Client ID reader refuses a TD- code');
+  for (const s of CASE_SHAPED) {
+    assert.equal(readTitle(s).clientId, null, `${s}: a case number is not a Client ID`);
+    assert.equal(readTitle(`Jane Doe - ${s}`).clientId, null, s);
+  }
 });

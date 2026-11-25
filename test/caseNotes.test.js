@@ -89,7 +89,7 @@ test('caseLeadSet: every linked lead, newest consultation first; same person spe
     assert.deepEqual(r.leads.map((l) => l.leadId), ['2', '1'], 'de-duplicated, newest first');
     assert.equal(r.multipleClaimants, false);
     assert.equal(r.leads[0].kind, 'booked');
-    assert.deepEqual(Object.keys(r.leads[0]).sort(), ['bookedSlot', 'clientName', 'consultant', 'consultationHeld', 'kind', 'leadId', 'via']);
+    assert.deepEqual(Object.keys(r.leads[0]).sort(), ['bookedSlot', 'clientId', 'clientName', 'consultant', 'consultationHeld', 'kind', 'leadId', 'via']);
   } finally { s.restore(); }
 });
 
@@ -99,7 +99,7 @@ test('caseLeadSet: the lead email only when asked (the Emails tab, withEmail) �
     const plain = await svc.caseLeadSet('900', '2026-EE-900', { recordUrl: '' });
     assert.ok(!('email' in plain.leads[0]), 'the notes panel\'s set: no email (the pinned keys above)');
     const withEmail = await svc.caseLeadSet('900', '2026-EE-900', { recordUrl: '', withEmail: true });
-    assert.deepEqual(Object.keys(withEmail.leads[0]).sort(), ['bookedSlot', 'clientName', 'consultant', 'consultationHeld', 'email', 'kind', 'leadId', 'via']);
+    assert.deepEqual(Object.keys(withEmail.leads[0]).sort(), ['bookedSlot', 'clientId', 'clientName', 'consultant', 'consultationHeld', 'email', 'kind', 'leadId', 'via']);
     assert.equal(withEmail.leads[0].email, 'asha.sample@example.test');
     assert.ok(!('email' in routes.cardOf(withEmail.leads[0])), 'a card whitelists its fields: an email never reaches the panel');
   } finally { s.restore(); }
@@ -584,7 +584,7 @@ test('widget: one card per consultation, its own fetch (no-store, same-origin), 
   assert.equal(w.gets.length, 1); assert.equal(w.gets[0].url, '/admin/case-notes/2026-EE-900');
   assert.equal(w.gets[0].o.cache, 'no-store'); assert.equal(w.gets[0].o.credentials, 'same-origin');
   const t = w.text();
-  for (const s of ['Asha Sample', 'Booked', 'Direct consultation', 'Consultation Nov 10, 2026, 10:00 · Consultant One', 'Recording code', 'TD-00011', 'Copy', 'Type this as the Otter recording title',
+  for (const s of ['Asha Sample', 'Booked', 'Direct consultation', 'Consultation Nov 10, 2026, 10:00 · Consultant One', 'Type in Otter (no Client ID yet)', 'TD-00011', 'Copy', 'Type this as the Otter recording title',
     'Typed by Gauri, ', '<b>not markup</b>', 'No consultation notes yet', 'Add note', 'Save note']) assert.ok(t.includes(s), s);
   assert.equal(w.tas().length, 2, 'one Add note box per consultation');
   assert.equal(w.d.byId['cnp-bar-n'].textContent, '2', 'the count: one note + one recording');
@@ -695,7 +695,7 @@ test('widget: the states — several client names (warning, no Add), the shared 
   w = widget({ payload: PAYLOAD({ consultations: [] }) }); await tick();
   assert.equal(w.text(), 'No consultation record for this case.');
   w = widget({ payload: PAYLOAD({ consultations: [{ leadId: '13', clientName: 'Asha Sample', kind: 'direct-retainer', recordingCode: '', recordUrl: '/admin/consultation/13', canAdd: false, notes: [], recordings: [] }] }) }); await tick();
-  assert.ok(w.text().includes('Direct retainer: no consultation.')); assert.ok(!w.text().includes('Recording code')); assert.ok(!w.text().includes('No consultation notes yet'));
+  assert.ok(w.text().includes('Direct retainer: no consultation.')); assert.ok(!w.text().includes('Type in Otter')); assert.ok(!w.text().includes('No consultation notes yet'));
   w = widget({ status: 503, payload: { ok: false, error: 'Could not load notes — retry.' } }); await tick();
   assert.ok(w.text().startsWith('Could not load notes — retry')); assert.equal(w.d.byId['cnp-bar-n'].textContent, '', 'never a count of zero as if true');
   w.d.find((n) => n.tagName === 'BUTTON' && n.textContent === 'Retry')[0].onclick(); await tick();
@@ -898,4 +898,30 @@ test('review 1 (page): a partial check shows a plain warning and no Add note box
   const w = widget({ payload: PAYLOAD({ partial: true, canAdd: false }) }); await tick();
   assert.equal(w.d.byId['cnp-warn'].textContent, 'Could not check every consultation linked to this case, so Add note is off for now. Press Refresh in a minute.');
   assert.equal(w.tas().length, 0, 'Add note off on every card, whatever a card says');
+});
+
+// 2026-11-26 (Faran): the Client ID is what staff type in Otter when the client has one; the TD- code is the backup.
+test('widget: a card with a Client ID shows "Type in Otter" + the Client ID and copies it; one without shows the code as the backup', async () => {
+  const p = PAYLOAD();
+  p.consultations[0] = { ...p.consultations[0], clientId: 'CL-2026-00042' };
+  const w = widget({ payload: p }); await tick();
+  const t = w.text();
+  assert.ok(t.includes('Type in OtterCL-2026-00042') || (t.includes('Type in Otter') && t.includes('CL-2026-00042')), t.slice(0, 300));
+  assert.ok(!t.includes('TD-00011'), 'the code is not shown when the client has a Client ID');
+  assert.ok(t.includes('Type in Otter (no Client ID yet)') && t.includes('TD-00012'), 'the other card: the code');
+  // Copy copies what is shown
+  let copied = '';
+  w.ctx.navigator.clipboard = { writeText: (v) => { copied = v; return Promise.resolve(); } };
+  const btn = w.d.find((n) => n.tagName === 'BUTTON' && n.title === 'Copy what to type in Otter')[0];
+  btn.onclick(); await tick();
+  assert.equal(copied, 'CL-2026-00042');
+});
+
+test('caseLeadSet: each lead carries its Lead Board Client ID copy ("" when none) — the card shows it', async () => {
+  const s = stubSet({ linked: [L(1, { bookedSlot: '2026-09-01 10:00', clientId: 'CL-2026-00042' }), L(2, { bookedSlot: '2026-11-01 10:00' })] });
+  try {
+    const r = await svc.caseLeadSet('900', '2026-EE-900', { recordUrl: '' });
+    assert.deepEqual(r.leads.map((l) => [l.leadId, l.clientId]), [['2', ''], ['1', 'CL-2026-00042']]);
+    assert.deepEqual(r.leads.map((l) => routes.cardOf(l).clientId), ['', 'CL-2026-00042']);
+  } finally { s.restore(); }
 });

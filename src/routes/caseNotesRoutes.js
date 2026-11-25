@@ -28,6 +28,7 @@ const svcOf = (deps) => (deps && deps.service) || require('../services/caseNotes
 const updates = require('../services/updatesService');
 const caseAccess = require('../services/caseAccessService');
 const { recordingCode } = require('../utils/recordingCode');
+const { shownId } = require('../services/clientIdDisplay');
 
 const MAX = updates.MAX_CONSULT_NOTES;
 const REF_RE = /^[A-Za-z0-9\- ]{1,100}$/;
@@ -67,6 +68,8 @@ function cardOf(l) {
     leadId: l.leadId, clientName: l.clientName, kind: l.kind,
     bookedSlot: l.bookedSlot, consultationHeld: l.consultationHeld, consultant: l.consultant,
     recordingCode: l.kind === 'direct-retainer' ? '' : recordingCode(l.leadId),
+    // what to type as the Otter title: the Client ID when the client has one (Faran 2026-11-26), else the code above
+    clientId: l.kind === 'direct-retainer' ? '' : shownId(l.clientId),
     recordUrl: '/admin/consultation/' + encodeURIComponent(l.leadId),
   };
 }

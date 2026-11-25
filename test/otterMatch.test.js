@@ -28,9 +28,9 @@ test('the title reader: a code in every typed form, an email, the rest as a name
     assert.equal(M.readTitle(t).code, 'TD-12345', t);
   }
   for (const t of ['TD-1234', 'TD-123456', 'STD-12345', 'ltd 12345', '12345', 'T D 12345']) assert.equal(M.readTitle(t).code, '', t);
-  assert.deepEqual(M.readTitle('Priya.Example@Example.com'), { code: '', email: 'priya.example@example.com', name: '', kinds: ['email'] });
-  assert.deepEqual(M.readTitle('TD-12345 Priya Example'), { code: 'TD-12345', email: '', name: 'priya example', kinds: ['code', 'name'] });
-  assert.deepEqual(M.readTitle('Consultation with Priya Example — priya@example.com'), { code: '', email: 'priya@example.com', name: 'priya example', kinds: ['email', 'name'] });
+  assert.deepEqual(M.readTitle('Priya.Example@Example.com'), { clientId: null, code: '', email: 'priya.example@example.com', name: '', kinds: ['email'] });
+  assert.deepEqual(M.readTitle('TD-12345 Priya Example'), { clientId: null, code: 'TD-12345', email: '', name: 'priya example', kinds: ['code', 'name'] });
+  assert.deepEqual(M.readTitle('Consultation with Priya Example — priya@example.com'), { clientId: null, code: '', email: 'priya@example.com', name: 'priya example', kinds: ['email', 'name'] });
   for (const t of ['', '   ', 'Note', 'Meeting', 'Consultation', '2026-11-12', '---', null]) assert.deepEqual(M.readTitle(t).kinds, [], String(t));
 });
 
@@ -269,8 +269,8 @@ test('REVIEW: a title whose tokens point at two different clients is never filed
   const twin = C(9000077777, 'Alma Reyes', 'other@example.com', '2026-10-01 10:00');
   assert.equal(run(rec('TD-12345 Alma Reyes', '2026-11-12 10:05'), [A, B, twin]).decision, 'file');
   // a second code is read as a code — it never becomes a "name"
-  assert.deepEqual(M.readTokens('TD-12345 td 54321 Boris'), { codes: ['TD-12345', 'TD-54321'], emails: [], name: 'boris' });
-  assert.deepEqual(M.readTitle('TD-12345 TD-54321'), { code: 'TD-12345', email: '', name: '', kinds: ['code'] });
+  assert.deepEqual(M.readTokens('TD-12345 td 54321 Boris'), { clientIds: [], codes: ['TD-12345', 'TD-54321'], emails: [], name: 'boris' });
+  assert.deepEqual(M.readTitle('TD-12345 TD-54321'), { clientId: null, code: 'TD-12345', email: '', name: '', kinds: ['code'] });
   const out = JSON.stringify(go('TD-12345 Boris Quint'));
   for (const leak of ['Boris', 'Quint', 'Alma', '@example', 'TD-']) assert.ok(!out.includes(leak), leak);
 });

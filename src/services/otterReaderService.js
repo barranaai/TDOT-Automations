@@ -39,7 +39,7 @@
 
 const R = require('./otterRecordingFile');
 const M = require('./otterMatch');
-const { recordingCode } = require('../utils/recordingCode');
+const { otterTitleOf } = require('../utils/recordingCode');
 const { torontoTime } = require('../utils/torontoTime');
 
 const STATE_PATH = 'TDOT System/otter-recordings-state.json';
@@ -118,7 +118,11 @@ const io = {
     const F = require('./otterFilesService');
     return F.io.getText(`${GRAPH}/users/${encodeURIComponent(F.driveUser())}/drive/items/${encodeURIComponent(fileId)}/content`);
   },
-  /** Every consultation (upcoming, waiting for an outcome, completed): id, name, email, bookedSlot, createdAt, consultant. */
+  /**
+   * Every consultation (upcoming, waiting for an outcome, completed): id, name, email, clientId, bookedSlot, createdAt,
+   * consultant. clientId = the lead's Lead Board "Client ID" copy (a plain text column the app writes and the hourly
+   * healer keeps right — read in the same board read as the email; '' when the person has none or the column is not made).
+   */
   async consultations() {
     const snapMod = require('./leadSnapshot');
     const [board, snap] = await Promise.all([
@@ -126,14 +130,18 @@ const io = {
       snapMod.getLeadSnapshot(),
     ]);
     if (board.stale || snap.stale) { const e = new Error('stale'); e.code = 'STALE_COPY'; throw e; }   // never decide on an old copy of the board
-    const email = new Map();
-    for (const l of snap.leads || []) email.set(String(l.id), s((l[snapMod.CONTACT] || {}).email));
+    const email = new Map(), clientId = new Map();
+    for (const l of snap.leads || []) {
+      const c = l[snapMod.CONTACT] || {};
+      email.set(String(l.id), s(c.email));
+      clientId.set(String(l.id), s(c.clientId));
+    }
     const seen = new Set(), out = [];
     for (const c of [...(board.consultations || []), ...(board.completed || [])]) {
       const id = String(c.id);
       if (seen.has(id)) continue;
       seen.add(id);
-      out.push({ id, name: s(c.name), email: email.get(id) || '', bookedSlot: s(c.bookedSlot), createdAt: s(c.createdAt), consultant: s(c.consultant) });
+      out.push({ id, name: s(c.name), email: email.get(id) || '', clientId: clientId.get(id) || '', bookedSlot: s(c.bookedSlot), createdAt: s(c.createdAt), consultant: s(c.consultant) });
     }
     return out;
   },
@@ -179,10 +187,11 @@ function otterLinkOf(v) {
 }
 const httpsLink = (v) => { const t = s(v); return /^https:\/\/[^\s"'<>\\]+$/i.test(t) && t.length <= 1500 ? t : ''; };
 
-/** "matched by code" / "assigned by Name" — the name on one line, no brackets (the notes reader keys on "[…]"). */
+/** "matched by Client ID" / "matched by code" / "assigned by Name" — the name on one line, no brackets (the notes reader keys on "[…]"). */
 function howLine({ by, who } = {}) {
   const name = oneLine(who).replace(/[[\]]/g, '').slice(0, 60);
   if (name) return `assigned by ${name}`;
+  if (by === 'clientId') return 'matched by Client ID';
   return ['code', 'email', 'name'].includes(by) ? `matched by ${by}` : 'matched';
 }
 function whenLine(f) {
@@ -717,7 +726,8 @@ async function needsList() {
         reason: dead ? PLAIN.unreadableForGood : (PLAIN[e.reasonKey] || 'It could not be matched to a consultation'),
         saveable: !dead,   // false = only "Not a consultation" is offered
         candidates: ids.map((cid) => byId.get(cid)).filter(Boolean).slice(0, M.MAX_CANDIDATES)
-          .map((c) => ({ id: c.id, name: c.name, bookedSlot: c.bookedSlot, consultant: c.consultant, code: recordingCode(c.id) })),
+          // what to type in Otter for that client: the Client ID when they have one, else the recording code
+          .map((c) => ({ id: c.id, name: c.name, bookedSlot: c.bookedSlot, consultant: c.consultant, code: otterTitleOf(c.id, c.clientId) })),
       });
     });
   }

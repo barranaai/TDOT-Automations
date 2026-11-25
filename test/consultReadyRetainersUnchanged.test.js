@@ -10,6 +10,10 @@
 // text of the "Waived" pill on both lists. So, and only so: the shared paidPill adds the reason to a waived pill's
 // hover text, and a waived row carries one more word, `paidNote`. The frozen copy is not edited — the difference is
 // spelled out below and everything else is still compared character for character.
+//
+// And one more, asked for (Faran 2026-11-26: the Client ID is typed as the Otter title, the TD- code is the backup):
+// a Consultations row also carries `clientId` — the person's Client ID ('' when none; '' for every frozen lead here,
+// which has no Lead Board copy). Retainers and Retained rows are untouched.
 const WAIVED_TITLE_WAS = 'title="Waived · recorded by Staff Two on 2026-10-30"';
 const WAIVED_TITLE_NOW = 'title="Waived · recorded by Staff Two on 2026-10-30 · no reason recorded"';
 const PILL_RETURN_WAS = `  return '<span class="pill '+(c.paid==='waived'?'grey':'green')+'" title="'+escHtml(label+who)+'">'+escHtml(label+amt)+'</span>';`;
@@ -111,9 +115,10 @@ test('the board answer (/api/consultations-board): a Consultations row gains onl
       for (const list of ['consultations', 'completed']) {
         assert.deepEqual((got[list] || []).map((r) => r.id), (was[list] || []).map((r) => r.id), which + ': the same rows in the same order — ' + list);
         (got[list] || []).forEach((row, i) => {
-          const { ready, ...rest } = row;
+          const { ready, clientId, ...rest } = row;
+          assert.equal(clientId, '', 'the Client ID: none on a frozen lead');
           assert.deepEqual(rest, withReason(was[list][i]), which + ' ' + list + ' ' + row.id + ': everything else as before');
-          assert.deepEqual(Object.keys(row).filter((k) => !(k in was[list][i])).sort(), row.paid === 'waived' ? ['paidNote', 'ready'] : ['ready'], 'one new key — two on a waived row');
+          assert.deepEqual(Object.keys(row).filter((k) => !(k in was[list][i])).sort(), row.paid === 'waived' ? ['clientId', 'paidNote', 'ready'] : ['clientId', 'ready'], 'two new keys — three on a waived row');
           if (row.paid === 'waived') waivedRows++;
           assert.ok(typeof ready === 'string' && WORDS.includes(ready), 'one fixed word: ' + ready);
           consultRows++;

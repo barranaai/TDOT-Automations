@@ -230,7 +230,8 @@ async function getConsultationDetail(leadId, { actor } = {}) {
 
   return {
     leadId:    lead.id,
-    recordingCode: require('../utils/recordingCode').recordingCode(lead.id),   // display only: the Otter recording title (2026-11-14)
+    recordingCode: require('../utils/recordingCode').recordingCode(lead.id),   // display only: the Otter recording title (2026-11-14) — the backup since 2026-11-26
+    clientId: require('./clientIdDisplay').shownId(lead.clientId),   // the person's Client ID: what staff type in Otter when there is one (Faran 2026-11-26)
     name:      lead.fullName || lead.name,
     email:     lead.email || '',
     phone:     lead.phone || '',
@@ -3360,6 +3361,8 @@ function consultRow(l, consultPayment) {
     consultationHeld: s(l.consultationHeld), hasMeeting: !!s(l.meetingLink),
     tier: s(l.tier), createdAt: l.createdAt || '',
     recCode: require('../utils/recordingCode').recordingCode(l.id),   // typed as the Otter recording title (2026-11-14); staff pages only
+    // the person's Client ID (the Lead Board copy, read with the board): typed in Otter instead of the code when there is one (2026-11-26)
+    clientId: require('./clientIdDisplay').shownId((l[require('./leadSnapshot').CONTACT] || {}).clientId || l.clientId),
     // The "Ready" column (2026-11-20): one fixed word — signed agreement + filled form. Display only; no reason text, no link.
     ready: require('../utils/consultReady').consultReady(l),
     ...adminOnlyDelete(l),

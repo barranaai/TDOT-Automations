@@ -5,7 +5,7 @@
  *   caseNotesHtml()  — the panel's STATIC markup: the page's render() / loadCase() never touch it
  *   CASE_NOTES_JS    — defines window.tdotCaseNotesMount({ caseRef }): its own fetch of /admin/case-notes/:caseRef
  *
- * One card per consultation (newest first): when, who, the recording code to type as the Otter title, the
+ * One card per consultation (newest first): when, who, what to type as the Otter title (the Client ID, else the recording code), the
  * Otter recordings the app filed (summary first, the transcript link, a transcript posted as an entry kept
  * folded), then the notes oldest → newest ("Typed by <name>, <date>"), then Add note (Monday sign-in only).
  *
@@ -278,7 +278,7 @@ const CASE_NOTES_JS = [
   '  }',
   '  function copyCode(code, btn){',
   '    var done = function(){ btn.textContent = "Copied"; setTimeout(function(){ btn.textContent = "Copy"; }, 2000); };',
-  '    var ask = function(){ try { window.prompt("Copy the recording code:", code); } catch (e) {} };',
+  '    var ask = function(){ try { window.prompt("Copy this and type it as the Otter title:", code); } catch (e) {} };',
   '    try { if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(code).then(done, ask); return; } } catch (e) {}',
   '    ask();',
   '  }',
@@ -389,11 +389,12 @@ const CASE_NOTES_JS = [
   '    var meta = [when ? "Consultation " + when : "", c.consultant || ""].filter(Boolean).join(" · ");',
   '    if (meta) sec.appendChild(mk("div", "cnp-meta", meta));',
   '    if (c.kind === "direct-retainer") sec.appendChild(mk("div", "cnp-empty", "Direct retainer: no consultation."));',
-  '    else if (c.recordingCode) {',
+  '    else if (c.clientId || c.recordingCode) {',
+  '      var otter = String(c.clientId || c.recordingCode);',
   '      var code = mk("div", "cnp-code");',
-  '      code.appendChild(mk("span", "", "Recording code"));',
-  '      code.appendChild(mk("b", "", c.recordingCode));',
-  '      var cb = mk("button", "sbtn", "Copy"); cb.type = "button"; cb.title = "Copy the recording code"; cb.onclick = function(){ copyCode(c.recordingCode, cb); };',
+  '      code.appendChild(mk("span", "", c.clientId ? "Type in Otter" : "Type in Otter (no Client ID yet)"));',
+  '      code.appendChild(mk("b", "", otter));',
+  '      var cb = mk("button", "sbtn", "Copy"); cb.type = "button"; cb.title = "Copy what to type in Otter"; cb.onclick = function(){ copyCode(otter, cb); };',
   '      code.appendChild(cb);',
   '      code.appendChild(mk("span", "cnp-hint", "Type this as the Otter recording title"));',
   '      sec.appendChild(code);',

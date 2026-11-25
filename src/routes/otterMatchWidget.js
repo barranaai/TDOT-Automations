@@ -4,7 +4,7 @@
  * A recording the app could not place on a consultation with certainty waits here: staff see
  * when it was made, the title that was typed, the first words of the summary and why it was not
  * placed, choose the client (the best suggestion is already chosen; the search box finds any
- * consultation by name or code) and press "Save to this client" — or "Not a consultation".
+ * consultation by name, Client ID or code) and press "Save to this client" — or "Not a consultation".
  * A row whose file cannot be opened for good (saveable: false) offers ONLY "Not a consultation" —
  * no picker and no Save button that could never work (review 2, 2026-11-14).
  * The strip is shown ONLY when there is something to match and the feature is switched on
@@ -118,7 +118,7 @@ const OTTER_MATCH_JS = [
   '  toggle.onclick = function(){ setFold(toggle.getAttribute("aria-expanded") !== "true"); };',
   '  try { if (sessionStorage.getItem(FOLD_KEY) === "1") setFold(false); } catch (e) {}',
   '',
-  '  /* the client picker: the suggestions, or — once something is typed — the consultations with that name or code */',
+  '  /* the client picker: the suggestions, or — once something is typed — the consultations with that name, Client ID or code */',
   '  function fill(sel, cands, q){',
   '    sel.innerHTML = "";',
   '    var seen = {};',
@@ -132,10 +132,10 @@ const OTTER_MATCH_JS = [
   '    }',
   '    var all = rows(), hits = 0;',
   '    for (var j = 0; j < all.length && hits < 30; j++) {',
-  '      var c = all[j], code = String(c.recCode || "");',
-  '      if (String(c.name || "").toLowerCase().indexOf(q) < 0 && code.toLowerCase().indexOf(q) < 0) continue;',
+  '      var c = all[j], code = String(c.recCode || ""), cid = String(c.clientId || "");',
+  '      if (String(c.name || "").toLowerCase().indexOf(q) < 0 && code.toLowerCase().indexOf(q) < 0 && cid.toLowerCase().indexOf(q) < 0) continue;',
   '      if (seen[String(c.id)]) continue;',
-  '      add({ id: c.id, name: c.name, bookedSlot: c.bookedSlot, consultant: c.consultant, code: code }); hits++;',
+  '      add({ id: c.id, name: c.name, bookedSlot: c.bookedSlot, consultant: c.consultant, code: cid || code }); hits++;',
   '    }',
   '    if (!hits) none("No consultation with that name");',
   '  }',
@@ -195,7 +195,7 @@ const OTTER_MATCH_JS = [
   '    var cands = item.candidates || [];',
   '    var sId = "om-s-" + i, cId = "om-c-" + i, mId = "om-m-" + i;',
   '    var sl = el("label", "", "Find the client"); sl.htmlFor = sId;',
-  '    var search = el("input"); search.type = "search"; search.id = sId; search.autocomplete = "off"; search.placeholder = "Type a name or a code (TD-12345)";',
+  '    var search = el("input"); search.type = "search"; search.id = sId; search.autocomplete = "off"; search.placeholder = "Type a name, a Client ID (CL-2026-00042) or a code (TD-12345)";',
   '    var cl = el("label", "", cands.length ? "Client (suggested)" : "Client"); cl.htmlFor = cId;',
   '    var sel = el("select"); sel.id = cId; sel.setAttribute("aria-describedby", mId);',
   '    fill(sel, cands, "");',

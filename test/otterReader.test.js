@@ -151,7 +151,7 @@ test('report mode: files nothing, writes nothing (not even the saved list), and 
     assert.deepEqual(Object.keys(a).sort(), ['alreadyOnRecord', 'by', 'candidates', 'created', 'decision', 'reason', 'summaryChars', 'titleHolds', 'titlePresent', 'transcriptChars'].sort());
     assert.deepEqual([a.by, a.titlePresent, a.titleHolds, a.alreadyOnRecord, a.candidates], ['code', true, ['code'], false, 2]);
     assert.ok(a.summaryChars > 300 && a.transcriptChars > 300);
-    assert.deepEqual([b.by, b.titlePresent, b.titleHolds, b.reason], ['', false, [], 'No code, email or name was typed as the title']);
+    assert.deepEqual([b.by, b.titlePresent, b.titleHolds, b.reason], ['', false, [], 'No Client ID, code, email or name was typed as the title']);
     leaks(JSON.stringify(r), 'the preview');
     leaks(w.logs.join('\n'), 'the logs');
     assert.ok(!JSON.stringify(r).includes('ot_AAA111') && !JSON.stringify(r).includes('9100012345'), 'not even the ids');
@@ -474,7 +474,7 @@ test('the "to match" list: what staff need to recognise the client, the reason i
     assert.equal(list.on, true);
     assert.equal(list.items.length, 1);
     const it = list.items[0];
-    assert.deepEqual([it.otterId, it.when, it.minutes, it.title, it.reason, it.fileRead], ['ot_BBB222', '2026-11-12 14:02', 34, 'Team catch up', 'No code, email or name was typed as the title', true]);
+    assert.deepEqual([it.otterId, it.when, it.minutes, it.title, it.reason, it.fileRead], ['ot_BBB222', '2026-11-12 14:02', 34, 'Team catch up', 'No Client ID, code, email or name was typed as the title', true]);
     assert.equal(it.snippet, 'Q'.repeat(200), 'the first 200 characters of the summary');
     assert.deepEqual(it.candidates, [
       { id: '9100012345', name: 'Priya Example', bookedSlot: '2026-11-12 14:00', consultant: 'Consultant One', code: 'TD-12345' },
@@ -608,7 +608,8 @@ test('the Consultations page: the strip sits above the tabs and is hidden until 
   assert.ok(strip > 0 && tabs > strip, 'above the tabs, hidden from the start');
   assert.ok(html.includes('aria-expanded="true" aria-controls="om-body"') && html.includes('Otter recordings to match'));
   assert.ok(html.includes("tdotOtterMatchMount({ rows: function(){ return ALLROWS; }, signIn: '/q/auth/monday?returnTo=%2Fadmin%2Fconsultations' });"));
-  assert.ok(html.includes("(c.recCode?'<span class=\"rec-code\""), 'the code under the client\'s name, in the one row builder every tab uses');
+  // under the client's name, in the one row builder every tab uses: the Client ID when the client has one, else the code (2026-11-26)
+  assert.ok(html.includes("(c.clientId?'<span class=\"rec-code\"") && html.includes(":c.recCode?'<span class=\"rec-code\""), 'the Client ID, else the code, under the client\'s name');
   assert.ok(html.includes('.rec-code { display:block; font-size:11px;'));
   assert.ok(html.includes('@media (max-width:760px){ .om-row { grid-template-columns:minmax(0,1fr); } }'), 'one column on a narrow screen');
   // the Leads and Retainers pages are untouched
@@ -650,7 +651,7 @@ test('the strip\'s code: template-literal safe, textContent only, keyboard reach
   byId['om-strip'].hidden = true; byId['om-toggle'].attrs['aria-expanded'] = 'true'; byId['om-done'].hidden = true;
   const sent = [];
   const items = [
-    { otterId: 'ot_BBB222', when: '2026-11-12 14:02', minutes: 34, title: '', snippet: 'First words of the summary', reason: 'No code, email or name was typed as the title', fileRead: true,
+    { otterId: 'ot_BBB222', when: '2026-11-12 14:02', minutes: 34, title: '', snippet: 'First words of the summary', reason: 'No Client ID, code, email or name was typed as the title', fileRead: true,
       candidates: [{ id: '9100012345', name: 'Priya Example', bookedSlot: '2026-11-12 14:00', consultant: 'Consultant One', code: 'TD-12345' }] },
     { otterId: 'ot_CCC333', when: '2026-11-11 10:00', minutes: null, title: '<img src=x onerror=alert(1)>', snippet: '', reason: 'Very short recording', fileRead: true, candidates: [] },
   ];
@@ -745,11 +746,14 @@ test('the consultation record page: the recording code near the client\'s name, 
   assert.ok(name > 0 && box > name && acts > box, 'right under the client\'s name');
   assert.ok(html.includes('<div class="rc-hint">Type this as the Otter recording title before you stop the recording</div>'));
   assert.ok(html.includes('<button type="button" class="rc-copy" id="c-code-copy">Copy</button>'));
-  assert.ok(html.includes("document.getElementById('c-code-v').textContent=d.recordingCode||'';") && html.includes('rcBox.hidden=!d.recordingCode;'));
+  // the Client ID when the client has one (2026-11-26), else the recording code
+  assert.ok(html.includes("var otterText=String(d.clientId||d.recordingCode||'');") && html.includes("document.getElementById('c-code-v').textContent=otterText;") && html.includes('rcBox.hidden=!otterText;'));
+  assert.ok(html.includes("d.clientId?'Type in Otter':'Type in Otter (no Client ID yet)'"));
   assert.ok(html.includes('navigator.clipboard.writeText(code)'));
   const portal = read('src/services/consultantPortalService.js');
   assert.match(portal, /recordingCode: require\('\.\.\/utils\/recordingCode'\)\.recordingCode\(lead\.id\)/);
   assert.match(portal, /recCode: require\('\.\.\/utils\/recordingCode'\)\.recordingCode\(l\.id\)/);
+  assert.match(portal, /clientId: require\('\.\/clientIdDisplay'\)\.shownId\(lead\.clientId\)/);
   // display only: no column, nothing stored, never on a client page
   assert.ok(!JSON.stringify(require('../src/data/newLeadsBoard.json')).toLowerCase().includes('recordingcode'));
   for (const f of fs.readdirSync(path.join(__dirname, '../src/routes')).filter((x) => /^(client|booking|public|portal|lead|consultationForm|intake)/i.test(x))) {
@@ -1196,7 +1200,7 @@ function stripPage(items, answer = { s: 200, j: { ok: true } }) {
 }
 /** Chooses the suggested client on the first row and presses "Save to this client". */
 const pressSave = (page) => { const pick = page.byId['om-list'].kids[0].kids[1]; pick.kids[3].value = '9100012345'; pick.kids[4].kids[0].onclick(); };
-const ONE_ITEM = (extra = {}) => ({ otterId: 'ot_BBB222', when: '2026-11-12 14:02', minutes: 34, title: 'Invented title', snippet: 'First words', reason: 'No code, email or name was typed as the title', fileRead: true,
+const ONE_ITEM = (extra = {}) => ({ otterId: 'ot_BBB222', when: '2026-11-12 14:02', minutes: 34, title: 'Invented title', snippet: 'First words', reason: 'No Client ID, code, email or name was typed as the title', fileRead: true,
   candidates: [{ id: '9100012345', name: 'Test Person', bookedSlot: '2026-11-12 14:00', consultant: 'Consultant One', code: 'TD-12345' }], ...extra });
 
 test('REVIEW 9: the success message stays on screen when the LAST recording leaves the strip — and a fresh load with nothing hides it again', async () => {
@@ -1621,5 +1625,46 @@ test('SECOND REVIEW 9: a recording saved a moment ago never shows once more — 
     S.io.postEntry = async (l, h) => { const x = await post(l, h); w.failWrite = 99; return x; };
     await S.assign({ otterId: 'ot_BBB222', leadId: B_ID, actor: NAMED });
     assert.deepEqual((await S.needsList()).items, []);
+  } finally { w.restore(); }
+});
+
+// ── 2026-11-26 (Faran): the Client ID as the title; the TD- code is the backup ──
+test('a run: a recording titled with the client\'s Client ID files on their consultation booked that day ("matched by Client ID"); report mode files nothing and nothing logs the ID', async () => {
+  const consults = [{ ...CONSULTS[0], clientId: 'CL-2026-00042' }, { ...CONSULTS[1], clientId: '' }];
+  const files = [fileOf('ot_CID111', START, 'CL-2026-00042', 1), fileOf('ot_CID222', START, 'CL 99', 2), fileOf('ot_CID333', START, 'TD-22222', 3)];
+  const texts = {
+    'F-ot_CID111': fileText({ id: 'ot_CID111', title: 'CL-2026-00042', start: START }),
+    'F-ot_CID222': fileText({ id: 'ot_CID222', title: 'CL 99', start: START }),
+    'F-ot_CID333': fileText({ id: 'ot_CID333', title: 'TD-22222', start: START }),
+  };
+  let w = world({ files, texts, consults, folders: { 9100012345: 'FOLDER1' } });
+  try {
+    w.mode('report');
+    const r = await S.runOnce({ mode: 'report' });
+    assert.deepEqual([w.posts.length, w.writes], [0, 0], 'report: nothing posted, nothing written');
+    assert.deepEqual(r.files.map((f) => [f.decision, f.by, f.titleHolds.join(',')]).sort(), [['file', 'clientId', 'clientId'], ['file', 'code', 'code'], ['needs', '', 'clientId']].sort());
+    assert.ok(!JSON.stringify(r).includes('CL-2026') && !JSON.stringify(r).includes('CL 99'), 'the preview never carries the typed ID');
+    assert.ok(!w.logs.join('\n').includes('CL-2026') && !w.logs.join('\n').includes('CL 99'));
+  } finally { w.restore(); }
+  w = world({ files, texts, consults, folders: { 9100012345: 'FOLDER1' } });
+  try {
+    w.mode('on');
+    const r = await S.runOnce({ mode: 'on' });
+    assert.equal(r.ok, true);
+    const mine = summaries(w, '9100012345');
+    assert.equal(mine.length, 1, 'the Client ID: on Priya\'s consultation');
+    assert.ok(mine[0].html.includes('matched by Client ID') && mine[0].html.endsWith('Otter recording ref: ot_CID111'));
+    assert.equal(summaries(w, '9100022222').length, 1, 'no Client ID: the TD- code still files');
+    assert.ok(summaries(w, '9100022222')[0].html.includes('matched by code'));
+    const waiting = w.store.data.recs.ot_CID222;
+    assert.deepEqual([waiting.d, waiting.reasonKey], ['needs', 'clientIdUnknown'], 'nobody\'s Client ID: waits for a person');
+    assert.ok(!w.logs.join('\n').includes('CL-2026') && !w.logs.join('\n').includes('CL 99'));
+    assert.ok(!JSON.stringify(w.store.data).includes('CL-2026'), 'the saved list never keeps the typed title');
+    // the "to match" list: the reason in plain words, and each suggestion shows what to type in Otter for that client
+    const list = await S.needsList();
+    const it = list.items.find((x) => x.otterId === 'ot_CID222');
+    assert.equal(it.reason, 'The Client ID in the title is not on any consultation — check the number');
+    const codes = Object.fromEntries(it.candidates.map((c) => [c.id, c.code]));
+    assert.deepEqual(codes, { 9100012345: 'CL-2026-00042', 9100022222: 'TD-22222' });
   } finally { w.restore(); }
 });
