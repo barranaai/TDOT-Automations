@@ -320,7 +320,7 @@ function rowHtml(c,ready){
   var pd=unpaid?'<span class="pill red" title="No payment is recorded and the consultation is not marked free. Open it and use “Record payment / Waived”.">Not paid</span>':paidPill(c);
   return '<tr class="row" data-id="'+escHtml(c.id)+'">'+
     '<td>'+dateCell(c)+'</td><td>'+timeCell(c)+'</td>'+
-    '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+directPill(c)+(c.clientId?'<span class="rec-code" title="Client ID: type it as the Otter recording title before you stop the recording">'+escHtml(c.clientId)+'</span>':c.recCode?'<span class="rec-code" title="Recording code (this client has no Client ID yet): type it as the Otter recording title before you stop the recording">'+escHtml(c.recCode)+'</span>':'')+'</td>'+
+    '<td style="font-weight:600;color:var(--navy)">'+escHtml(c.name)+directPill(c)+(c.clientId?'<span class="rec-code" title="Client ID: type it as the Otter recording title before you stop the recording">Otter: '+escHtml(c.clientId)+'</span>':c.recCode?'<span class="rec-code" title="Recording code (this client has no Client ID yet): type it as the Otter recording title before you stop the recording">Otter: '+escHtml(c.recCode)+'</span>':'')+'</td>'+
     '<td style="color:var(--muted)">'+escHtml(c.service||'—')+'</td>'+
     '<td>'+escHtml(c.consultant||'—')+'</td>'+
     '<td>'+(c.meetingType?escHtml(c.meetingType):'—')+'</td>'+
@@ -1833,7 +1833,7 @@ function render(d){
     document.getElementById('c-code-v').textContent=otterText;
     document.getElementById('c-code-copy').onclick=function(){
       var done=document.getElementById('c-code-done'), code=otterText;
-      function said(ok){ done.textContent=ok?'Copied':'Select the code and copy it'; setTimeout(function(){ done.textContent=''; },4000); }
+      function said(ok){ done.textContent=ok?'Copied':'Select it and copy it'; setTimeout(function(){ done.textContent=''; },4000); }
       try { if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(code).then(function(){ said(true); },function(){ said(false); }); return; } } catch(e){}
       said(false);
     };

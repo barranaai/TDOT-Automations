@@ -82,7 +82,7 @@ test('a Client ID never files on a guess: no consultation that day, two that day
   assert.deepEqual(d.candidates.slice(0, 2).sort(), [PRIYA.id, '9100099999'].sort());
   // a number nobody has — a mistyped number is another person: never filed, even when a name or a time fits
   d = run(rec('CL 43 Priya Example'), ALL);
-  assert.deepEqual([d.decision, d.reasonKey, d.reason], ['needs', 'clientIdUnknown', 'The Client ID in the title is not on any consultation — check the number']);
+  assert.deepEqual([d.decision, d.reasonKey, d.reason], ['needs', 'clientIdUnknown', 'No consultation on the list has this Client ID — check the number, or choose the client below']);
   assert.ok(d.candidates.includes(PRIYA.id), 'the name and the time still suggest');
   // a typed year must be the year of the person's ID: never filed; the same number is suggested first
   d = run(rec('CL-2025-00042'), ALL);
@@ -124,6 +124,40 @@ test('the title must not point at two people: a Client ID and a TD code / email 
   const d = run(rec(`CL 43 ${omarCode}`), ALL);
   assert.deepEqual([d.decision, d.reasonKey], ['needs', 'clientIdUnknown']);
   assert.ok(d.candidates.includes(OMAR.id), 'the code still suggests');
+});
+
+// ── review 2026-11-26 (HIGH): a Client ID is never read SHORTER than it was typed ──
+test('REVIEW: only part of a Client ID read is never filed — "CL-26-00042" is not client 26; the whole title waits', () => {
+  // the people a short read would land on, each with a consultation booked that same day
+  const P26 = C('9100026026', 'Kofi Sample', 'kofi@example.com', '2026-11-12 13:00', 'CL-2026-00026');
+  const P2026 = C('9100020260', 'Mei Sample', 'mei@example.com', '2026-11-12 13:30', 'CL-2026-02026');
+  const P416 = C('9100041600', 'Ana Sample', 'ana@example.com', '2026-11-12 14:30', 'CL-2026-00416');
+  const list = [...ALL, P26, P2026, P416];
+  const titles = ['CL-26-00042', 'CL-2026/00042', 'CL 2026, 00042', 'CL 2026 / 42', 'CL-2026-12345678', 'CL 416-555-1234',
+    'Client CL 416 555 1234', 'CL 12345678', 'CL−2026−00042', 'Consultation CL-26-00042 today'];
+  for (const t of titles) {
+    const tk = M.readTokens(t);
+    assert.deepEqual(tk.clientIds, [], t + ': no shorter Client ID is read');
+    assert.equal(tk.clientIdUnreadable, 1, t + ': counted as unreadable');
+    const d = run(rec(t), list);
+    assert.notEqual(d.decision, 'file', t);
+    assert.deepEqual([d.decision, d.reasonKey], ['needs', 'clientIdUnreadable'], t);
+    assert.equal(d.reason, M.REASONS.clientIdUnreadable);
+  }
+  // another token in the same title never decides instead: an exact email, a code, a name that would each file alone
+  for (const t of ['CL-26-00042 omar@example.com', `CL-2026/00042 ${recordingCode(OMAR.id)}`, 'Omar Sample CL 2026, 00042', 'CL 12345678 omar@example.com']) {
+    assert.deepEqual([run(rec(t), list).decision, run(rec(t), list).reasonKey], ['needs', 'clientIdUnreadable'], t);
+  }
+  // an unreadable piece never becomes part of a name
+  assert.equal(M.readTokens('Priya CL-26-00042').name, 'priya');
+  // still read as before: a case number after a space, a full ID, a year-less ID, a case number alone
+  assert.deepEqual(M.readTokens('cl 42 2026-VV-006').clientIds, [{ n: 42, year: null }]);
+  assert.deepEqual(M.readTokens('CL-2026-00042 2026-VV-006').clientIds, [{ n: 42, year: 2026 }]);
+  assert.deepEqual([run(rec('CL-2026-00042 2026-VV-006'), list).decision, run(rec('CL-2026-00042 2026-VV-006'), list).leadId], ['file', PRIYA.id]);
+  assert.deepEqual([M.readTokens('2026-CL-42').clientIdUnreadable, M.readTokens('ref 2026-CL-00042').clientIdUnreadable], [0, 0]);
+  assert.deepEqual(M.readTokens('CL 42 CL 77').clientIdUnreadable, 0);
+  // the strip says why in plain words (PLAIN spreads M.REASONS)
+  assert.match(M.REASONS.clientIdUnreadable, /could not be read/);
 });
 
 // ── no Client ID: the TD- code is the backup ────────────────────────────────

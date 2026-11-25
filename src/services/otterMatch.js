@@ -50,6 +50,18 @@ const CODE_RE = /(?:^|[^a-z0-9])td[\s\-‐-―_#:.]{0,5}(\d{5})(?!\d)/i;
 const CID_SEP = '[\\s\\-\\u2010-\\u2015_.#:]';
 const CID_RE = new RegExp(`(?:^|[^a-z0-9])(cl${CID_SEP}*\\d{4}${CID_SEP}+\\d{1,7}|cl${CID_SEP}*\\d{1,7})(?![0-9])`, 'gi');
 const CASE_HEAD_RE = /(?:^|[^0-9])\d{4}[-\u2010-\u2015]$/;   // "2026-" right before "CL": a case number's head
+// Review 2026-11-26 (HIGH): the scanner must never read only the FRONT of what was typed. More digits right
+// after a piece ("CL-26-00042", "CL-2026/00042", "CL 2026, 00042", "CL-2026-12345678", "CL 416-555-1234") mean
+// the piece is only part of it — "CL-26" is not client 26. Such a title is UNREADABLE (never a shorter read),
+// and the whole recording waits for a person, whatever else the title says.
+const CID_MORE_RE = /^[\s\-\u2010-\u2015_.#:\/,]*\d/;
+const CID_MORE_SPAN_RE = /^(?:[\s\-\u2010-\u2015_.#:\/,]*\d+)+/;
+// …except a case number typed after it with a space ("CL 42 2026-VV-006"): its "2026-" is followed by letters
+const CID_CASE_AFTER_RE = /^\s+\d{4}[\-\u2010-\u2015]\s*[a-z]/i;
+// anything still left that starts like a typed Client ID ("CL", up to three other marks — a Unicode minus
+// too — then a digit) could not be read; LEFT_SPAN is that piece's digits and marks, taken out with it
+const CID_LEFT_RE = /(?:^|[^a-z0-9])cl[^a-z0-9@]{0,3}\d/gi;
+const CID_LEFT_SPAN_RE = /^(?:[^a-z0-9@]{0,3}\d+)+/i;
 const EMAIL_RE = /[^\s<>(),;:"'[\]]+@[^\s<>(),;:"'[\]]+\.[a-z]{2,}/i;
 const HONORIFICS = ['mr', 'mrs', 'ms', 'miss', 'mx', 'dr', 'sir', 'madam', 'mister', 'prof'];
 const NOISE = ['consultation', 'consult', 'consulting', 'meeting', 'call', 'with', 'client', 'recording', 'otter', 'notes', 'note', 're'];
@@ -62,28 +74,51 @@ function normName(v) {
   return words.filter((w) => !HONORIFICS.includes(w) && !NOISE.includes(w)).join(' ');
 }
 
+/** Is the "CL" at `start` the middle of a case number ("2026-CL-00042": a year joined to "CL" by a dash)? */
+const caseHeadAt = (text, start) => CASE_HEAD_RE.test(text.slice(Math.max(0, start - 6), start));
+
 /**
- * The Client IDs typed in a text → { ids: [{ n, year }], rest } — each number once, in the order typed;
- * the same number typed with and without its year is one token (the year kept). The same number with
- * two DIFFERENT years is two tokens (they disagree).
+ * The Client IDs typed in a text → { ids: [{ n, year }], unreadable, rest } — each number once, in the order
+ * typed; the same number typed with and without its year is one token (the year kept). The same number with
+ * two DIFFERENT years is two tokens (they disagree). `unreadable` counts the pieces that START like a Client
+ * ID but are not one as typed (more digits after them, a 2-digit year, number 0, 8+ digits) — never read
+ * shorter; the caller sends such a title to a person. An unreadable piece is taken out of `rest` too, so it
+ * never becomes part of a name.
  */
 function takeClientIds(text) {
   const ids = [];
-  let rest = '', last = 0;
+  let rest = '', last = 0, unreadable = 0;
+  const cut = (start, end) => { rest += text.slice(last, start) + ' '; last = end; };
   CID_RE.lastIndex = 0;
   for (let m, i = 0; i < 20 && (m = CID_RE.exec(text)); i++) {
-    const start = m.index + m[0].length - m[1].length;
-    // "2026-CL-00042" (a year joined to "CL" by a dash) is the shape of a CASE number, never a Client ID
-    if (CASE_HEAD_RE.test(text.slice(Math.max(0, start - 6), start))) continue;
+    const start = m.index + m[0].length - m[1].length, end = start + m[1].length;
+    if (caseHeadAt(text, start)) continue;
+    const after = text.slice(end);
+    if (CID_MORE_RE.test(after) && !CID_CASE_AFTER_RE.test(after)) {
+      const spanEnd = end + CID_MORE_SPAN_RE.exec(after)[0].length;
+      unreadable++; cut(start, spanEnd); CID_RE.lastIndex = spanEnd;
+      continue;
+    }
     const p = parseClientId(m[1]);
-    if (!p) continue;
-    rest += text.slice(last, start) + ' ';
-    last = start + m[1].length;
+    if (!p) { unreadable++; cut(start, end); continue; }
+    cut(start, end);
     const same = ids.find((x) => x.n === p.n && (!x.year || !p.year || x.year === p.year));
     if (same) { if (!same.year && p.year) same.year = p.year; } else ids.push({ n: p.n, year: p.year });
   }
   CID_RE.lastIndex = 0;
-  return { ids, rest: rest + text.slice(last) };
+  rest += text.slice(last);
+  // a "CL" + digits the scanner could not take at all ("CL 12345678": too many digits; "CL−2026−00042": a Unicode minus)
+  CID_LEFT_RE.lastIndex = 0;
+  for (let m, i = 0; i < 20 && (m = CID_LEFT_RE.exec(rest)); i++) {
+    const start = m.index + (/^[^a-z0-9]/i.test(m[0]) ? 1 : 0);   // where "cl" begins
+    if (caseHeadAt(rest, start)) continue;
+    const span = CID_LEFT_SPAN_RE.exec(rest.slice(start + 2));
+    unreadable++;
+    rest = rest.slice(0, start) + ' ' + rest.slice(start + 2 + (span ? span[0].length : 0));
+    CID_LEFT_RE.lastIndex = start + 1;
+  }
+  CID_LEFT_RE.lastIndex = 0;
+  return { ids, unreadable, rest };
 }
 
 /** Is this consultation's stored Client ID the typed one ({ n, year })? The number is the person; a typed year must match too. */
@@ -94,7 +129,10 @@ function idIs(c, tok) {
   return !!p && p.n === tok.n && (!tok.year || p.year === tok.year);
 }
 
-/** EVERY token of a typed title: { clientIds: [{ n, year }], codes: [], emails: [], name } — each once, in the order typed. */
+/**
+ * EVERY token of a typed title: { clientIds: [{ n, year }], clientIdUnreadable, codes: [], emails: [], name } —
+ * each once, in the order typed; clientIdUnreadable = how many pieces looked like a Client ID but could not be read.
+ */
 function readTokens(title) {
   let rest = s(title).replace(/\.txt$/i, '');
   const codes = [], emails = [];
@@ -113,7 +151,7 @@ function readTokens(title) {
     rest = rest.slice(0, cm.index) + ' ' + rest.slice(cm.index + cm[0].length);
   }
   const n = normName(rest);
-  return { clientIds: cid.ids, codes, emails, name: /[a-z]{2}/.test(n) ? n : '' };
+  return { clientIds: cid.ids, clientIdUnreadable: cid.unreadable, codes, emails, name: /[a-z]{2}/.test(n) ? n : '' };
 }
 
 /**
@@ -171,8 +209,9 @@ const REASONS = {
   matched: 'Matched',
   clientIdNone: 'The Client ID in the title has no consultation booked on the day of the recording',
   clientIdMany: 'The Client ID in the title has more than one consultation booked that day',
-  clientIdUnknown: 'The Client ID in the title is not on any consultation — check the number',
+  clientIdUnknown: 'No consultation on the list has this Client ID — check the number, or choose the client below',
   clientIdYear: 'The year in the Client ID does not match that client\'s Client ID',
+  clientIdUnreadable: 'The Client ID in the title could not be read — it should look like CL-2026-00042 or CL42',
   already: 'This recording is already saved on a consultation',
   noStart: 'The recording has no readable start time',
   codeNone: 'The code in the title matches no consultation booked on the day of the recording',
@@ -234,6 +273,8 @@ function match(rec, consultations, { now = Date.now(), firstSeen } = {}) {
 
   let res;
   if (!startMs) res = out('needs', 'noStart', '', others);
+  // a piece that starts like a Client ID but cannot be read as typed: a person decides — no other token does
+  else if (tokens.clientIdUnreadable) res = out('needs', 'clientIdUnreadable', '', [...nearest(byCid), ...others]);
   else if (tokens.clientIds.length > 1) res = out('needs', 'titleDisagrees', '', [...cidGroups.flatMap((g) => nearest(g).slice(0, 2)), ...others]);
   else if (title.clientId) {
     if (byCid.length) {

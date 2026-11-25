@@ -269,7 +269,7 @@ test('REVIEW: a title whose tokens point at two different clients is never filed
   const twin = C(9000077777, 'Alma Reyes', 'other@example.com', '2026-10-01 10:00');
   assert.equal(run(rec('TD-12345 Alma Reyes', '2026-11-12 10:05'), [A, B, twin]).decision, 'file');
   // a second code is read as a code — it never becomes a "name"
-  assert.deepEqual(M.readTokens('TD-12345 td 54321 Boris'), { clientIds: [], codes: ['TD-12345', 'TD-54321'], emails: [], name: 'boris' });
+  assert.deepEqual(M.readTokens('TD-12345 td 54321 Boris'), { clientIds: [], clientIdUnreadable: 0, codes: ['TD-12345', 'TD-54321'], emails: [], name: 'boris' });
   assert.deepEqual(M.readTitle('TD-12345 TD-54321'), { clientId: null, code: 'TD-12345', email: '', name: '', kinds: ['code'] });
   const out = JSON.stringify(go('TD-12345 Boris Quint'));
   for (const leak of ['Boris', 'Quint', 'Alma', '@example', 'TD-']) assert.ok(!out.includes(leak), leak);

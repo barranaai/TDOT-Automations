@@ -667,7 +667,8 @@ test('the strip\'s code: template-literal safe, textContent only, keyboard reach
     },
     tdotDialogNew: () => { const box = mk('div'); ctx.dlg = { box, tryClose() { ctx.dlg.closed = 'cancel'; }, close() { ctx.dlg.closed = 'yes'; } }; return ctx.dlg; },
   };
-  vm.runInNewContext(OTTER_MATCH_JS + '\ntdotOtterMatchMount({ rows: function(){ return ROWS; } });', Object.assign(ctx, { ROWS: [{ id: '9100022222', name: 'Omar Sample', bookedSlot: '2026-11-12 15:00', consultant: 'Consultant Two', recCode: 'TD-22222' }] }));
+  vm.runInNewContext(OTTER_MATCH_JS + '\ntdotOtterMatchMount({ rows: function(){ return ROWS; } });', Object.assign(ctx, { ROWS: [{ id: '9100022222', name: 'Omar Sample', bookedSlot: '2026-11-12 15:00', consultant: 'Consultant Two', recCode: 'TD-22222' },
+    { id: '9100077777', name: 'Ada Sample', bookedSlot: '2026-11-12 16:00', consultant: 'Consultant Two', recCode: 'TD-77777', clientId: 'CL-2026-00042' }] }));
   const tick = () => new Promise((r) => setImmediate(r));
   await tick(); await tick();
   const strip = byId['om-strip'], list = byId['om-list'];
@@ -687,8 +688,18 @@ test('the strip\'s code: template-literal safe, textContent only, keyboard reach
   // the search finds any consultation by name or code
   search.value = 'td-222'; search.oninput();
   assert.deepEqual(sel.kids.map((k) => k.value), ['9100022222']);
+  // …and by the Client ID in the short forms the reader accepts (review 2026-11-26), the year checked when typed
+  for (const q of ['CL-2026-00042', 'CL42', 'cl 42', 'CL2026-00042', 'cl-2026-42', '00042']) {
+    search.value = q; search.oninput();
+    assert.deepEqual(sel.kids.map((k) => k.value), ['9100077777'], q);
+  }
+  assert.match(sel.kids[0].textContent, / · CL-2026-00042 · /, 'the Client ID is shown, not the code');
+  for (const q of ['CL-2025-00042', 'CL43', 'CL 0']) {
+    search.value = q; search.oninput();
+    assert.deepEqual(sel.kids.map((k) => k.value), [''], q);
+  }
   search.value = 'nobody'; search.oninput();
-  assert.deepEqual(sel.kids.map((k) => [k.value, k.textContent]), [['', 'No consultation with that name']]);
+  assert.deepEqual(sel.kids.map((k) => [k.value, k.textContent]), [['', 'Nothing found for that name, Client ID or code']]);
   sel.value = '';
   acts.kids[0].onclick();
   assert.equal(msg.textContent, 'Choose the client first.');
@@ -1663,7 +1674,7 @@ test('a run: a recording titled with the client\'s Client ID files on their cons
     // the "to match" list: the reason in plain words, and each suggestion shows what to type in Otter for that client
     const list = await S.needsList();
     const it = list.items.find((x) => x.otterId === 'ot_CID222');
-    assert.equal(it.reason, 'The Client ID in the title is not on any consultation — check the number');
+    assert.equal(it.reason, 'No consultation on the list has this Client ID — check the number, or choose the client below');
     const codes = Object.fromEntries(it.candidates.map((c) => [c.id, c.code]));
     assert.deepEqual(codes, { 9100012345: 'CL-2026-00042', 9100022222: 'TD-22222' });
   } finally { w.restore(); }
