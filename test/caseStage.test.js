@@ -42,7 +42,8 @@ function fake(o = {}) {
     if (st.readFail) throw new Error('network');
     if (st.missing) return null;
     const cvs = [stageCell(), lockCell(),
-      { id: 'color_mm0x9fnn', ...status(st.pay, 1) }, { id: 'color_mm0xs7kp', ...status(st.applied, st.applied === 'Yes' ? 1 : 2) },
+      { id: 'color_mm0x9fnn', ...status(st.pay, 1) },
+      ...(st.appliedMissing ? [] : [{ id: 'color_mm0xs7kp', ...status(st.applied, st.applied === 'Yes' ? 1 : st.applied === 'No' ? 2 : 3) }]),
       { id: 'date_mm0xjm1z', text: st.stageStart, value: st.stageStart ? JSON.stringify({ date: st.stageStart }) : null },
       { id: 'text_mm142s49', text: '2026-TEST-001', value: null }];
     for (const [k, v] of Object.entries(st.people)) cvs.push({ id: k, text: '', value: v });
@@ -96,7 +97,7 @@ async function refused(p, status, re) {
   return b;
 }
 const nothingWritten = (m) => { assert.equal(m.writes.length, 0, 'no write'); assert.equal(m.notes.length, 0, 'no note'); };
-const facts = (current, o = {}) => ({ current: { index: current ? IDX[current] : 5, label: current }, locked: false, paid: true, applied: 'no', stageStart: '', signatures: { state: 'complete', missing: [] }, held: false, ...o });
+const facts = (current, o = {}) => ({ current: { index: current ? IDX[current] : 5, label: current }, locked: false, paid: true, onboarded: false, stageStart: '', signatures: { state: 'complete', missing: [] }, held: false, ...o });
 const tgt = (label) => ({ index: IDX[label], label });
 
 // ── the switch ──
@@ -202,6 +203,41 @@ test('rules table: every live label from every live label (and blank) — allowe
     'A case can only go to Document Collection Started from Pre-Onboarding or Retainer Confirmed — it would email the client again.');
 });
 
+test('rules table: Document Collection Started only for a NEW case — refused when already onboarded (Checklist Template Applied = Yes) or when that flag could not be read; every other target is untouched by the flag', () => {
+  const froms = ['', ...LABELS];
+  const DCS = 'Document Collection Started';
+  for (const locked of [false, true]) {
+    for (const from of froms) {
+      for (const onboarded of [false, true, null, undefined]) {
+        for (const to of LABELS) {
+          const name = `${from || '(blank)'} → ${to}${locked ? ' (locked)' : ''} onboarded=${onboarded}`;
+          const r = svc.rule(tgt(to), facts(from, { locked, onboarded }));
+          const base = svc.rule(tgt(to), facts(from, { locked, onboarded: false }));
+          if (to !== DCS || to === from) { assert.deepEqual(r, base, name + ' (the flag changes nothing)'); continue; }
+          if (!['', 'Pre-Onboarding', 'Retainer Confirmed'].includes(from)) { assert.deepEqual([r.allowed, r.why], [false, T.dcsRefused], name); continue; }
+          if (onboarded === false) { assert.equal(r.allowed, true, name); continue; }
+          assert.equal(r.allowed, false, name);
+          assert.equal(r.why, onboarded === true ? T.dcsOnboarded : T.dcsOnboardedUnknown, name);
+        }
+      }
+    }
+  }
+  assert.equal(T.dcsOnboarded, 'This case was already onboarded — moving it to Document Collection Started would email the client again.');
+  assert.equal(T.dcsOnboardedUnknown, 'Could not check whether this case was already onboarded — nothing was changed. Try again, or change it in Monday.');
+});
+
+test('onboardedOf: Yes = onboarded; No or blank = new (the webhook\'s own reading); the cell missing or another label = cannot tell (null)', () => {
+  assert.equal(svc.onboardedOf({ id: 'color_mm0xs7kp', value: '{"index":1}', text: 'Yes' }), true);
+  assert.equal(svc.onboardedOf({ id: 'color_mm0xs7kp', value: '{"index":1}', text: ' yes ' }), true);
+  assert.equal(svc.onboardedOf({ id: 'color_mm0xs7kp', value: '{"index":2}', text: 'No' }), false);
+  assert.equal(svc.onboardedOf({ id: 'color_mm0xs7kp', value: null, text: '' }), false, 'blank = never onboarded');
+  assert.equal(svc.onboardedOf({ id: 'color_mm0xs7kp', value: null, text: 'Yes' }), false, 'a stale text on a blank cell is blank');
+  assert.equal(svc.onboardedOf(null), null, 'not in the read');
+  assert.equal(svc.onboardedOf(undefined), null);
+  assert.equal(svc.onboardedOf({ id: 'color_mm0xs7kp', value: '{"index":3}', text: 'Maybe' }), null);
+  assert.equal(svc.onboardedOf({ id: 'color_mm0xs7kp', value: '{"index":3}', text: '' }), null, 'a label with no text');
+});
+
 test('the working stages are the engines\' own ACTIVE_STAGES (one copy each in four engines)', () => {
   for (const f of ['caseHealthEngine', 'slaRiskEngine', 'expiryRiskEngine', 'escalationRoutingService']) {
     const src = fs.readFileSync(path.join(__dirname, '../src/services', f + '.js'), 'utf8');
@@ -219,11 +255,9 @@ test('effects: Document Collection Started says, from the facts, whether the cli
   const fx = (o) => svc.effectsOf(dcs, facts('Pre-Onboarding', o), svc.rule(dcs, facts('Pre-Onboarding', o)));
   assert.deepEqual(fx({}), [T.dcsEmail]);
   assert.deepEqual(fx({ paid: false }), [T.dcsWaitsPayment]);
-  assert.deepEqual(fx({ applied: 'yes' }), [T.dcsEmailAgain]);
-  // not Paid but the checklist already applied (a re-seed, a hand edit): marking Paid later is NOT a first payment, so
-  // onRetainerPaid starts nothing — never promise "starts by itself"
-  assert.deepEqual(fx({ paid: false, applied: 'yes' }), [T.dcsNotPaidApplied]);
-  assert.ok(!/start by themselves/.test(T.dcsNotPaidApplied) && /nothing starts by itself when the payment is marked Paid/.test(T.dcsNotPaidApplied));
+  // an onboarded case can no longer reach DCS (rule()), so the "emailed again" / "already set up, not Paid" lines are gone
+  assert.ok(!('dcsEmailAgain' in T) && !('dcsNotPaidApplied' in T));
+  assert.ok(!Object.values(T).some((t) => typeof t === 'string' && /again \(this case|already set up, so the app counts/.test(t)));
   assert.deepEqual(fx({ signatures: { state: 'missing', missing: ['client signature', 'payment'] } }),
     ['Waits for signatures (missing: client signature and payment). Nothing is sent now; onboarding starts by itself when the agreement is fully signed.']);
   assert.deepEqual(fx({ signatures: { state: 'no-lead', missing: [] } }), [T.dcsEmail], 'no linked lead = the webhook passes');
@@ -265,7 +299,7 @@ test('effects: lock, unlock, stays locked, the clock, payment, held onboarding, 
 });
 
 test('warning lines are marked by the server (a parallel warn[] per option): outward emails, the portal, lock/unlock, payment, held, backward, waits — never the plain lines', async () => {
-  for (const t of [T.dcsEmail, T.dcsEmailAgain, T.dcsSigUnknown, T.dcsWaitsPayment, T.dcsNotPaidApplied, T.dcsWaitsSignatures('client signature'),
+  for (const t of [T.dcsEmail, T.dcsSigUnknown, T.dcsWaitsPayment, T.dcsWaitsSignatures('client signature'),
     T.locks, T.srTeam, T.cancelledPortal, T.unlocks, T.notPaid, T.held, T.heldUnknown, T.backward]) assert.equal(svc.isWarnLine(t), true, t);
   for (const t of [T.notLocking, T.staysLocked, T.clock, T.leavesDcs, T.leavesWorking]) assert.equal(svc.isWarnLine(t), false, t);
   const m = fake({ stage: 'Submission Preparation' });
@@ -354,18 +388,35 @@ test('preview: DCS from Pre-Onboarding reads the signature gate on the linked le
   m.findFail = true;
   r = await svc.preview({ staff: STAFF, hasKey: false, itemId: ITEM });
   assert.deepEqual(dcs().effects, [T.dcsSigUnknown]);
-  // not paid / already onboarded: no lead read (the webhook decides without it)
+  // not paid: no lead read (the webhook decides without it)
   const before = m.leadFinds;
   m.findFail = false; m.pay = 'Pending';
   r = await svc.preview({ staff: STAFF, hasKey: false, itemId: ITEM });
   assert.deepEqual(dcs().effects, [T.dcsWaitsPayment]);
-  m.applied = 'Yes';
+  // blank Checklist Template Applied = a new case (the webhook's reading): allowed
+  m.applied = '';
   r = await svc.preview({ staff: STAFF, hasKey: false, itemId: ITEM });
-  assert.deepEqual(dcs().effects, [T.dcsNotPaidApplied], 'not Paid, already onboarded: nothing now and nothing on Paid');
-  m.pay = 'Paid';
-  r = await svc.preview({ staff: STAFF, hasKey: false, itemId: ITEM });
-  assert.deepEqual(dcs().effects, [T.dcsEmailAgain]);
+  assert.deepEqual([dcs().allowed, dcs().effects], [true, [T.dcsWaitsPayment]]);
   assert.equal(m.leadFinds, before);
+  nothingWritten(m);
+});
+
+test('preview: an already-onboarded case (Checklist Template Applied = Yes) at Pre-Onboarding — DCS disabled with the reason, paid or not; a flag that cannot be read disables it too; no signature read', async () => {
+  const m = fake({ stage: 'Pre-Onboarding', applied: 'Yes', leads: [{ retainerSigned: '' }] });
+  const dcs = (r) => r.options.find((o) => o.label === 'Document Collection Started');
+  for (const pay of ['Paid', 'Pending', '']) {
+    m.pay = pay;
+    const r = await svc.preview({ staff: STAFF, hasKey: false, itemId: ITEM });
+    assert.deepEqual([dcs(r).allowed, dcs(r).why, dcs(r).effects, dcs(r).warn], [false, T.dcsOnboarded, [], []], pay);
+    assert.equal(r.options.find((o) => o.label === 'Retainer Confirmed').allowed, true, 'the other stages stay open');
+  }
+  m.pay = 'Paid';
+  for (const o of [{ appliedMissing: true }, { appliedMissing: false, applied: 'Maybe' }]) {
+    Object.assign(m, o);
+    const r = await svc.preview({ staff: STAFF, hasKey: false, itemId: ITEM });
+    assert.deepEqual([dcs(r).allowed, dcs(r).why, dcs(r).effects], [false, T.dcsOnboardedUnknown, []], JSON.stringify(o));
+  }
+  assert.equal(m.leadFinds, 0, 'no signature read when DCS cannot be chosen');
   nothingWritten(m);
 });
 
@@ -460,6 +511,42 @@ test('DCS from a later stage is refused with the plain words; nothing written', 
   const m = fake({ stage: 'Internal Review' });
   await refused(call({ body: { expected: IDX['Internal Review'], reason: 'please' } }), 400, T.dcsRefused);
   nothingWritten(m);
+});
+
+test('POST (the page bypassed): Internal Review → Pre-Onboarding → DCS on an onboarded case is refused by the server on the FRESH flag; nothing written, no note, no lead read', async () => {
+  // the case was sent back to Pre-Onboarding earlier; the checklist is applied (it was onboarded)
+  for (const pay of ['Paid', 'Pending']) {
+    const m = fake({ stage: 'Pre-Onboarding', applied: 'Yes', pay });
+    await refused(call({ body: { reason: 'Restart onboarding' } }), 400, T.dcsOnboarded);
+    nothingWritten(m);
+    assert.equal(m.leadFinds, 0);
+    assert.equal(m.patches.length, 0);
+  }
+  // from blank and Retainer Confirmed too
+  for (const stage of ['', 'Retainer Confirmed']) {
+    const m = fake({ stage, applied: 'Yes' });
+    await refused(call({ body: { expected: stage ? IDX[stage] : 5 } }), 400, T.dcsOnboarded);
+    nothingWritten(m);
+  }
+  // the flag cannot be read (the cell missing from the read, or a label that is neither Yes nor No): refused too
+  for (const o of [{ appliedMissing: true }, { applied: 'Maybe' }]) {
+    const m = fake(o);
+    await refused(call(), 400, T.dcsOnboardedUnknown);
+    nothingWritten(m);
+  }
+  // the page showed Pre-Onboarding but the flag went to Yes since (fresh read wins): refused
+  const m = fake({ applied: 'No' });
+  const realRead = svc._io.readItem;
+  svc._io.readItem = async (id) => { m.applied = 'Yes'; return realRead(id); };
+  try { await refused(call(), 400, T.dcsOnboarded); } finally { svc._io.readItem = realRead; }
+  nothingWritten(m);
+  // a new case (No, or blank) still goes
+  for (const applied of ['No', '']) {
+    const ok = fake({ applied });
+    const r = await call();
+    assert.equal(r.ok, true, applied || '(blank)');
+    assert.equal(ok.writes.length, 1);
+  }
 });
 
 test('stale: the stage changed since the page loaded → 409 changed with the stage now (and the row), the cache follows, nothing written', async () => {

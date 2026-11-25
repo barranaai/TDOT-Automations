@@ -12,8 +12,11 @@
  * The rules (pure: rule()/effectsOf(), tested as a table):
  *  - Never blank (index 5) and never a label that is not in the LIVE column settings (the cached board meta,
  *    else the column settings read here; never create_labels_if_missing).
- *  - Document Collection Started only from blank, Pre-Onboarding or Retainer Confirmed: it emails the client
- *    "Your case is ready" every time it is entered on a Paid case (mondayWebhook.js, no already-sent guard).
+ *  - Document Collection Started only for a NEW case: from blank, Pre-Onboarding or Retainer Confirmed, AND only
+ *    when the fresh read shows the case was never onboarded (Checklist Template Applied is not Yes). It emails the
+ *    client "Your case is ready" every time it is entered on a Paid case (mondayWebhook.js, no already-sent guard),
+ *    so an already-onboarded case (e.g. Internal Review → Pre-Onboarding → DCS) is refused, and so is a case whose
+ *    flag cannot be read (never act on a null read).
  *  - Submission Ready and Cancelled are allowed, with the lock warning (stageGateService locks the case).
  *  - A LOCKED case (Automation Lock = Yes) moved to a working stage (the engines' ACTIVE_STAGES) is unlocked
  *    in the SAME mutation (Automation Lock = No); moved anywhere else it stays locked.
@@ -74,6 +77,8 @@ const SOURCES = Object.freeze({ 'client-master': 'Client Master page', case: 'ca
 // The staff-facing texts (one place; the tests read them).
 const T = Object.freeze({
   dcsRefused: 'A case can only go to Document Collection Started from Pre-Onboarding or Retainer Confirmed — it would email the client again.',
+  dcsOnboarded: 'This case was already onboarded — moving it to Document Collection Started would email the client again.',
+  dcsOnboardedUnknown: 'Could not check whether this case was already onboarded — nothing was changed. Try again, or change it in Monday.',
   current: 'This is the stage now.',
   locks: 'This locks the case — reminders, readiness checks and escalations stop.',
   srTeam: 'It also emails the Submission Team and the Case Manager.',
@@ -86,9 +91,7 @@ const T = Object.freeze({
   heldUnknown: 'Could not check whether onboarding is on hold for signatures — if it is, the app will NOT start it by itself after this change.',
   backward: 'This is a backward move.',
   dcsEmail: 'The client is emailed “Your case is ready” now, and the document checklist is set up.',
-  dcsEmailAgain: 'The client is emailed “Your case is ready” again (this case’s document checklist is already set up).',
   dcsWaitsPayment: 'Waits for payment: Payment Status is not Paid, so nothing is sent now. The intake email, document checklist and reminders start by themselves when the payment is marked Paid.',
-  dcsNotPaidApplied: 'Payment Status is not Paid, so nothing is sent now. This case’s document checklist is already set up, so the app counts it as already onboarded: nothing starts by itself when the payment is marked Paid either.',
   dcsWaitsSignatures: (missing) => `Waits for signatures (missing: ${missing}). Nothing is sent now; onboarding starts by itself when the agreement is fully signed.`,
   dcsSigUnknown: 'The signatures could not be checked just now. If they are complete — or Monday cannot check them either — the client is emailed “Your case is ready” at once.',
   leavesDcs: 'Document reminders stop (they run only at Document Collection Started).',
@@ -116,7 +119,7 @@ const T = Object.freeze({
  * backward move, and anything that waits. Plain lines (the clock, "stays locked", leaving a stage…) are not warnings.
  */
 const WARN_LINES = new Set([T.backward, T.locks, T.srTeam, T.cancelledPortal, T.unlocks, T.notPaid, T.held, T.heldUnknown,
-  T.dcsEmail, T.dcsEmailAgain, T.dcsSigUnknown, T.dcsWaitsPayment, T.dcsNotPaidApplied]);
+  T.dcsEmail, T.dcsSigUnknown, T.dcsWaitsPayment]);
 const SIG_WAIT_HEAD = T.dcsWaitsSignatures('').split('(')[0];
 function isWarnLine(t) { return WARN_LINES.has(t) || String(t).startsWith(SIG_WAIT_HEAD); }
 
@@ -241,6 +244,20 @@ function cellStage(cv, labels) {
   return { index, label };
 }
 
+/**
+ * Checklist Template Applied → was the case already onboarded? (pure) true = Yes; false = No or blank (blank = a
+ * new / legacy case — the webhook's own reading); null = cannot tell (the cell missing from the read, or a label
+ * other than Yes / No) — and DCS is then refused.
+ */
+function onboardedOf(cv) {
+  if (!cv) return null;
+  if (cv.value == null) return false;
+  const t = s(cv.text).toLowerCase();
+  if (t === 'yes') return true;
+  if (t === 'no') return false;
+  return null;
+}
+
 /** The facts from a fresh read (pure). */
 function factsOf(item, labels) {
   const cv = (id) => (item.column_values || []).find((c) => c && c.id === id) || null;
@@ -248,7 +265,7 @@ function factsOf(item, labels) {
     current: cellStage(cv(STAGE_COL), labels),
     locked: s(statusText(cv(LOCK_COL))).toLowerCase() === 'yes',
     paid: s(statusText(cv(PAY_COL))) === 'Paid',
-    applied: s(statusText(cv(APPLIED_COL))).toLowerCase(),
+    onboarded: onboardedOf(cv(APPLIED_COL)),
     stageStart: s((cv(STAGE_START_COL) || {}).text),
     caseRef: s((cv(CASE_REF_COL) || {}).text),
   };
@@ -271,6 +288,8 @@ function rule(target, facts) {
   const out = { allowed: true, why: '', backward: isBackward(from, target.label), locks: locksLabel(target.label), unlocks: false, reasonRequired: false };
   if (target.index === facts.current.index) return { ...out, allowed: false, why: T.current, backward: false };
   if (target.label === DCS && !DCS_FROM.includes(from)) return { ...out, allowed: false, why: T.dcsRefused };
+  // only a NEW case: an onboarded case would be emailed again; a flag that could not be read is never taken as "new"
+  if (target.label === DCS && facts.onboarded !== false) return { ...out, allowed: false, why: facts.onboarded === true ? T.dcsOnboarded : T.dcsOnboardedUnknown };
   out.unlocks = !!facts.locked && WORKING_STAGES.includes(target.label);
   out.reasonRequired = out.backward || out.locks || out.unlocks;
   return out;
@@ -286,10 +305,9 @@ function effectsOf(target, facts, r) {
   const from = facts.current.label, to = target.label;
   if (r.backward) lines.push(T.backward);
   if (to === DCS) {
-    // the checklist flag first: a case already onboarded (applied = Yes) gets nothing by itself when Paid is marked
-    // later (retainerService.onRetainerPaid: not a first payment → only the date), so "starts when Paid" would be false
-    if (!facts.paid) lines.push(facts.applied === 'yes' ? T.dcsNotPaidApplied : T.dcsWaitsPayment);
-    else if (facts.applied === 'yes') lines.push(T.dcsEmailAgain);
+    // DCS is allowed only for a case never onboarded (rule()), so the client is emailed for the first time — now, or
+    // when the payment / the signatures come in
+    if (!facts.paid) lines.push(T.dcsWaitsPayment);
     else {
       const sg = facts.signatures || { state: 'unknown', missing: [] };
       if (sg.state === 'missing') lines.push(T.dcsWaitsSignatures((sg.missing || []).join(' and ') || 'signatures'));
@@ -317,7 +335,7 @@ function effectsOf(target, facts, r) {
 
 /** Can onboarding be on hold for this case (worth reading the notes)? Paid, never onboarded, still at an early stage or DCS. */
 function mayBeHeld(f) {
-  return f.paid && f.applied !== 'yes' && !f.stageStart && (DCS_FROM.includes(f.current.label) || f.current.label === DCS);
+  return f.paid && f.onboarded !== true && !f.stageStart && (DCS_FROM.includes(f.current.label) || f.current.label === DCS);
 }
 
 async function signaturesOf(itemId) {
@@ -388,9 +406,9 @@ async function preview({ staff, hasKey, itemId: rawId, expected: rawExpected }) 
   const itemId = s(rawId);
   if (!DIGITS.test(itemId)) throw fail(400, T.reload);
   const { item, live, facts } = await readCase(itemId, g);
-  const allowedDcs = live.order.some((i) => live.labels[i] === DCS) && DCS_FROM.includes(facts.current.label) && facts.current.label !== DCS;
+  const allowedDcs = live.order.some((i) => live.labels[i] === DCS) && DCS_FROM.includes(facts.current.label) && facts.current.label !== DCS && facts.onboarded === false;
   const [signatures, held] = await Promise.all([
-    allowedDcs && facts.paid && facts.applied !== 'yes' ? signaturesOf(itemId) : Promise.resolve(null),
+    allowedDcs && facts.paid ? signaturesOf(itemId) : Promise.resolve(null),
     mayBeHeld(facts) ? heldOf(itemId) : Promise.resolve(false),
   ]);
   const f = { ...facts, signatures, held };
@@ -558,7 +576,7 @@ function markChangeable(cases) {
 }
 
 module.exports = {
-  preview, change, gate, rule, effectsOf, isWarnLine, isBackward, labelsFromMeta, labelsFromSettings, factsOf, markChangeable, enabled, definitiveRefusal,
+  preview, change, gate, rule, effectsOf, isWarnLine, isBackward, labelsFromMeta, labelsFromSettings, factsOf, onboardedOf, markChangeable, enabled, definitiveRefusal,
   WORKING_STAGES, DCS_FROM, FLOW_RANK, TEXTS: T, SIGN_IN, OFF_TEXT, REASON_MIN, REASON_MAX, STAGE_COL, LOCK_COL,
   _io: io, _inFlight,
 };
