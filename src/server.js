@@ -702,6 +702,7 @@ app.get('/admin/dashboard-stats', async (req, res) => {
     // Change… on the Deadlines tab (2026-11-10): the same people and the same per-row rule as Assign
     // (a Monday sign-in who may see the case); the route re-checks on a fresh read.
     for (const c of stats.cases || []) c.canChangeDeadline = !!c.canAssign;
+    require('./services/caseStageService').markChangeable(stats.cases);   // Change… by the stage (STAGE_EDIT)
     const waitingAt = markWaiting(stats.cases);
     const todo = todoList.forAnswer(stats.cases, staff, caseAccess.isAdminEmail);   // null = not for this viewer
     res.json({ ...stats, waitingAt, viewer: { name: viewer.name, email: viewer.email, scope: viewer.scope, isAdmin: viewer.isAdmin, canAssign }, ...(todo ? { todo } : {}) });
@@ -1592,6 +1593,37 @@ function deadlineChangeRoute(source) {
 }
 app.post('/admin/client-master/deadline', express.json(), deadlineChangeRoute('client-master'));
 app.post('/admin/case-deadline', express.json(), deadlineChangeRoute('case'));
+
+// ─── Change the Case Stage from the Client Master page (2026-11-26, switch STAGE_EDIT, default off) ───
+// Monday sign-in only (the note names the person; the shared key alone is refused). The pop-up first asks what each
+// stage would do (a fresh read: payment, signatures, lock, held onboarding), then the POST writes the stage — and, when a
+// locked case goes back to a working stage, Automation Lock = No in the same mutation — and one note. See caseStageService.
+// Switch off: both answer 404 "not switched on". The source (which page) is set HERE, never read from the body.
+app.get('/admin/client-master/stage-options', async (req, res) => {
+  const { staff, hasKey } = assignWho(req);
+  res.set('Cache-Control', 'no-store');
+  try {
+    res.json(await require('./services/caseStageService').preview({ staff, hasKey, itemId: req.query.itemId, expected: req.query.expected }));
+  } catch (err) {
+    if (err.status && err.body) return res.status(err.status).json(err.body);
+    console.error('[StageChange] preview failed:', err.stack || err.message);
+    res.status(500).json({ ok: false, error: 'What each stage would do could not be worked out just now. Nothing was changed — please try again.' });
+  }
+});
+function stageChangeRoute(source) {
+  return async (req, res) => {
+    const { staff, hasKey } = assignWho(req);
+    res.set('Cache-Control', 'no-store');
+    try {
+      res.json(await require('./services/caseStageService').change({ staff, hasKey, body: req.body, source }));
+    } catch (err) {
+      if (err.status && err.body) return res.status(err.status).json(err.body);
+      console.error('[StageChange] failed:', err.stack || err.message);
+      res.status(500).json({ ok: false, error: 'The result is unknown — check the case in Monday before trying again.' });
+    }
+  };
+}
+app.post('/admin/client-master/stage', express.json(), stageChangeRoute('client-master'));
 
 // Cockpit Documents tab — inline mark-reviewed / request-rework. Same service
 // functions the /d/:caseRef/review page uses, but behind the cockpit's

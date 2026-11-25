@@ -25,6 +25,15 @@
  *     on     — new people get a number (and the healer writes).
  *   Read on every call (not at load), so a Render env change and the tests
  *   both take effect without a reload.
+ *
+ * And the switch for changing the Case Stage from the Client Master page
+ * (caseStageService, 2026-11-26):
+ *
+ *   STAGE_EDIT = off | on   (anything else, or unset, is off)
+ *     off — staff see nothing new: no Change… button by the stage, and the
+ *           two stage endpoints answer 404 "not switched on".
+ *     on  — the button shows for the people who may Assign on that row.
+ *   Read on every call, like CLIENT_IDS.
  */
 
 const on = (v) => /^(1|true|yes|on)$/i.test(String(v || '').trim());
@@ -33,6 +42,12 @@ const on = (v) => /^(1|true|yes|on)$/i.test(String(v || '').trim());
 function clientIdsMode() {
   const v = String(process.env.CLIENT_IDS == null ? '' : process.env.CLIENT_IDS).trim().toLowerCase();
   return v === 'on' ? 'on' : v === 'report' ? 'report' : 'off';
+}
+
+/** 'off' | 'on' — the STAGE_EDIT switch; anything else is off. */
+function stageEditMode() {
+  const v = String(process.env.STAGE_EDIT == null ? '' : process.env.STAGE_EDIT).trim().toLowerCase();
+  return v === 'on' ? 'on' : 'off';
 }
 
 module.exports = {
@@ -53,4 +68,7 @@ module.exports = {
   clientIdsOn:     () => clientIdsMode() === 'on',
   /** 'report' or 'on': the healer / audit work out what to do ('report' only logs it). */
   clientIdsActive: () => clientIdsMode() !== 'off',
+  // Change the Case Stage from the Client Master page (2026-11-26). Default OFF.
+  stageEditMode,
+  stageEditOn: () => stageEditMode() === 'on',
 };

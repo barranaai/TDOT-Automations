@@ -16,6 +16,7 @@ const { clientMasterWindows } = require('./clientMasterWindows');
 const { clientMasterUi } = require('./clientMasterUi');
 const { clientMasterColumnsUi, CM_COLUMNS_KEY } = require('./clientMasterColumnsUi');   // the Columns button (2026-11-12)
 const { DEADLINE_CHANGE_CSS, DEADLINE_CHANGE_HTML, DEADLINE_CHANGE_JS } = require('./deadlineChangeUi');   // Change… on the Deadlines tab (2026-11-10)
+const { STAGE_CHANGE_CSS, STAGE_CHANGE_JS } = require('./stageChangeUi');   // Change… by the Case Stage (2026-11-26, switch STAGE_EDIT)
 // The To-do tab (stage 1, read-only; 2026-11-19; switch TODO_TAB): a page-only view. Its switch and definition, its pure helper
 // (injected with toString) and ALL of its own page code — in the page only when the tab is on it (buildDashboardHTML opts.todo).
 const todoList = require('../services/todoListService');
@@ -570,7 +571,7 @@ const CM_CSS = `
     @page { size: landscape; margin: 10mm; }
     @media print {
       body { background:#fff; }
-      .admin-hdr, .dash-tools, .dash-subtitle, #cs-quick, .table-toolbar, #cs-chips, .site-footer, #loading, #error-msg, .cm-print, .cm-clear-w, .th-f, .lt-pop, .cm-assign, .cm-asg-ok, .dlc-btn, .dlc-ok { display:none !important; }
+      .admin-hdr, .dash-tools, .dash-subtitle, #cs-quick, .table-toolbar, #cs-chips, .site-footer, #loading, #error-msg, .cm-print, .cm-clear-w, .th-f, .lt-pop, .stc-btn, .stc-ok, .cm-assign, .cm-asg-ok, .dlc-btn, .dlc-ok { display:none !important; }
       #all-cases-table:not(.cm-wide) #cs-headrow th:last-child, #all-cases-table td.cm-del { display:none; }
       /* All with columns added is wide too, and its last column is still the delete column */
       #all-cases-table.cm-wide-all #cs-headrow th:last-child { display:none; }
@@ -1206,6 +1207,7 @@ function buildDashboardHTML(view = 'cases', opts) {
     /* The Cases list: the shared filter look (listFilters.js) — header funnels, chips, sort by the column name. */
     ${LIST_TABLE_CSS}
     ${DEADLINE_CHANGE_CSS}
+    ${STAGE_CHANGE_CSS}
     /* Headers sort through their name buttons now (Cases) — and the Summary at-risk table never sorted: no pointer, no hover. */
     .data-table th { cursor:default; }
     .data-table th:hover { background:#f8fafc; color:#94a3b8; }
@@ -2506,6 +2508,11 @@ function caseRow(c, v, today, wide) {
     refCell = '<span class="badge blue">Ref pending</span>';
   }
   var stage = v && (typeof c.stageIdx !== 'number' || c.stageIdx === CMU.EMPTY) ? cmNoneDash() : escHtml(c.caseStage);
+  // Change… (2026-11-26, switch STAGE_EDIT): on every tab, only where the server says the write is allowed (the switch is on
+  // and the same people as Assign); the pop-up asks the server what each stage would do. Right after the stage, before "Waiting for".
+  if (c.canChangeStage) stage += ' <button type="button" class="stc-btn" data-stc="' + escHtml(String(c.id)) + '" title="Change this case’s stage in Monday (the pop-up says what each stage will do; a note is added on the case)">Change…</button>';
+  var stOk = typeof cmStcFlashText === 'function' ? cmStcFlashText(c.id) : '';
+  if (stOk) stage += ' <span class="stc-ok" data-stc-ok="' + escHtml(String(c.id)) + '" role="status">' + escHtml(stOk) + '</span>';
   // Waiting for (2026-11-10): on Assigning only, and only on a Pre-Onboarding row (the server sends it for no other stage).
   // A second line under the stage, in words; what comes after is visible too (a phone has no hover).
   if (v && v.stageStrip && c.waiting) {
@@ -2623,6 +2630,8 @@ function caseRow(c, v, today, wide) {
   if (ab) ab.onclick = function(e) { e.stopPropagation(); cmAssignDlg(String(c.id)); };
   var db = tr.querySelector('.dlc-btn');
   if (db) db.onclick = function(e) { e.stopPropagation(); cmDeadlineDlg(String(c.id)); };
+  var sb = tr.querySelector('.stc-btn');
+  if (sb) sb.onclick = function(e) { e.stopPropagation(); cmStageDlg(String(c.id)); };
   return tr;
 }
 
@@ -2861,6 +2870,53 @@ function cmDeadlineDlg(itemId) {
     onSaved: function(d, j) { cmDlFlash(itemId, j && j.unchanged && !j.noted ? 'No change needed' : '✓ Deadline saved'); cmDlApply(itemId, d); },
     onCurrent: function(cur) { cmDlApply(itemId, cur); },
     focusBack: function() { var nb = document.querySelector('.dlc-btn[data-dl="' + String(itemId) + '"]'); if (nb) nb.focus(); }
+  });
+}
+
+/* ── Change the Case Stage (2026-11-26, switch STAGE_EDIT) ───────────
+   The shared pop-up (stageChangeUi.js): it asks the server what each stage would do (a fresh read), and the server
+   writes the stage (and unlocks a locked case going back to a working stage) and adds a note. The row is updated in
+   place from the server's answer — its stage, its tabs (views) and "Waiting for" — and the list redraws from the
+   rows, so the tab counts and the stage strip follow; a row that leaves the tab on screen leaves it. No board re-read. */
+var CM_STC_FLASH = {};   // item id → { text, until }: "✓ Stage changed" beside the stage for a few seconds
+function cmStcFlashText(id) { var f = CM_STC_FLASH[String(id)]; return f && f.until > Date.now() ? f.text : ''; }
+function cmStcFlash(id, text) {
+  id = String(id);
+  CM_STC_FLASH[id] = { text: text, until: Date.now() + 6000 };
+  setTimeout(function() {
+    if (CM_STC_FLASH[id] && CM_STC_FLASH[id].until <= Date.now()) delete CM_STC_FLASH[id];
+    var e = document.querySelector('.stc-ok[data-stc-ok="' + id + '"]');
+    if (e && !cmStcFlashText(id) && e.parentNode) e.parentNode.removeChild(e);
+  }, 6100);
+}
+/* The row's stage from the server: the row it rebuilt (stage, views, waiting), else just the stage (a cold server copy). */
+function cmStcApply(itemId, stage, r) {
+  var row = cmRowById(itemId);
+  if (!row || (!stage && !r)) return;
+  if (r) {
+    row.caseStage = r.caseStage; row.stageIdx = r.stageIdx;
+    if (r.views) row.views = r.views;
+    if (r.waiting) row.waiting = r.waiting; else delete row.waiting;
+  } else {
+    row.caseStage = stage.label || 'Unknown'; row.stageIdx = stage.index;
+    delete row.waiting;
+  }
+  CasesTable.setRows(_data.cases);
+}
+function cmStageDlg(itemId) {
+  var row = cmRowById(itemId);
+  if (!row || typeof tdotStageChange !== 'function') return;
+  var blank = typeof row.stageIdx !== 'number' || row.stageIdx === CMU.EMPTY;
+  tdotStageChange({
+    previewUrl: '/admin/client-master/stage-options',
+    url: '/admin/client-master/stage',
+    itemId: String(itemId),
+    caseLine: (row.caseRef || 'No case number yet') + ' · ' + (row.clientName || ''),
+    nowLabel: blank ? '' : (row.caseStage || ''),
+    expected: blank ? CMU.EMPTY : row.stageIdx,
+    onSaved: function(j) { cmStcFlash(itemId, j && j.unchanged ? 'No change needed' : '✓ Stage changed'); cmStcApply(itemId, j && j.stage, j && j.row); },
+    onCurrent: function(cur, r) { cmStcApply(itemId, cur, r); },
+    focusBack: function() { var nb = document.querySelector('.stc-btn[data-stc="' + String(itemId) + '"]'); if (nb) nb.focus(); }
   });
 }
 
@@ -3272,6 +3328,7 @@ function naMarkHandled(btn) {
 /* ── Boot ─────────────────────────────────────────────────────────── */
 ${DELETE_UI_JS}
 ${DEADLINE_CHANGE_JS}
+${STAGE_CHANGE_JS}
 tdotBindDelete(function(){ loadData(); });
 document.addEventListener('DOMContentLoaded', function() {
   // No admin key is fine — a Monday-logged-in staffer is authed by cookie and
