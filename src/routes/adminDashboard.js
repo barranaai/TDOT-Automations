@@ -2510,9 +2510,11 @@ function caseRow(c, v, today, wide) {
   var stage = v && (typeof c.stageIdx !== 'number' || c.stageIdx === CMU.EMPTY) ? cmNoneDash() : escHtml(c.caseStage);
   // Change… (2026-11-26, switch STAGE_EDIT): on every tab, only where the server says the write is allowed (the switch is on
   // and the same people as Assign); the pop-up asks the server what each stage would do. Right after the stage, before "Waiting for".
-  if (c.canChangeStage) stage += ' <button type="button" class="stc-btn" data-stc="' + escHtml(String(c.id)) + '" title="Change this case’s stage in Monday (the pop-up says what each stage will do; a note is added on the case)">Change…</button>';
+  // The flash floats beside the button (stc-wrap, out of the flow) so it never changes the row's height.
   var stOk = typeof cmStcFlashText === 'function' ? cmStcFlashText(c.id) : '';
-  if (stOk) stage += ' <span class="stc-ok" data-stc-ok="' + escHtml(String(c.id)) + '" role="status">' + escHtml(stOk) + '</span>';
+  if (c.canChangeStage || stOk) stage += ' <span class="stc-wrap">' +
+    (c.canChangeStage ? '<button type="button" class="stc-btn" data-stc="' + escHtml(String(c.id)) + '" title="Change stage" aria-label="Change stage">Change…</button>' : '') +
+    (stOk ? '<span class="stc-ok" data-stc-ok="' + escHtml(String(c.id)) + '" role="status">' + escHtml(stOk) + '</span>' : '') + '</span>';
   // Waiting for (2026-11-10): on Assigning only, and only on a Pre-Onboarding row (the server sends it for no other stage).
   // A second line under the stage, in words; what comes after is visible too (a phone has no hover).
   if (v && v.stageStrip && c.waiting) {
