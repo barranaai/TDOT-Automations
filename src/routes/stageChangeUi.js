@@ -16,7 +16,7 @@
  *     nowLabel  the stage the page shows ('' = none); expected its label index (5 = blank)
  *     onSaved   function(answer)          — Monday kept it (also called for "no change needed")
  *     onCurrent function(current, row)    — Monday has another stage now: { index, label } (+ the row the server rebuilt, or null)
- *     focusBack function()                — after a save, put the focus back on the page's button
+ *     focusBack function()                — after it closes with the focus lost (its button redrawn), put it on the page's button
  */
 
 const STAGE_CHANGE_CSS = `
@@ -45,7 +45,17 @@ const STAGE_CHANGE_JS = `
 window.tdotStageChange = function(o){
   if (typeof tdotDialogNew !== 'function') return;
   var st = { expected: o.expected, preview: null, sel: null };
-  var c = tdotDialogNew({ cls: 'stc-dlg', group: 'stc', labelledBy: 'stc-h' });
+  /* Every close (saved, Cancel, the close button, Escape): when the button that opened it has gone (the row was redrawn),
+     the focus would fall to the page top, so the page puts it back on the row's new button. */
+  var focusBack = function(){
+    if (!o.focusBack) return;
+    try {
+      var a = (typeof document !== 'undefined') ? document.activeElement : null;
+      if (a && a !== document.body && document.body.contains(a)) return;
+      o.focusBack();
+    } catch(e){}
+  };
+  var c = tdotDialogNew({ cls: 'stc-dlg', group: 'stc', labelledBy: 'stc-h', onClosed: function(){ focusBack(); } });
   c.box.innerHTML = '<h3 id="stc-h">Change stage</h3>' +
     (o.caseLine ? '<div class="stc-case">' + escHtml(o.caseLine) + '</div>' : '') +
     '<div class="stc-now" id="stc-now"></div>' +
@@ -68,7 +78,19 @@ window.tdotStageChange = function(o){
     return escHtml((j && j.error) || 'Please sign in with Monday.') + ' <a href="' + escHtml(login) + '">Sign in with Monday</a>';
   };
   var headers = function(json){ var k = (typeof peekKey === 'function') ? peekKey() : '', h = {}; if (k) h['X-Api-Key'] = k; if (json) h['Content-Type'] = 'application/json'; return h; };
-  var reasonText = function(){ return String(reason.value || '').split(String.fromCharCode(10)).join(' ').split(String.fromCharCode(13)).join(' ').trim(); };
+  /* the reason as the server counts it: every run of white space (new lines, tabs, spaces) is one space, trimmed */
+  var reasonText = function(){
+    var raw = String(reason.value || ''), out = '', gap = false;
+    for (var i = 0; i < raw.length; i++) {
+      var ch = raw.charAt(i);
+      if (ch.trim() === '') { gap = true; continue; }
+      if (gap && out) out += ' ';
+      gap = false; out += ch;
+    }
+    return out;
+  };
+  /* 401, or the shared key alone (403 key-only): the person must sign in with Monday — the link, same as Assign */
+  var needsSignIn = function(res){ return res.status === 401 || !!(res.j && res.j.code === 'key-only'); };
   var optionOf = function(v){
     var p = st.preview, list = (p && p.options) || [];
     for (var i = 0; i < list.length; i++) if (String(list[i].index) === String(v)) return list[i];
@@ -82,11 +104,12 @@ window.tdotStageChange = function(o){
   };
   var refresh = function(){
     var opt = st.sel, fx = q('stc-fx');
-    fx.innerHTML = opt && opt.allowed ? (opt.effects || []).map(function(t){
-      var warn = /lock|NOT|backward|again|Waits/.test(t);
+    fx.innerHTML = opt && opt.allowed ? (opt.effects || []).map(function(t, i){
+      /* the server marks the warning lines (what goes out, locks, unlocks, waits) — never guessed from the words */
+      var warn = !!(opt.warn && opt.warn[i]);
       return '<li' + (warn ? ' class="warn"' : '') + '>' + escHtml(t) + '</li>';
     }).join('') : '';
-    q('stc-reason-l').textContent = opt && opt.reasonRequired ? 'Reason (required)' : 'Reason (optional)';
+    q('stc-reason-l').textContent = opt && opt.reasonRequired ? 'Reason (required, at least ' + minReason() + ' characters)' : 'Reason (optional)';
     go.disabled = c.busy || !valid();
   };
   var draw = function(p){
@@ -114,7 +137,7 @@ window.tdotStageChange = function(o){
         if (!c.still(id)) return;
         if (res.ok) { draw(j); if (after) after(); try { sel.focus(); } catch(e){} return; }
         sel.innerHTML = '<option value="">Not available</option>';
-        if (res.status === 401) { err.innerHTML = signIn(j); return; }
+        if (needsSignIn(res)) { err.innerHTML = signIn(j); return; }
         err.textContent = j.error || ('The stages could not be loaded (' + res.status + '). Please try again.');
       })
       .catch(function(){ if (!c.still(id)) return; sel.innerHTML = '<option value="">Not available</option>'; err.textContent = 'No answer — the stages could not be loaded. Please try again.'; });
@@ -147,15 +170,18 @@ window.tdotStageChange = function(o){
           /* the page follows what Monday kept, even when the pop-up was closed after the long wait */
           if (o.onSaved) o.onSaved(j);
           if (!c.still(id)) return;
-          if (j.noteFailed) {
+          /* changed, but something to check (the note, the lock, a renamed stage): say it, and let the person close */
+          if (j.noteFailed || j.warning) {
             c.setBusy(false);
-            err.textContent = 'Stage changed. The note may not have been added — check the case’s updates and add it by hand (who, what, why).';
+            err.textContent = 'Stage changed.' +
+              (j.noteFailed ? ' The note may not have been added — check the case’s updates and add it by hand (who, what, why).' : '') +
+              (j.warning ? ' ' + j.warning : '');
             q('stc-acts').innerHTML = '<button type="button" class="tdlg-btn primary" id="stc-close">Close</button>';
             q('stc-close').onclick = function(){ c.close(true, 'done'); };
+            try { q('stc-close').focus(); } catch(e){}
             return;
           }
-          c.close(true, 'done');
-          if (o.focusBack) { try { o.focusBack(); } catch(e){} }
+          c.close(true, 'done');   /* onClosed puts the focus back */
           return;
         }
         if (j.current && o.onCurrent) o.onCurrent(j.current, j.row || null);
@@ -167,7 +193,7 @@ window.tdotStageChange = function(o){
           return;
         }
         if (!done()) return;
-        if (res.status === 401) { err.innerHTML = signIn(j); return; }
+        if (needsSignIn(res)) { err.innerHTML = signIn(j); return; }
         err.textContent = j.error || ('Something went wrong (' + res.status + '). The result is unknown — check the case before trying again.');
       })
       .catch(function(){

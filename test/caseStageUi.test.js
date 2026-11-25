@@ -109,15 +109,20 @@ function sandbox(responses) {
   const els = {};
   const el = (id) => els[id] || (els[id] = { id, value: '', textContent: '', innerHTML: '', disabled: false, onclick: null, onchange: null, oninput: null, focus() { this.focused = true; } });
   const fetches = [], queue = responses.slice(), saved = [], current = [], focused = [];
-  const dlg = { box: null, openId: 1, busy: false, closed: false,
-    setBusy(on) { this.busy = !!on; return this; }, still(id) { return !this.closed && id === this.openId; }, tryClose() { this.closed = true; }, close() { this.closed = true; } };
+  // the fake shared pop-up runs onClosed on every close, like dialogUi; the page's focus is wherever doc.activeElement says
+  const doc = { body: { contains: (e) => !!(e && e.inPage) }, activeElement: null };
+  doc.activeElement = doc.body;
+  const dlg = { box: null, openId: 1, busy: false, closed: false, opts: null,
+    setBusy(on) { this.busy = !!on; return this; }, still(id) { return !this.closed && id === this.openId; },
+    tryClose(how) { return this.close(true, how); },
+    close(force, how) { if (this.closed) return false; this.closed = true; if (this.opts && this.opts.onClosed) this.opts.onClosed(how || ''); return true; } };
   dlg.box = { set innerHTML(h) { this._h = h; }, get innerHTML() { return this._h; }, querySelector: (sel) => el(sel.replace(/^#/, '')) };
   const ctx = {
     JSON, String, Array, Promise, encodeURIComponent,
-    window: {}, location: { pathname: '/admin/dashboard', search: '?view=assigning' },
+    window: {}, document: doc, location: { pathname: '/admin/dashboard', search: '?view=assigning' },
     escHtml: (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])),
     peekKey: () => '',
-    tdotDialogNew: () => dlg,
+    tdotDialogNew: (opts) => { dlg.opts = opts || {}; return dlg; },
     fetch: (url, opts) => {
       fetches.push({ url, opts: opts || {} });
       const r = queue.shift() || { status: 500, j: {} };
@@ -129,13 +134,14 @@ function sandbox(responses) {
   const open = (o) => ctx.window.tdotStageChange({ previewUrl: '/admin/client-master/stage-options', url: '/admin/client-master/stage', itemId: '5550001', caseLine: '2026-TEST-001 · Client X',
     nowLabel: 'Pre-Onboarding', expected: 12, onSaved: (j) => saved.push(j), onCurrent: (c, r) => current.push({ c, r }), focusBack: () => focused.push(1), ...(o || {}) });
   const flush = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
-  return { els, el, fetches, dlg, saved, current, focused, open, flush, queue };
+  return { els, el, fetches, dlg, doc, saved, current, focused, open, flush, queue };
 }
 const OPT = (index, label, o) => ({ index, label, allowed: true, why: '', effects: [], reasonRequired: false, unlocks: false, locks: false, backward: false, ...o });
 const PREVIEW = { ok: true, itemId: '5550001', current: { index: 12, label: 'Pre-Onboarding' }, reasonMin: 5, reasonMax: 300, options: [
   OPT(3, 'Retainer Confirmed'),
-  OPT(0, 'Document Collection Started', { effects: ['The client is emailed “Your case is ready” now, and the document checklist is set up.'] }),
-  OPT(7, 'Submission Ready', { reasonRequired: true, locks: true, effects: ['This locks the case — reminders, readiness checks and escalations stop.', 'It also emails the Submission Team and the Case Manager.'] }),
+  OPT(0, 'Document Collection Started', { effects: ['The client is emailed “Your case is ready” now, and the document checklist is set up.'], warn: [true] }),
+  OPT(7, 'Submission Ready', { reasonRequired: true, locks: true, effects: ['This locks the case — reminders, readiness checks and escalations stop.', 'It also emails the Submission Team and the Case Manager.'], warn: [true, true] }),
+  OPT(6, 'Application Submitted', { effects: ['The case stays locked.', 'This does not lock or close the case.'], warn: [false, false] }),
   OPT(12, 'Pre-Onboarding', { allowed: false, why: 'This is the stage now.' }),
   OPT(1, 'Internal Review', { allowed: false, why: 'A case can only go to … (test)' }),
 ] };
@@ -152,17 +158,26 @@ test('pop-up: asks the server first (with the page\'s stage), lists the stages i
   const sel = sb.el('stc-sel');
   assert.equal(sel.disabled, false);
   assert.equal(sel.innerHTML, '<option value="">Choose a stage…</option><option value="3">Retainer Confirmed</option><option value="0">Document Collection Started</option>' +
-    '<option value="7">Submission Ready</option><option value="12" disabled>Pre-Onboarding (not available)</option><option value="1" disabled>Internal Review (not available)</option>');
+    '<option value="7">Submission Ready</option><option value="6">Application Submitted</option><option value="12" disabled>Pre-Onboarding (not available)</option><option value="1" disabled>Internal Review (not available)</option>');
   assert.equal(sb.el('stc-off').innerHTML, '<li><b>Internal Review</b>: A case can only go to … (test)</li>', 'why, for every refused stage but the current one');
   assert.equal(sb.current.length, 0, 'the page already showed this stage');
   sel.value = '7'; sel.onchange();
-  assert.match(sb.el('stc-fx').innerHTML, /<li class="warn">This locks the case — reminders, readiness checks and escalations stop\.<\/li><li>It also emails the Submission Team and the Case Manager\.<\/li>/);
-  assert.equal(sb.el('stc-reason-l').textContent, 'Reason (required)');
+  assert.equal(sb.el('stc-fx').innerHTML, '<li class="warn">This locks the case — reminders, readiness checks and escalations stop.</li><li class="warn">It also emails the Submission Team and the Case Manager.</li>',
+    'the style follows the server\'s warn flags: the staff email is a warning');
+  assert.equal(sb.el('stc-reason-l').textContent, 'Reason (required, at least 5 characters)', 'the minimum is said before the button stays grey');
   assert.equal(sb.el('stc-go').disabled, true, 'no reason yet');
   sb.el('stc-reason').value = 'abc'; sb.el('stc-reason').oninput();
   assert.equal(sb.el('stc-go').disabled, true, 'too short');
+  sb.el('stc-reason').value = 'ab\t\tc'; sb.el('stc-reason').oninput();
+  assert.equal(sb.el('stc-go').disabled, true, 'white space counts as the server counts it (one space): "ab c" is 4');
+  sb.el('stc-reason').value = 'a   b  c'; sb.el('stc-reason').oninput();
+  assert.equal(sb.el('stc-go').disabled, false, '"a b c" is 5');
   sb.el('stc-reason').value = 'Ready for submission'; sb.el('stc-reason').oninput();
   assert.equal(sb.el('stc-go').disabled, false);
+  sel.value = '6'; sel.onchange();
+  assert.equal(sb.el('stc-fx').innerHTML, '<li>The case stays locked.</li><li>This does not lock or close the case.</li>', 'no warning style on plain lines that merely mention a lock');
+  sel.value = '0'; sel.onchange();
+  assert.equal(sb.el('stc-fx').innerHTML, '<li class="warn">The client is emailed “Your case is ready” now, and the document checklist is set up.</li>', 'the client email is a warning');
   sel.value = '3'; sel.onchange();
   assert.equal(sb.el('stc-reason-l').textContent, 'Reason (optional)');
   assert.equal(sb.el('stc-fx').innerHTML, '');
@@ -173,7 +188,7 @@ test('pop-up: Change stage sends itemId / index / expected / reason; a save call
   const sb = sandbox([{ status: 200, j: PREVIEW }, { status: 200, j: { ok: true, stage: { index: 7, label: 'Submission Ready' }, row: { caseStage: 'Submission Ready', stageIdx: 7, views: [], waiting: null } } }]);
   sb.open(); await sb.flush();
   sb.el('stc-sel').value = '7'; sb.el('stc-sel').onchange();
-  sb.el('stc-reason').value = 'Ready\nfor submission'; sb.el('stc-reason').oninput();
+  sb.el('stc-reason').value = '  Ready\n\n  for   submission '; sb.el('stc-reason').oninput();
   sb.el('stc-go').onclick();
   assert.equal(sb.dlg.busy, true);
   assert.equal(sb.el('stc-go').disabled, true);
@@ -184,7 +199,41 @@ test('pop-up: Change stage sends itemId / index / expected / reason; a save call
   assert.deepEqual(JSON.parse(post.opts.body), { itemId: '5550001', index: 7, expected: 12, reason: 'Ready for submission' });
   assert.equal(sb.saved.length, 1);
   assert.equal(sb.dlg.closed, true);
-  assert.equal(sb.focused.length, 1);
+  assert.equal(sb.focused.length, 1, 'the row was redrawn (focus on the page body): the page puts it on the new button');
+});
+
+test('pop-up: the focus comes back on EVERY close once its button is gone (note-failed Close, ×/Escape after a 409) — and is left alone when it is somewhere real', async () => {
+  let sb = sandbox([{ status: 200, j: PREVIEW }, { status: 200, j: { ok: true, noteFailed: true, stage: { index: 3, label: 'Retainer Confirmed' } } }]);
+  sb.open(); await sb.flush();
+  sb.el('stc-sel').value = '3'; sb.el('stc-sel').onchange(); sb.el('stc-go').onclick(); await sb.flush();
+  assert.equal(sb.dlg.closed, false);
+  assert.equal(sb.focused.length, 0);
+  sb.el('stc-close').onclick();
+  assert.equal(sb.dlg.closed, true);
+  assert.equal(sb.focused.length, 1, 'Close after "note may not have been added" puts the focus back');
+  sb = sandbox([{ status: 200, j: PREVIEW }]);
+  sb.open(); await sb.flush();
+  sb.dlg.tryClose('escape');
+  assert.equal(sb.focused.length, 1, 'Escape / × with the focus lost');
+  sb = sandbox([{ status: 200, j: PREVIEW }]);
+  sb.open(); await sb.flush();
+  sb.doc.activeElement = { inPage: true };   // the shared pop-up already put it back on the (still present) button
+  sb.el('stc-cancel').onclick();
+  assert.equal(sb.dlg.closed, true);
+  assert.equal(sb.focused.length, 0, 'never moves a focus that is somewhere real');
+});
+
+test('pop-up: saved with a warning (the lock not confirmed, or a renamed stage) → says "Stage changed." and the warning, offers Close; onSaved still runs', async () => {
+  const w = 'Monday still shows the Automation Lock as “Yes”, not No — check it in Monday; reminders and checks stay off while the case is locked.';
+  const sb = sandbox([{ status: 200, j: PREVIEW }, { status: 200, j: { ok: true, lockUnconfirmed: true, unlocked: false, warning: w, stage: { index: 3, label: 'Retainer Confirmed' } } }]);
+  sb.open(); await sb.flush();
+  sb.el('stc-sel').value = '3'; sb.el('stc-sel').onchange(); sb.el('stc-go').onclick(); await sb.flush();
+  assert.equal(sb.saved.length, 1);
+  assert.equal(sb.dlg.closed, false);
+  assert.equal(sb.dlg.busy, false);
+  assert.equal(sb.el('stc-err').textContent, 'Stage changed. ' + w);
+  assert.match(sb.el('stc-acts').innerHTML, /id="stc-close">Close</);
+  assert.equal(sb.el('stc-close').focused, true);
 });
 
 test('pop-up: a 409 "changed" tells the page the stage now, asks the server again from there and says to choose again', async () => {
@@ -224,6 +273,19 @@ test('pop-up: the note failed → says so and offers Close; a refusal shows the 
   sb = sandbox([{ status: 401, j: { ok: false, error: 'Sign in with Monday to change the stage.', loginUrl: '/q/auth/monday?returnTo=%2Fadmin%2Fdashboard' } }]);
   sb.open(); await sb.flush();
   assert.equal(sb.el('stc-err').innerHTML, 'Sign in with Monday to change the stage. <a href="/q/auth/monday?returnTo=%2Fadmin%2Fdashboard%3Fview%3Dassigning">Sign in with Monday</a>');
+  // the shared key still on the page, the Monday sign-in expired: 403 key-only → the same sign-in link (as Assign), on load and on send
+  sb = sandbox([{ status: 403, j: { ok: false, error: 'Sign in with Monday to change the stage.', code: 'key-only' } }]);
+  sb.open(); await sb.flush();
+  assert.equal(sb.el('stc-err').innerHTML, 'Sign in with Monday to change the stage. <a href="/q/auth/monday?returnTo=%2Fadmin%2Fdashboard%3Fview%3Dassigning">Sign in with Monday</a>');
+  sb = sandbox([{ status: 200, j: PREVIEW }, { status: 403, j: { ok: false, error: 'Sign in with Monday to change the stage.', code: 'key-only' } }]);
+  sb.open(); await sb.flush();
+  sb.el('stc-sel').value = '3'; sb.el('stc-sel').onchange(); sb.el('stc-go').onclick(); await sb.flush();
+  assert.equal(sb.el('stc-err').innerHTML, 'Sign in with Monday to change the stage. <a href="/q/auth/monday?returnTo=%2Fadmin%2Fdashboard%3Fview%3Dassigning">Sign in with Monday</a>');
+  // any other 403 stays plain words
+  sb = sandbox([{ status: 403, j: { ok: false, error: 'You are not assigned to this case.' } }]);
+  sb.open(); await sb.flush();
+  assert.equal(sb.el('stc-err').textContent, 'You are not assigned to this case.');
+  assert.equal(sb.el('stc-err').innerHTML, '');
   sb = sandbox([{ status: 404, j: { ok: false, error: 'Changing the stage from this page is not switched on.', code: 'off' } }]);
   sb.open(); await sb.flush();
   assert.equal(sb.el('stc-err').textContent, 'Changing the stage from this page is not switched on.');

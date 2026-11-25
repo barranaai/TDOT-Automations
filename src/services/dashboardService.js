@@ -251,10 +251,12 @@ function patchCachedColumn(itemId, colId, { value, text } = {}) {
  * suggestion, 2026-11-24): { items, at, version } while the copy is at most CASES_HARD_MS (20 min) old, else null.
  * `version` changes whenever the rows change (a read landed, or a cell was patched), so a caller may keep what it
  * worked out from them until then. The rows are the shared cache: read only, never changed by the caller.
+ * { anyAge: true } returns the rows whatever their age (the stage change rebuilds ONE row it has just patched —
+ * only that row's own cells matter, and they are the read-back, so the copy's age does not).
  */
-function peekCachedItems() {
+function peekCachedItems({ anyAge = false } = {}) {
   const c = _casesCache;
-  if (!c.items || _io.now() - c.at > CASES_HARD_MS) return null;
+  if (!c.items || (!anyAge && _io.now() - c.at > CASES_HARD_MS)) return null;
   return { items: c.items, at: c.at, version: _casesVersion };
 }
 

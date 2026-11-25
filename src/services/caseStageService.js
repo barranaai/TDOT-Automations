@@ -24,8 +24,10 @@
  * case → fresh read → access → the live labels → stale check (409 'changed' with the stage now; NOT refused
  * when the case already holds the wanted stage) → no-op (same stage: no write, no note) → the rules →
  * ONE mutation, retries 0 (mondayApi retries a mutation by default, and every stage write has side effects
- * in the Monday webhook) → read-back (index AND text; also on an error answer: a write that answered with an
- * error may still have landed) → the note (retries 0) → the cached rows PATCHED with the read-back → the row's
+ * in the Monday webhook) → read-back (also on an error answer: a write that answered with an error may still have
+ * landed). The wanted INDEX read back = the write was made: the note is posted, and a text that differs from this
+ * page's label (renamed in Monday meanwhile) or an unlock Monday does not show is SAID in the answer and the note,
+ * never reported as "not kept" → the note (retries 0) → the cached rows PATCHED with the read-back → the row's
  * new stage, views and "waiting" for the page.
  *
  * The side effects themselves run in the Monday webhook (mondayWebhook.js) after Monday delivers the event:
@@ -86,6 +88,7 @@ const T = Object.freeze({
   dcsEmail: 'The client is emailed “Your case is ready” now, and the document checklist is set up.',
   dcsEmailAgain: 'The client is emailed “Your case is ready” again (this case’s document checklist is already set up).',
   dcsWaitsPayment: 'Waits for payment: Payment Status is not Paid, so nothing is sent now. The intake email, document checklist and reminders start by themselves when the payment is marked Paid.',
+  dcsNotPaidApplied: 'Payment Status is not Paid, so nothing is sent now. This case’s document checklist is already set up, so the app counts it as already onboarded: nothing starts by itself when the payment is marked Paid either.',
   dcsWaitsSignatures: (missing) => `Waits for signatures (missing: ${missing}). Nothing is sent now; onboarding starts by itself when the agreement is fully signed.`,
   dcsSigUnknown: 'The signatures could not be checked just now. If they are complete — or Monday cannot check them either — the client is emailed “Your case is ready” at once.',
   leavesDcs: 'Document reminders stop (they run only at Document Collection Started).',
@@ -103,7 +106,19 @@ const T = Object.freeze({
   unknown: 'The result is unknown — check the case in Monday before trying again.',
   refused: 'Monday refused the change. Nothing was changed — please try again, or change it in Monday.',
   notKept: 'Monday did not keep the change — check the case in Monday before trying again.',
+  renamed: (now, was) => `Monday now calls this stage “${now}” (this page had “${was}”) — reload the page to see the stages as Monday has them.`,
+  lockUnconfirmed: (lock) => `Monday still shows the Automation Lock as “${lock || 'blank'}”, not No — check it in Monday; reminders and checks stay off while the case is locked.`,
 });
+
+/**
+ * The effect lines the pop-up shows in the warning style (the server decides, not the page's wording): what goes
+ * OUT (the client or staff emailed, the client's portal), what locks or unlocks, what turns automation off, a
+ * backward move, and anything that waits. Plain lines (the clock, "stays locked", leaving a stage…) are not warnings.
+ */
+const WARN_LINES = new Set([T.backward, T.locks, T.srTeam, T.cancelledPortal, T.unlocks, T.notPaid, T.held, T.heldUnknown,
+  T.dcsEmail, T.dcsEmailAgain, T.dcsSigUnknown, T.dcsWaitsPayment, T.dcsNotPaidApplied]);
+const SIG_WAIT_HEAD = T.dcsWaitsSignatures('').split('(')[0];
+function isWarnLine(t) { return WARN_LINES.has(t) || String(t).startsWith(SIG_WAIT_HEAD); }
 
 function mondayApi() { return require('./mondayApi'); }
 const READ_COLS = () => [...caseAccess.PEOPLE_COLUMNS, CASE_REF_COL, STAGE_COL, LOCK_COL, PAY_COL, APPLIED_COL, STAGE_START_COL];
@@ -271,7 +286,9 @@ function effectsOf(target, facts, r) {
   const from = facts.current.label, to = target.label;
   if (r.backward) lines.push(T.backward);
   if (to === DCS) {
-    if (!facts.paid) lines.push(T.dcsWaitsPayment);
+    // the checklist flag first: a case already onboarded (applied = Yes) gets nothing by itself when Paid is marked
+    // later (retainerService.onRetainerPaid: not a first payment → only the date), so "starts when Paid" would be false
+    if (!facts.paid) lines.push(facts.applied === 'yes' ? T.dcsNotPaidApplied : T.dcsWaitsPayment);
     else if (facts.applied === 'yes') lines.push(T.dcsEmailAgain);
     else {
       const sg = facts.signatures || { state: 'unknown', missing: [] };
@@ -288,7 +305,7 @@ function effectsOf(target, facts, r) {
   else if (facts.locked && !r.locks) lines.push(T.staysLocked);
   if (from === DCS && to !== DCS && !r.locks) lines.push(T.leavesDcs);
   if (WORKING_STAGES.includes(from) && !WORKING_STAGES.includes(to) && !r.locks) lines.push(T.leavesWorking);
-  if (to === APP_SUBMITTED) lines.push(T.notLocking);
+  if (to === APP_SUBMITTED && !facts.locked) lines.push(T.notLocking);   // a locked case already says "stays locked"
   const early = earlyStages();
   if (!facts.paid && to !== DCS && !early.includes(to) && (early.includes(from) || from === DCS)) lines.push(T.notPaid);
   if (to !== DCS) {
@@ -380,7 +397,8 @@ async function preview({ staff, hasKey, itemId: rawId, expected: rawExpected }) 
   const options = live.order.map((index) => {
     const target = { index, label: live.labels[index] };
     const r = rule(target, f);
-    return { index, label: target.label, allowed: r.allowed, why: r.why, effects: r.allowed ? effectsOf(target, f, r) : [], reasonRequired: r.reasonRequired, unlocks: r.unlocks, locks: r.locks, backward: r.backward };
+    const effects = r.allowed ? effectsOf(target, f, r) : [];
+    return { index, label: target.label, allowed: r.allowed, why: r.why, effects, warn: effects.map(isWarnLine), reasonRequired: r.reasonRequired, unlocks: r.unlocks, locks: r.locks, backward: r.backward };
   });
   const out = { ok: true, itemId, caseRef: facts.caseRef, clientName: s(item.name), current: facts.current, locked: facts.locked, paid: facts.paid, reasonMax: REASON_MAX, reasonMin: REASON_MIN, options };
   // the page showed another stage: the cached rows follow Monday's (so the page can redraw the row)
@@ -457,9 +475,10 @@ async function change({ staff, hasKey, body, source }) {
     const bStage = back.find((c) => c && c.id === STAGE_COL) || { value: null, text: '' };
     const bLock = back.find((c) => c && c.id === LOCK_COL) || { value: null, text: '' };
     const kept = cellStage(bStage, live.labels);
-    const stageOk = kept.index === index && s(statusText(bStage)) === target.label;
-    const lockOk = !r.unlocks || s(statusText(bLock)).toLowerCase() === 'no';
-    if (!stageOk || !lockOk) {
+    // The stage LANDED when Monday holds the wanted index — then the write was made, whatever else differs: the
+    // webhook runs for it, so it gets its note (the only record of who did it) and an honest answer. Only a
+    // different index is "not kept" / "not changed" / "unknown".
+    if (kept.index !== index) {
       const row = patchAndRow(rowId, bStage, r.unlocks ? bLock : null, staff);
       const unchangedNow = kept.index === facts.current.index;
       if (writeErr && unchangedNow && definitiveRefusal(writeErr)) throw fail(502, T.refused, { current: kept, row });
@@ -468,10 +487,22 @@ async function change({ staff, hasKey, body, source }) {
       throw fail(502, T.notKept, { current: kept, row });
     }
     if (writeErr) console.warn(`[StageChange] item ${itemId}: the write answered with an error but Monday holds the new stage — carrying on to the note`);
+    // the index is right but Monday's text is not the label this page had (renamed since the board meta was read):
+    // the case holds Monday's label — say that one
+    const backText = s(statusText(bStage));
+    const renamed = !!backText && backText !== target.label;
+    const keptLabel = renamed ? backText : target.label;
+    if (renamed) console.warn(`[StageChange] item ${itemId}: index ${index} reads back as "${backText}", the board meta had "${target.label}" — the meta is out of date`);
+    // the unlock asked for, but the lock does not read No: the stage changed, the lock is not confirmed
+    const lockNow = s(statusText(bLock));
+    const unlocked = r.unlocks && lockNow.toLowerCase() === 'no';
+    const lockUnconfirmed = r.unlocks && !unlocked;
+    if (lockUnconfirmed) console.error(`[StageChange] item ${itemId}: stage changed, but the lock reads back "${lockNow}", not No`);
     // 12. the note (after the write; never retried)
     const where = SOURCES[source] || SOURCES['client-master'];
-    const note = `🔀 <b>Case Stage changed</b>: ${esc(show(facts.current))} → ${esc(target.label)}.` +
-      (r.unlocks ? ' The case was also <b>unlocked</b> (Automation Lock set to No) — reminders and checks start again.' : '') +
+    const note = `🔀 <b>Case Stage changed</b>: ${esc(show(facts.current))} → ${esc(keptLabel)}.` +
+      (unlocked ? ' The case was also <b>unlocked</b> (Automation Lock set to No) — reminders and checks start again.' : '') +
+      (lockUnconfirmed ? ` The app also asked Monday to unlock the case (Automation Lock = No), but Monday still shows it as “${esc(lockNow || 'blank')}” — check it.` : '') +
       (reason ? ` Reason: ${esc(reason)}.` : '') +
       ` Changed on the ${where} by ${esc(g.actor.name)} · ${esc(torontoTime(io.now()))} (Toronto).`;
     let noteFailed = false;
@@ -479,9 +510,13 @@ async function change({ staff, hasKey, body, source }) {
     catch (err) { noteFailed = true; console.error(`[StageChange] item ${itemId}${facts.caseRef ? ` (${facts.caseRef})` : ''}: the stage was changed but the note failed: ${err.message}`); }
     // 13. the cached rows follow the read-back (never invalidated) → the row for the page
     const row = patchAndRow(rowId, bStage, r.unlocks ? bLock : null, staff);
-    console.log(`[StageChange] item ${itemId}${facts.caseRef ? ` (${facts.caseRef})` : ''}: ${show(facts.current)} → ${target.label}${r.unlocks ? ' (unlocked)' : ''}, by ${g.actor.name}`);
-    const out = { ok: true, stage: { index, label: target.label }, from: facts.current, unlocked: r.unlocks, row };
+    console.log(`[StageChange] item ${itemId}${facts.caseRef ? ` (${facts.caseRef})` : ''}: ${show(facts.current)} → ${keptLabel}${unlocked ? ' (unlocked)' : ''}${lockUnconfirmed ? ' (unlock NOT confirmed)' : ''}, by ${g.actor.name}`);
+    const out = { ok: true, stage: { index, label: keptLabel }, from: facts.current, unlocked, row };
     if (noteFailed) out.noteFailed = true;
+    const warnings = [];
+    if (lockUnconfirmed) { out.lockUnconfirmed = true; warnings.push(T.lockUnconfirmed(lockNow)); }
+    if (renamed) { out.renamed = true; warnings.push(T.renamed(backText, target.label)); }
+    if (warnings.length) out.warning = warnings.join(' ');
     return out;
   } finally {
     _inFlight.delete(itemId);
@@ -499,7 +534,8 @@ function definitiveRefusal(err) {
 /** The row from the cached Cases rows (after the patch): the server works out its views (and the page-only 'todo' view, and "waiting"). */
 function rowFromCache(itemId, staff) {
   const ds = require('./dashboardService');
-  const peek = ds.peekCachedItems();
+  // whatever the copy's age: only this row's own cells matter, and they were just patched with the read-back
+  const peek = ds.peekCachedItems({ anyAge: true });
   if (!peek || !Array.isArray(peek.items)) return null;
   const i = peek.items.findIndex((it) => it && String(it.id) === String(itemId));
   if (i < 0) return null;
@@ -522,7 +558,7 @@ function markChangeable(cases) {
 }
 
 module.exports = {
-  preview, change, gate, rule, effectsOf, isBackward, labelsFromMeta, labelsFromSettings, factsOf, markChangeable, enabled, definitiveRefusal,
+  preview, change, gate, rule, effectsOf, isWarnLine, isBackward, labelsFromMeta, labelsFromSettings, factsOf, markChangeable, enabled, definitiveRefusal,
   WORKING_STAGES, DCS_FROM, FLOW_RANK, TEXTS: T, SIGN_IN, OFF_TEXT, REASON_MIN, REASON_MAX, STAGE_COL, LOCK_COL,
   _io: io, _inFlight,
 };

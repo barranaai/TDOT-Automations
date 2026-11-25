@@ -220,6 +220,10 @@ test('effects: Document Collection Started says, from the facts, whether the cli
   assert.deepEqual(fx({}), [T.dcsEmail]);
   assert.deepEqual(fx({ paid: false }), [T.dcsWaitsPayment]);
   assert.deepEqual(fx({ applied: 'yes' }), [T.dcsEmailAgain]);
+  // not Paid but the checklist already applied (a re-seed, a hand edit): marking Paid later is NOT a first payment, so
+  // onRetainerPaid starts nothing — never promise "starts by itself"
+  assert.deepEqual(fx({ paid: false, applied: 'yes' }), [T.dcsNotPaidApplied]);
+  assert.ok(!/start by themselves/.test(T.dcsNotPaidApplied) && /nothing starts by itself when the payment is marked Paid/.test(T.dcsNotPaidApplied));
   assert.deepEqual(fx({ signatures: { state: 'missing', missing: ['client signature', 'payment'] } }),
     ['Waits for signatures (missing: client signature and payment). Nothing is sent now; onboarding starts by itself when the agreement is fully signed.']);
   assert.deepEqual(fx({ signatures: { state: 'no-lead', missing: [] } }), [T.dcsEmail], 'no linked lead = the webhook passes');
@@ -238,7 +242,9 @@ test('effects: lock, unlock, stays locked, the clock, payment, held onboarding, 
   assert.equal(T.clock, 'Restarts the stage clock and reminder count.');
   assert.deepEqual(fx('Cancelled', 'Internal Review', { locked: true }), [T.clock, T.unlocks]);
   assert.equal(T.unlocks, 'This also unlocks the case — reminders and checks start again.');
-  assert.deepEqual(fx('Cancelled', 'Application Submitted', { locked: true }), [T.staysLocked, T.notLocking]);
+  assert.deepEqual(fx('Cancelled', 'Application Submitted', { locked: true }), [T.staysLocked], 'locked: "stays locked" alone, never next to "does not lock"');
+  assert.deepEqual(fx('Submission Ready', 'Application Submitted', { locked: true }), [T.staysLocked], 'the usual move after filing');
+  assert.deepEqual(fx('Submission Ready', 'Application Submitted', { locked: false }), [T.notLocking]);
   assert.equal(T.staysLocked, 'The case stays locked.');
   assert.deepEqual(fx('Submission Ready', 'Submission Preparation', { locked: true }), [T.backward, T.clock, T.unlocks]);
   assert.deepEqual(fx('Submission Ready', 'Cancelled', { locked: true }), [T.locks, T.cancelledPortal], 'a locking move: no "stays locked" line');
@@ -256,6 +262,22 @@ test('effects: lock, unlock, stays locked, the clock, payment, held onboarding, 
   // leaving
   assert.deepEqual(fx('Document Collection Started', 'Pre-Onboarding'), [T.backward, T.leavesDcs, T.leavesWorking]);
   assert.deepEqual(fx('Internal Review', 'Application Submitted'), [T.leavesWorking, T.notLocking]);
+});
+
+test('warning lines are marked by the server (a parallel warn[] per option): outward emails, the portal, lock/unlock, payment, held, backward, waits — never the plain lines', async () => {
+  for (const t of [T.dcsEmail, T.dcsEmailAgain, T.dcsSigUnknown, T.dcsWaitsPayment, T.dcsNotPaidApplied, T.dcsWaitsSignatures('client signature'),
+    T.locks, T.srTeam, T.cancelledPortal, T.unlocks, T.notPaid, T.held, T.heldUnknown, T.backward]) assert.equal(svc.isWarnLine(t), true, t);
+  for (const t of [T.notLocking, T.staysLocked, T.clock, T.leavesDcs, T.leavesWorking]) assert.equal(svc.isWarnLine(t), false, t);
+  const m = fake({ stage: 'Submission Preparation' });
+  const r = await svc.preview({ staff: STAFF, hasKey: false, itemId: ITEM });
+  for (const o of r.options) {
+    assert.ok(Array.isArray(o.warn) && o.warn.length === o.effects.length, o.label);
+    assert.deepEqual(o.warn, o.effects.map(svc.isWarnLine), o.label);
+  }
+  const sr = r.options.find((o) => o.label === 'Submission Ready');
+  assert.deepEqual(sr.effects, [T.locks, T.srTeam]);
+  assert.deepEqual(sr.warn, [true, true], 'the staff email is a warning line, not plain text');
+  nothingWritten(m);
 });
 
 // ── labels ──
@@ -337,7 +359,10 @@ test('preview: DCS from Pre-Onboarding reads the signature gate on the linked le
   m.findFail = false; m.pay = 'Pending';
   r = await svc.preview({ staff: STAFF, hasKey: false, itemId: ITEM });
   assert.deepEqual(dcs().effects, [T.dcsWaitsPayment]);
-  m.pay = 'Paid'; m.applied = 'Yes';
+  m.applied = 'Yes';
+  r = await svc.preview({ staff: STAFF, hasKey: false, itemId: ITEM });
+  assert.deepEqual(dcs().effects, [T.dcsNotPaidApplied], 'not Paid, already onboarded: nothing now and nothing on Paid');
+  m.pay = 'Paid';
   r = await svc.preview({ staff: STAFF, hasKey: false, itemId: ITEM });
   assert.deepEqual(dcs().effects, [T.dcsEmailAgain]);
   assert.equal(m.leadFinds, before);
@@ -504,7 +529,7 @@ test('the write failed and Monday still holds the old stage: a refusal Monday an
   assert.equal(svc.definitiveRefusal(Object.assign(new Error('x'), { response: { status: 429 } })), false);
 });
 
-test('the read-back fails twice → "result unknown", no note; Monday did not keep it (index, text or lock) → "did not keep", no note, the cache follows the read-back', async () => {
+test('the read-back fails twice → "result unknown", no note; Monday holds another index → "did not keep", no note, the cache follows the read-back', async () => {
   let m = fake({ readBackFail: true });
   await refused(call(), 502, T.unknown);
   assert.equal(m.readBacks, 2);
@@ -513,16 +538,43 @@ test('the read-back fails twice → "result unknown", no note; Monday did not ke
   await refused(call(), 502, T.notKept);
   assert.equal(m.notes.length, 0);
   assert.equal(m.patches[0].cell.text, 'Pre-Onboarding');
-  // the index is right but the text is not the label (a renamed label meanwhile)
-  m = fake();
+});
+
+test('the wanted index read back but with another text (the label renamed in Monday since the board meta was read): the write WAS made — the note names Monday\'s label, the answer says so', async () => {
+  const m = fake();
   const realWrite = svc._io.writeStage;
   svc._io.writeStage = async (id, cols) => { await realWrite(id, cols); m.stageCellOverride = { value: JSON.stringify({ index: 0 }), text: 'Docs Started' }; };
-  await refused(call(), 502, T.notKept);
-  // unlock asked, the lock not cleared
-  m = fake({ stage: 'Cancelled', lock: 'Yes' });
+  try {
+    const r = await call();
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.stage, { index: 0, label: 'Docs Started' });
+    assert.equal(r.renamed, true);
+    assert.equal(r.warning, T.renamed('Docs Started', 'Document Collection Started'));
+    assert.match(r.warning, /^Monday now calls this stage “Docs Started” \(this page had “Document Collection Started”\)/);
+    assert.equal(m.notes.length, 1, 'the only record of who did it is posted');
+    assert.match(m.notes[0].body, /: Pre-Onboarding → Docs Started\. Changed on the Client Master page by Asha/);
+    assert.equal(m.patches[0].cell.text, 'Docs Started', 'the cache follows the read-back');
+    // a retry finds the case already there: unchanged, nothing written again
+    const again = await call();
+    assert.equal(again.unchanged, true);
+    assert.equal(m.writes.length, 1);
+  } finally { svc._io.writeStage = realWrite; }
+});
+
+test('unlock asked, the stage landed but the lock does not read No: the write WAS made — note (saying the lock is not confirmed), ok with lockUnconfirmed, unlocked false', async () => {
+  const m = fake({ stage: 'Cancelled', lock: 'Yes' });
   svc._io.writeStage = async (id, cols) => { m.writes.push({ id, cols }); m.stage = 'Internal Review'; };
-  await refused(call({ body: { index: IDX['Internal Review'], expected: IDX.Cancelled, reason: 'Cancelled by mistake' } }), 502, T.notKept);
-  assert.equal(m.notes.length, 0);
+  const r = await call({ body: { index: IDX['Internal Review'], expected: IDX.Cancelled, reason: 'Cancelled by mistake' } });
+  assert.equal(r.ok, true);
+  assert.equal(r.unlocked, false);
+  assert.equal(r.lockUnconfirmed, true);
+  assert.equal(r.warning, T.lockUnconfirmed('Yes'));
+  assert.match(r.warning, /^Monday still shows the Automation Lock as “Yes”, not No — check it in Monday/);
+  assert.equal(m.notes.length, 1);
+  const n = m.notes[0].body;
+  assert.match(n, /Cancelled → Internal Review\. The app also asked Monday to unlock the case \(Automation Lock = No\), but Monday still shows it as “Yes” — check it\. Reason: Cancelled by mistake\./);
+  assert.ok(!/<b>unlocked<\/b>/.test(n), 'never claims an unlock Monday does not show');
+  assert.equal(m.patches.find((p) => p.colId === LOCK).cell.text, 'Yes', 'the cache follows the lock Monday shows');
 });
 
 test('the note failed: the stage stays changed, the answer says noteFailed, the cache is still patched', async () => {
@@ -540,6 +592,34 @@ test('a cold server copy: the answer still says the stage, row null (the page ap
   assert.equal(r.row, null);
   assert.deepEqual(r.stage, { index: 0, label: 'Document Collection Started' });
   assert.equal(m.writes.length, 1);
+});
+
+test('rowFor on a server copy older than 20 minutes (a quiet stretch): the row is still rebuilt with its new views, so it leaves the tab it left', async () => {
+  Object.assign(svc._io, REAL_IO);
+  const cio = dashboardService._casesIo;
+  const realNow = cio.io.now, realQ = mondayApi.query;
+  let clock = 3e12;
+  cio.io.now = () => clock;
+  const raw = (idx) => ({ id: ITEM, name: 'Client X', created_at: '2026-11-01T00:00:00Z', group: { id: 'group_mm8qqjyz', title: 'November 2026' },
+    column_values: [{ id: STAGE, text: 'Internal Review', value: JSON.stringify({ index: idx }) }, { id: 'text_mm142s49', text: '2026-T-1', value: null }] });
+  try {
+    mondayApi.query = async (gql) => {
+      if (/items_page/.test(gql)) return { boards: [{ items_page: { cursor: null, items: [{ id: ITEM }] } }] };
+      if (/items\(ids: \$ids, limit: 100\)/.test(gql)) return { items: [raw(IDX['Internal Review'])] };
+      if (/groups \{ id title position \}/.test(gql)) return { boards: [{ groups: [], columns: [] }] };
+      throw new Error('unexpected ' + gql.slice(0, 60));
+    };
+    await cio.refresh();
+    mondayApi.query = async () => { throw new Error('rowFor never reads Monday'); };
+    assert.ok(svc._io.rowFor(ITEM, STAFF).views.includes('assigning'), 'Internal Review: on Assigning');
+    clock += cio.CASES_HARD_MS + 5 * 60 * 1000;   // 25 minutes later, nobody loaded the page
+    assert.equal(dashboardService.peekCachedItems(), null, 'the plain peek still refuses an old copy');
+    dashboardService.patchCachedColumn(ITEM, STAGE, { value: JSON.stringify({ index: IDX['Application Submitted'] }), text: 'Application Submitted' });
+    const r = svc._io.rowFor(ITEM, STAFF);
+    assert.ok(r, 'not null on an old copy');
+    assert.equal(r.stageIdx, IDX['Application Submitted']);
+    assert.ok(!r.views.includes('assigning'), 'Application Submitted: off Assigning');
+  } finally { cio.io.now = realNow; cio.overrides.clear(); mondayApi.query = realQ; }
 });
 
 // ── the real io (a fake mondayApi.query) ──
@@ -582,8 +662,10 @@ test('io.rowFor: the row rebuilt from the cached rows — views from the server\
     dashboardService.peekCachedItems = () => ({ items: [raw(IDX['Pre-Onboarding'])], at: Date.now(), version: 1 });
     r = svc._io.rowFor(ITEM, STAFF);
     assert.ok(r.waiting && typeof r.waiting.code === 'string', 'a Pre-Onboarding row gets its "waiting" (here: not checked yet)');
-    dashboardService.peekCachedItems = () => null;
-    assert.equal(svc._io.rowFor(ITEM, STAFF), null);
+    let asked = null;
+    dashboardService.peekCachedItems = (o) => { asked = o; return null; };
+    assert.equal(svc._io.rowFor(ITEM, STAFF), null, 'nothing cached at all: null');
+    assert.deepEqual(asked, { anyAge: true }, 'the row is rebuilt whatever the copy\'s age');
     dashboardService.peekCachedItems = () => ({ items: [], at: Date.now(), version: 1 });
     assert.equal(svc._io.rowFor(ITEM, STAFF), null);
   } finally {
