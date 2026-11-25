@@ -247,11 +247,12 @@ function cellStage(cv, labels) {
 /**
  * Checklist Template Applied → was the case already onboarded? (pure) true = Yes; false = No or blank (blank = a
  * new / legacy case — the webhook's own reading); null = cannot tell (the cell missing from the read, or a label
- * other than Yes / No) — and DCS is then refused.
+ * other than Yes / No) — and DCS is then refused. Blank uses this module's own rule (as cellStage): no value, or
+ * a value that reads as index 5 (Monday's cleared status) with no label text.
  */
 function onboardedOf(cv) {
   if (!cv) return null;
-  if (cv.value == null) return false;
+  if (cv.value == null || (statusIndex(cv.value) === EMPTY_INDEX && !s(cv.text))) return false;
   const t = s(cv.text).toLowerCase();
   if (t === 'yes') return true;
   if (t === 'no') return false;

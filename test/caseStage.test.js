@@ -43,7 +43,7 @@ function fake(o = {}) {
     if (st.missing) return null;
     const cvs = [stageCell(), lockCell(),
       { id: 'color_mm0x9fnn', ...status(st.pay, 1) },
-      ...(st.appliedMissing ? [] : [{ id: 'color_mm0xs7kp', ...status(st.applied, st.applied === 'Yes' ? 1 : st.applied === 'No' ? 2 : 3) }]),
+      ...(st.appliedMissing ? [] : [{ id: 'color_mm0xs7kp', ...(st.appliedCellOverride || status(st.applied, st.applied === 'Yes' ? 1 : st.applied === 'No' ? 2 : 3)) }]),
       { id: 'date_mm0xjm1z', text: st.stageStart, value: st.stageStart ? JSON.stringify({ date: st.stageStart }) : null },
       { id: 'text_mm142s49', text: '2026-TEST-001', value: null }];
     for (const [k, v] of Object.entries(st.people)) cvs.push({ id: k, text: '', value: v });
@@ -236,6 +236,9 @@ test('onboardedOf: Yes = onboarded; No or blank = new (the webhook\'s own readin
   assert.equal(svc.onboardedOf(undefined), null);
   assert.equal(svc.onboardedOf({ id: 'color_mm0xs7kp', value: '{"index":3}', text: 'Maybe' }), null);
   assert.equal(svc.onboardedOf({ id: 'color_mm0xs7kp', value: '{"index":3}', text: '' }), null, 'a label with no text');
+  assert.equal(svc.onboardedOf({ id: 'color_mm0xs7kp', value: '{"index":5}', text: '' }), false, 'a cleared cell (index 5, no label) is blank');
+  assert.equal(svc.onboardedOf({ id: 'color_mm0xs7kp', value: '{"index":5,"post_id":null}', text: '' }), false, 'cleared cell with extra keys');
+  assert.equal(svc.onboardedOf({ id: 'color_mm0xs7kp', value: '{"index":5}', text: 'Yes' }), true, 'index 5 carrying a real label is read by its label');
 });
 
 test('the working stages are the engines\' own ACTIVE_STAGES (one copy each in four engines)', () => {
@@ -418,6 +421,12 @@ test('preview: an already-onboarded case (Checklist Template Applied = Yes) at P
   }
   assert.equal(m.leadFinds, 0, 'no signature read when DCS cannot be chosen');
   nothingWritten(m);
+  // a cleared cell that still stores index 5 with no label = blank = a new case: DCS open again
+  Object.assign(m, { appliedMissing: false, appliedCellOverride: { value: JSON.stringify({ index: 5 }), text: '' }, leads: [] });
+  const r5 = await svc.preview({ staff: STAFF, hasKey: false, itemId: ITEM });
+  assert.equal(dcs(r5).allowed, true, 'index 5 + no label is blank, not "cannot tell"');
+  assert.notEqual(dcs(r5).why, T.dcsOnboardedUnknown);
+  nothingWritten(m);
 });
 
 test('preview: a held onboarding case (Paid, a hold note, not resumed) warns on every stage except DCS; an unreadable history says it could not check', async () => {
@@ -547,6 +556,11 @@ test('POST (the page bypassed): Internal Review → Pre-Onboarding → DCS on an
     assert.equal(r.ok, true, applied || '(blank)');
     assert.equal(ok.writes.length, 1);
   }
+  // a cell cleared in Monday that still stores index 5 with no label is blank too (the module's own blank rule) — not "cannot tell"
+  const cleared = fake({ appliedCellOverride: { value: JSON.stringify({ index: 5, post_id: null }), text: '' } });
+  const r = await call();
+  assert.equal(r.ok, true, 'cleared index-5 flag = a new case');
+  assert.equal(cleared.writes.length, 1);
 });
 
 test('stale: the stage changed since the page loaded → 409 changed with the stage now (and the row), the cache follows, nothing written', async () => {
