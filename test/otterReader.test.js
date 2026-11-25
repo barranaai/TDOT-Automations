@@ -775,10 +775,10 @@ test('the consultation record page: the recording code near the client\'s name, 
 test('the staff guide: how to record so the notes file themselves, what happens if the title is forgotten — marked as not switched on yet', () => {
   const g = JSON.parse(read('src/staffGuide/guide-data.json'));
   const a = g.howto.find((h) => /record a consultation in Otter so the notes file themselves/i.test(h.q));
-  const b = g.howto.find((h) => /forgot to type the code/i.test(h.q));
+  const b = g.howto.find((h) => /forgot to type the (Client ID or )?code/i.test(h.q));
   assert.ok(a && b);
   assert.equal(a.lane, 'consultant');
-  assert.ok(/BEFORE you stop the recording/.test(a.answer) && /Recording code/.test(a.answer) && /Not switched on yet/.test(a.answer));
+  assert.ok(/BEFORE you stop the recording/.test(a.answer) && /Type in Otter/.test(a.answer) && /Client ID/.test(a.answer) && /TD-12345/.test(a.answer) && /Not switched on yet/.test(a.answer));
   assert.ok(/Otter recordings to match/.test(b.answer) && /Save to this client/.test(b.answer) && /Not a consultation/.test(b.answer) && /Not switched on yet/.test(b.answer));
   const auto = g.automatic.find((x) => x.id === 'auto-otter-recordings');
   assert.deepEqual([auto.switch, auto.stage, /^Not switched on yet/.test(auto.setting_note)], ['OTTER_READER', 'consultation', true]);
