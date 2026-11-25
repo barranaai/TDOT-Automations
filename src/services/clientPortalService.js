@@ -761,7 +761,7 @@ function buildPortalPage(snap, opts) {
 
     <div class="case-meta">
       <div>📋 <strong>Case:</strong> ${escHtml(snap.caseRef)}</div>
-      ${snap.clientId ? `<div class="client-number">🪪 <strong>${isStaff ? 'Client number' : 'Your client number'}:</strong> ${escHtml(snap.clientId)}</div>` : ''}
+      ${snap.clientId ? `<div class="client-number">🪪 <strong>Client number:</strong> ${escHtml(snap.clientId)}</div>` : ''}
       <div>📌 <strong>Stage:</strong> ${escHtml(isStaff ? snap.caseStage : journey.label)}</div>
       ${snap.totalMembers > 1 ? `<div>👥 <strong>Applicants:</strong> ${snap.submittedMembers} / ${snap.totalMembers} submitted</div>` : ''}
     </div>

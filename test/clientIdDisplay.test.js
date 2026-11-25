@@ -457,7 +457,7 @@ test('the lead snapshot reads the Lead Board Client ID copy only once it is made
 
 // ─── the client portal ─────────────────────────────────────────────────────────
 
-test('the client portal: "Your client number: CL-…" near the case ref when the client has one; nothing when not; staff see "Client number"; escaped', () => {
+test('the client portal: "Client number: CL-…" near the case ref when the client has one (the same words for the client, a sponsor on the same link, and staff); nothing when not; escaped', () => {
   const { buildPortalPage, clientStage, toClientTimeline } = require('../src/services/clientPortalService');
   const snap = (extra) => Object.assign({
     clientName: 'Ann Example', caseRef: '2026-SP-001', caseType: 'Study Permit', caseSubType: null, caseStage: 'Document Collection Started', accessToken: 'tok',
@@ -469,7 +469,7 @@ test('the client portal: "Your client number: CL-…" near the case ref when the
     assert.ok(!/client number|client-number|undefined/i.test(html.replace(/qUnavailable|undefined_/g, '')), 'a blank ID: no line, nothing made up');
   }
   const html = buildPortalPage(snap({ clientId: 'CL-2026-00042' }), { mode: 'client' });
-  assert.match(html, /<div>📋 <strong>Case:<\/strong> 2026-SP-001<\/div>\s*<div class="client-number">🪪 <strong>Your client number:<\/strong> CL-2026-00042<\/div>/);
+  assert.match(html, /<div>📋 <strong>Case:<\/strong> 2026-SP-001<\/div>\s*<div class="client-number">🪪 <strong>Client number:<\/strong> CL-2026-00042<\/div>/);
   assert.match(buildPortalPage(snap({ clientId: 'CL-2026-00042' }), { mode: 'staff', staffName: 'Staff' }), /<strong>Client number:<\/strong> CL-2026-00042/);
   assert.ok(!buildPortalPage(snap({ clientId: 'CL-2026-00042<script>' }), { mode: 'client' }).includes('CL-2026-00042<script>'));
 });
