@@ -775,6 +775,21 @@ ${buildNavHeader('engines')}
       </div>
     </div>
 
+    <!-- The Client ID backfill (2026-11-25): named admins only — the card shows when the sign-in is one (guardNamedAdmin). -->
+    <div class="butil-card" id="cid-backfill-card" style="display:none">
+      <div class="butil-hd">
+        <div class="butil-icon">🔢</div>
+        <div>
+          <div class="butil-title">Client ID backfill</div>
+          <div class="butil-sub">Named admins only &nbsp;·&nbsp; Clients · Client Master · Lead Board</div>
+        </div>
+      </div>
+      <div class="butil-body">
+        <p class="butil-desc">Gives every past client their Client ID from Gauri's answered check list, on the server, in the background.</p>
+        <div class="butil-actions"><a class="butil-btn preview" href="/admin/client-ids/backfill" style="text-decoration:none">Open the backfill page</a></div>
+      </div>
+    </div>
+
   </div><!-- /board-utils-grid -->
 
   <!-- Activity Log -->
@@ -825,6 +840,7 @@ ${buildNavHeader('engines')}
     fetch('/admin/payments/viewer', { headers: { 'X-Api-Key': key }, credentials: 'same-origin' })
       .then(function(r) { return r.ok ? r.json() : null; })
       .then(function(v) {
+        if (v && v.canUndo) { var cb = document.getElementById('cid-backfill-card'); if (cb) cb.style.display = ''; }   // the Client ID backfill link: named admins only
         if (!v || v.canUndo) return;
         var bar = document.createElement('div');
         bar.setAttribute('role', 'status');

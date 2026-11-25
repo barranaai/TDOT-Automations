@@ -882,6 +882,56 @@ async function writeJsonFile(path, data, { etag = '' } = {}) {
   return { etag: (res && res.data && res.data.eTag) || '', created: !!(res && res.status === 201) };
 }
 
+/**
+ * A file of any kind under "TDOT System/" (never "Client Documents") — the Client ID
+ * backfill's answered sheet and apply log (2026-11-25). The same two write conditions
+ * as writeJsonFile: with `etag` only over that version (If-Match), without it only
+ * when there is no file yet (conflictBehavior=fail); a clash throws err.conflict.
+ * @returns {Promise<{ etag: string, created: boolean }>}
+ */
+async function writeSystemFile(path, content, { etag = '', contentType = 'application/octet-stream' } = {}) {
+  if (!/^TDOT System\/[^\\]+$/.test(String(path || '')) || /(^|\/)\.\.(\/|$)/.test(path)) throw new Error('writeSystemFile: only a path under "TDOT System/"');
+  let conflict = false;
+  let res;
+  try {
+    res = await withGraphAuth('writeSystemFile', async (token) => {
+      const headers = { Authorization: `Bearer ${token}`, 'Content-Type': contentType, ...(etag ? { 'If-Match': etag } : {}) };
+      const url = `${itemUrl(path)}/content${etag ? '' : '?@microsoft.graph.conflictBehavior=fail'}`;
+      try {
+        return await axios.put(url, content, { headers, timeout: GRAPH_UPLOAD_TIMEOUT_MS, maxBodyLength: Infinity });
+      } catch (err) {
+        const st = err.response?.status;
+        if (st === 412 || st === 409) { conflict = true; return null; }
+        throw err;
+      }
+    });
+  } catch (err) {
+    throw wrapError('OneDrive file write failed', err);
+  }
+  if (conflict) { const e = new Error(`${path} changed meanwhile`); e.conflict = true; throw e; }
+  return { etag: (res && res.data && res.data.eTag) || '', created: !!(res && res.status === 201) };
+}
+
+/**
+ * Read a file under "TDOT System/" as bytes, with its eTag.
+ * @returns {Promise<null | { buffer: Buffer, etag: string }>}  null = no such file
+ */
+async function readSystemFile(path) {
+  if (!/^TDOT System\/[^\\]+$/.test(String(path || '')) || /(^|\/)\.\.(\/|$)/.test(path)) throw new Error('readSystemFile: only a path under "TDOT System/"');
+  try {
+    return await withGraphAuth('readSystemFile', async (token) => {
+      const headers = { Authorization: `Bearer ${token}` };
+      let meta;
+      try { meta = await axios.get(`${itemUrl(path)}?$select=id,eTag`, { headers, timeout: GRAPH_TIMEOUT_MS }); }
+      catch (err) { if (err.response?.status === 404) return null; throw err; }
+      const body = await axios.get(`${userBase()}/items/${encodeURIComponent(meta.data.id)}/content`, { headers, timeout: GRAPH_TIMEOUT_MS, responseType: 'arraybuffer' });
+      return { buffer: Buffer.from(body.data), etag: meta.data.eTag || '' };
+    });
+  } catch (err) {
+    throw wrapError('OneDrive file read failed', err);
+  }
+}
+
 /** Forget what the process remembers about a case's folder (after a repair renamed or merged folders). */
 function forgetCaseFolder(caseRef) {
   const ref = String(caseRef || '').trim();
@@ -1612,7 +1662,7 @@ module.exports = {
   listFileVersions, readFileVersion,
   uploadFileAsNew,
   ensureCaseWorkFolders, workFoldersFailedNoteText, CASE_WORK_FOLDERS, WORK_FOLDERS_SINCE,
-  listCaseFoldersInRoot, pickCaseFolder, chooseCaseFolderWithReason, setCaseFolderLinkLookup, resolveCaseFolderNameForWrite, listRootFolderTree, readJsonFile, writeJsonFile, moveItemById, copyItemById, renameItemById, ensureSubfolderById, forgetCaseFolder, orgLinkById, holdCaseFolder, releaseCaseFolder,
+  listCaseFoldersInRoot, pickCaseFolder, chooseCaseFolderWithReason, setCaseFolderLinkLookup, resolveCaseFolderNameForWrite, listRootFolderTree, readJsonFile, writeJsonFile, readSystemFile, writeSystemFile, moveItemById, copyItemById, renameItemById, ensureSubfolderById, forgetCaseFolder, orgLinkById, holdCaseFolder, releaseCaseFolder,
   createCaseFolder, isCaseFolderHeld,
   _resetWorkFoldersMemo: () => _workFoldersComplete.clear(),
   _workFoldersMemoHas:   (id) => _workFoldersComplete.has(String(id)),

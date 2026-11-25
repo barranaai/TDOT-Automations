@@ -104,6 +104,19 @@ function assertNoMangledRegexes(html, page) {
   }
 }
 
+// The Client ID backfill page (2026-11-25): its script sits in a template literal too.
+test('clientIdBackfillPage: the emitted script parses, carries no mangled regex, and keeps the inline-JS rules', () => {
+  const page = require('../src/routes/clientIdBackfillPage');
+  const html = page.buildBackfillHTML();
+  assertScriptsParse(html, 'client id backfill');
+  assertNoMangledRegexes(html, 'client id backfill');
+  assert.ok(!page.PAGE_JS.includes('`'), 'no backtick in the page script');
+  assert.ok(!page.PAGE_JS.includes('${'), 'no ${ in the page script');
+  assert.ok(!page.PAGE_JS.includes('\\'), 'no backslash in the page script (the lost-backslash trap)');
+  const denied = page.buildDeniedHTML('</p><script>alert(1)</script>', '/q/auth/monday?returnTo=%2Fx');
+  assert.ok(!denied.includes('<script>alert(1)'), 'a message stays inert');
+});
+
 const queue0 = () => require('../src/routes/adminConsultation').buildQueueHTML();
 test('emitted page scripts carry no backslash-mangled regex literals', async () => {
   const consult = require('../src/routes/adminConsultation');

@@ -1958,6 +1958,37 @@ app.post('/admin/client-ids/probe-record', async (req, res) => {
   }
 });
 
+// The Client ID backfill, run on the server (Faran 2026-11-25): the laptop has no Microsoft
+// keys, so the apply (counter file, lock, checkpoint, log — all on OneDrive under "TDOT
+// System/client-id-backfill/") runs here, in the background. The page and every write: a
+// NAMED admin; the two read-only answers: the normal admin gate. See routes/clientIdBackfillPage.js.
+{
+  const bfPage = require('./routes/clientIdBackfillPage');
+  const bfDeps = {
+    namedAdminCheck: (req, what) => require('./utils/staffIdentity').namedAdminCheck(tryStaffAuth(req), caseAccess.isAdminEmail, { what, hint: '' }),
+    namedAdmin: (req, res, what) => resolveNamedAdminViewerOrReject(req, res, what),
+    resolveAdmin: (req, res, message) => resolveAdminOrReject(req, res, message),
+  };
+  const bfUpload = require('multer')({
+    storage: require('multer').memoryStorage(),
+    limits: { fileSize: require('./services/clientIdBackfillJobs').MAX_SHEET_BYTES, files: 1 },
+    fileFilter: (_req, file, cb) => cb(null, /\.xlsx$/i.test(String(file.originalname || ''))),
+  }).single('sheet');
+  app.get('/admin/client-ids/backfill', (req, res) => bfPage.page(req, res, bfDeps));
+  app.get('/admin/client-ids/backfill/state', (req, res) => bfPage.state(req, res, bfDeps));
+  app.get('/admin/client-ids/backfill/job', (req, res) => bfPage.job(req, res, bfDeps));
+  app.post('/admin/client-ids/backfill/upload', (req, res, next) => bfPage.uploadGate(req, res, next, bfDeps),
+    require('./utils/uploadLimits').uploadSlot,
+    (req, res, next) => bfUpload(req, res, (err) => {
+      if (!err) return next();
+      const tooBig = err.code === 'LIMIT_FILE_SIZE';
+      res.status(tooBig ? 413 : 400).json({ ok: false, error: tooBig ? 'That file is too big — the limit is 5 MB.' : 'There was a problem with that upload — please try again.' });
+    }),
+    (req, res) => bfPage.upload(req, res, bfDeps));
+  app.post('/admin/client-ids/backfill/start', express.json(), (req, res) => bfPage.start(req, res, bfDeps));
+  app.post('/admin/client-ids/backfill/unlock', express.json(), (req, res) => bfPage.unlock(req, res, bfDeps));
+}
+
 // READ-ONLY: one root folder under "Client Documents" by its EXACT name, with
 // every file (who/when) in it and its sub-folders — for looking into a folder
 // the app does not resolve a case to (see oneDriveService.listRootFolderTree).
