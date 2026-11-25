@@ -37,13 +37,18 @@ const quietly = (fn) => async () => {
   try { return await fn(logs); } finally { [console.log, console.warn] = o; }
 };
 
-// The board config with the Client ID columns made (the shipped file has them null).
+// A board config with made-up Client ID columns (the shipped file has the real ones since 2026-11-25; the fakes keep every query here offline-shaped).
 const CFG = JSON.parse(JSON.stringify(shipped));
 CFG.columns.clientId = 'text_cid';
 CFG.cmLinkColumns.clientId = 'text_cmcid';
 CFG.leadLinkColumns.clientId = 'text_leadcid';
 const COL = CFG.columns;
 const CM_BOARD = String(CFG.clientMasterBoardId);
+/** The board config as it was before the column script ran: the three Client ID column ids null. */
+const NOT_MADE = JSON.parse(JSON.stringify(shipped));
+NOT_MADE.columns.clientId = null;
+NOT_MADE.cmLinkColumns.clientId = null;
+NOT_MADE.leadLinkColumns.clientId = null;
 
 /**
  * The fake world: a Clients board (rows by id), the Lead Board (leads by id), the Client
@@ -172,11 +177,11 @@ test('ensureClientId, switch OFF (unset, "off", "yes", anything else): nothing i
   }
 }));
 
-test('ensureClientId, the Client ID column not made yet (the shipped config): refused with no Monday call, even when on', quietly(async () => {
-  const cfg = JSON.parse(JSON.stringify(shipped));
+test('ensureClientId, the Client ID column not made yet (its id null): refused with no Monday call, even when on', quietly(async () => {
+  const cfg = JSON.parse(JSON.stringify(NOT_MADE));
   const w = world({ rows: [{ id: '7', name: 'Jane Doe' }], cfg });
   try {
-    assert.equal(shipped.columns.clientId, null, 'the shipped config is inert');
+    assert.equal(cfg.columns.clientId, null, 'no Client ID column');
     const r = await withEnv(ON, () => svc.ensureClientId('7'));
     assert.equal(r.reason, 'not-configured');
     assert.equal(w.seen.calls.length, 0);
@@ -305,7 +310,7 @@ test('findMatches reads the Client ID column once it exists (and not while it is
     assert.equal(m[0].clientIdText, 'CL-2026-00007');
     assert.ok(w.seen.calls.every((q) => !/items_page_by_column_values/.test(q) || /"text_cid"/.test(q)));
   } finally { w.done(); }
-  const cfg = JSON.parse(JSON.stringify(shipped));
+  const cfg = JSON.parse(JSON.stringify(NOT_MADE));
   const w2 = world({ rows: [{ id: '7', name: 'Jane Doe', email: 'jane@x.com' }], cfg });
   try {
     const m = await svc.findMatches({ email: 'jane@x.com', fullName: 'Jane Doe' });

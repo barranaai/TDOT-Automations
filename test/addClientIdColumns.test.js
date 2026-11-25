@@ -3,7 +3,8 @@
 // scripts/add-client-id-columns.js (2026-11-25): the 3 "Client ID" text
 // columns + the CM rename. Dry run by default and it then calls NOTHING;
 // --apply creates (or adopts) each column and saves its id at once; a re-run
-// does nothing twice. Tested on a COPY of the config with a fake Monday.
+// does nothing twice. Tested on a COPY of the config with a fake Monday — the copy as it was BEFORE the
+// script ran (the three Client ID ids null); the shipped file has the real ids since the run of 2026-11-25.
 
 const test   = require('node:test');
 const assert = require('node:assert/strict');
@@ -16,11 +17,12 @@ const REAL_CFG = path.join(__dirname, '..', 'src', 'data', 'clientsBoard.json');
 
 const DIRS = [];
 test.after(() => { for (const d of DIRS) fs.rmSync(d, { recursive: true, force: true }); });
-function tmpCfg(mut) {
+function tmpCfg(mut, { asShipped = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cid-cols-'));
   DIRS.push(dir);
   const p = path.join(dir, 'clientsBoard.json');
   const cfg = JSON.parse(fs.readFileSync(REAL_CFG, 'utf8'));
+  if (!asShipped) { cfg.columns.clientId = null; cfg.cmLinkColumns.clientId = null; cfg.leadLinkColumns.clientId = null; }   // before the run
   if (mut) mut(cfg);
   fs.writeFileSync(p, JSON.stringify(cfg, null, 2));
   return p;
@@ -137,9 +139,27 @@ test('an already-renamed CM column is left alone', async () => {
   assert.equal(api.calls.filter((c) => /change_column_title/.test(c.q)).length, 0);
 });
 
-test('the shipped config was NOT changed by these tests (the script has not been run)', () => {
+test('the shipped config holds what the real run of 2026-11-25 made, and these tests did NOT change it', () => {
   const cfg = JSON.parse(fs.readFileSync(REAL_CFG, 'utf8'));
-  assert.equal(cfg.columns.clientId, null);
-  assert.equal(cfg.cmLinkColumns.clientId, null);
-  assert.equal(cfg.leadLinkColumns.clientId, null);
+  assert.equal(cfg.columns.clientId, 'text_mm9ewm14');
+  assert.equal(cfg.cmLinkColumns.clientId, 'text_mm9ep9bw');
+  assert.equal(cfg.leadLinkColumns.clientId, 'text_mm9etdaj');
+  assert.equal(cfg.cmLinkColumns.clientAccountId, 'text_mm5xmeka', 'the item-id column keeps its id (only its title changed)');
+});
+
+test('run again on the shipped config: every column is kept, nothing is made or renamed, the file is left as it is', async () => {
+  const p = tmpCfg(null, { asShipped: true });
+  const before = fs.readFileSync(p, 'utf8');
+  const dry = await script.run({ cfgPath: p, api: fakeMonday(startBoards()), leadBoardId: '18416845157', log: silent });
+  assert.deepEqual(dry.steps.filter((x) => x.kind !== 'rename').map((x) => x.kind), ['keep', 'keep', 'keep']);
+  const boards = startBoards();
+  boards[18425020416].push({ id: 'text_mm9ewm14', title: 'Client ID', type: 'text' });
+  boards[18401523447].push({ id: 'text_mm9ep9bw', title: 'Client ID', type: 'text' });
+  boards[18401523447][0].title = 'Client account (system)';
+  boards[18416845157].push({ id: 'text_mm9etdaj', title: 'Client ID', type: 'text' });
+  const api = fakeMonday(boards);
+  const r = await script.run({ apply: true, cfgPath: p, api, leadBoardId: '18416845157', log: silent, pause: async () => {} });
+  assert.deepEqual(r.done, []);
+  assert.equal(api.calls.filter((c) => /create_column|change_column_title/.test(c.q)).length, 0);
+  assert.equal(fs.readFileSync(p, 'utf8'), before);
 });

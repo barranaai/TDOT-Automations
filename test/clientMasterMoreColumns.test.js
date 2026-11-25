@@ -53,6 +53,12 @@ const MORE = [
   ['consultRecord', 'Consultation record', 'link', 'link_mm8txy20'],
 ];
 const MORE_IDS = MORE.map((m) => m[0]), MORE_LABELS = MORE.map((m) => m[1]);
+/* The Client ID (2026-11-25): on the PAGE one more optional column, after the nineteen, once the Client Master "Client ID"
+   column is in the config (it is since 2026-11-25). It is not one of the board's `more` values (the row carries it as
+   clientId, the page draws its own cell), so the service's nineteen above are unchanged. */
+const CID_COL = require('../src/services/clientIdDisplay').columns().cm;
+const PAGE_MORE = MORE.concat(CID_COL ? [['clientId', 'Client ID', 'text', CID_COL]] : []);
+const PAGE_MORE_IDS = PAGE_MORE.map((m) => m[0]);
 const SYS_IDS = ['hardDeadlineSys', 'softDeadlineSys', 'prepDeadlineSys'];
 const SYS_WORDS = 'Set by the system from the stage timings. Not the client’s deadline (see Actual deadline).';
 /* The three columns that must never be read, sent or shown (spec rule 7). */
@@ -157,11 +163,11 @@ test('the nineteen columns: the same ids, names and order in the list, the servi
   // the page: CM_MORE is the same nineteen with how each is shown, and the panel is given them in that order
   for (const html of [await pageOff(), await pageOn()]) {
     const main = inlineScripts(html)[0];
-    assert.deepEqual(JSON.parse(main.match(/var CM_MORE = (\{.*?\});/)[1]), Object.fromEntries(MORE.map((m) => [m[0], m[2]])));
-    assert.deepEqual(Object.keys(JSON.parse(main.match(/var CM_MORE = (\{.*?\});/)[1])), MORE_IDS);
+    assert.deepEqual(JSON.parse(main.match(/var CM_MORE = (\{.*?\});/)[1]), Object.fromEntries(PAGE_MORE.map((m) => [m[0], m[2]])));
+    assert.deepEqual(Object.keys(JSON.parse(main.match(/var CM_MORE = (\{.*?\});/)[1])), PAGE_MORE_IDS, 'the nineteen, then the Client ID once its column is made');
     assert.ok(main.includes('tabCols: CM_TABCOLS, names: CM_COLNAMES, moreCols: Object.keys(CM_MORE), ids: { btn: "cm-cols-btn", pop: "cm-cols-pop" }'));
     const names = JSON.parse(main.match(/var CM_COLNAMES = (\{.*?\});/)[1]);
-    assert.deepEqual(MORE_IDS.map((id) => names[id]), MORE_LABELS);
+    assert.deepEqual(PAGE_MORE_IDS.map((id) => names[id]), PAGE_MORE.map((m) => m[1]));
   }
 });
 
@@ -619,14 +625,36 @@ test('the Columns panel on EVERY tab: the tab\'s own columns, "More columns" as 
     assert.equal(sec.length, 3, tab || 'All');
     assert.deepEqual(sec[0], ['', want[tab][0].map((id) => id + '+')], (tab || 'All') + ': the tab\'s own, ticked');
     assert.deepEqual(sec[1], ['More columns', want[tab][1].map((id) => id + '-')], (tab || 'All') + ': the other tabs\' columns, as before');
-    assert.deepEqual(sec[2], ['More from the Monday board', MORE_IDS.map((id) => id + '-')], (tab || 'All') + ': the group of its own, last, all off');
-    assert.deepEqual(p.names().slice(-19), MORE.map((m) => [m[0], m[1]]));
+    assert.deepEqual(sec[2], ['More from the Monday board', PAGE_MORE_IDS.map((id) => id + '-')], (tab || 'All') + ': the group of its own, last, all off (the Client ID last of them)');
+    assert.deepEqual(p.names().slice(-PAGE_MORE.length), PAGE_MORE.map((m) => [m[0], m[1]]));
     assert.match(p.pop().innerHTML, /<label class="qp-row"><input type="checkbox" data-colpick="stageStart"> <span>Stage start date<\/span><\/label>/, 'a real tick box inside its label');
     assert.ok(p.pop().innerHTML.endsWith('<div class="qp-f"><button type="button" class="qp-link" data-act="reset" disabled>Reset to default</button><button type="button" class="qp-done" data-act="close">Done</button></div>'));
   }
   // the panel is never taller than the room there is (the longer list scrolls inside it)
   assert.ok(parseInt(p.pop().style.top, 10) + parseInt(p.pop().style.maxHeight, 10) <= 900);
   assert.ok(PAGE_HTML.includes('#cm-cols-pop .qp-b { min-height:0; }'));
+});
+
+test('the Client ID column (once made): switched on it is drawn like any added column — on All before the delete column (still last, still not printed), Case Ref and Client still pinned; on a view tab after the tab\'s own; the ID or the dash', async () => {
+  if (!CID_COL) return;   // a config without the column: the page has none of it (pinned in test/clientIdDisplay.test.js)
+  const p = await cmPage();
+  const rows = rowsCopy(); rows[0].clientId = 'CL-2026-00042'; rows[1].clientId = '';
+  p.setRows(rows);
+  p.cols().open();
+  p.cols().toggle('', 'clientId', true);
+  assert.deepEqual(p.head(), ALL_LABELS.slice(0, -1).concat(['Client ID', '']));
+  p.agree(16, 'All with the Client ID');
+  assert.equal(p.table.className, 'data-table cm-wide cm-wide-all');
+  assert.equal(p.table.attrs['data-ncols'], '15', 'paper: the delete column is not printed');
+  const first = p.cells(p.rows()[0]);
+  assert.match(first[0], /^<td class="cm-pin cm-pin1"/); assert.match(first[1], /^<td class="cm-pin cm-pin2"/);
+  assert.equal(first[14], '<td class="cm-c-cid">CL-2026-00042</td>');
+  assert.ok(first[15].startsWith('<td class="cm-del">'), 'the delete cell is still last');
+  assert.ok(/<td class="cm-c-cid">[^<]*<span[^>]*>—<\/span><\/td>|<td class="cm-c-cid">—<\/td>/.test(p.cells(p.rows()[1])[14]), 'no ID: the dash');
+  p.cols().close(); p.tab('deadlines');
+  p.cols().toggle('deadlines', 'clientId', true);
+  assert.deepEqual(p.head(), VIEW_LABELS.concat(['Client ID']));
+  p.agree(21, 'Deadlines with the Client ID');
 });
 
 test('switch one on: it is added after the tab\'s other columns (before All\'s delete column), the table goes wide and pinned as for any added column, the button says "1 added", the choice is kept — and Reset puts the tab back', async () => {

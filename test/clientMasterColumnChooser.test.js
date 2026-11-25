@@ -39,6 +39,11 @@ const MORE_IDS = ['stageStart', 'hardDeadlineSys', 'softDeadlineSys', 'prepDeadl
 const MORE_LABELS = ['Stage start date', 'Hard deadline (system)', 'Soft deadline (system)', 'Submission prep deadline (system)', 'Reminder count', 'Payment confirmation date', 'Retainer signed date',
   'Missing required documents', 'Questionnaire completion status', 'Last client activity date', 'Ops supervisor', 'Escalation reason', 'OneDrive folder', 'Documents location', 'Consultant',
   'Consultation outcome', 'Consultation fee', 'Source / Reference', 'Consultation record'];
+// The Client ID (2026-11-25): one more optional column, last of them, once the Client Master "Client ID" column is in the
+// config (it is since 2026-11-25) — the page and the list are given the same answer (listSpecs ctx.clientIdCol).
+const CID = !!require('../src/services/clientIdDisplay').columns().cm;
+const PANEL_MORE_IDS = MORE_IDS.concat(CID ? ['clientId'] : []);
+const PANEL_MORE_LABELS = MORE_LABELS.concat(CID ? ['Client ID'] : []);
 
 /* ── the rules (pure) ── */
 
@@ -395,7 +400,7 @@ test('every emitted script parses; the Columns code is on the Client Master page
   assert.ok(inlineScripts(html)[1].includes("pickCols: 'cmPickCols'"));
   // the names the panel lists are the list's own column names
   const names = JSON.parse(main.match(/var CM_COLNAMES = (\{.*?\});/)[1]);
-  const cols = S.casesListOpts({ views: VIEWS }).cols;
+  const cols = S.casesListOpts({ views: VIEWS, clientIdCol: CID }).cols;
   assert.deepEqual(names, Object.fromEntries(cols.filter((c) => c.label).map((c) => [c.id, c.label])));
   assert.ok(!('del' in names));
   const sum = await renderRoute('/summary');
@@ -469,8 +474,8 @@ test('the panel: named for the tab on view, the tab\'s columns as tick boxes in 
   assert.equal(pop.style.display, 'flex');
   assert.equal(p.btn.attrs['aria-expanded'], 'true'); assert.ok(p.btn.classList.contains('open'));
   assert.ok(pop.innerHTML.startsWith('<div class="qp-h"><span>Columns on All</span><button type="button" class="qp-x" data-act="close" aria-label="Close">×</button></div>'));
-  assert.deepEqual(p.boxes(), ['caseRef+!', 'clientName+!'].concat(ALL_IDS.slice(2, -1).map((id) => id + '+'), ALL_CAN_ADD.map((id) => id + '-'), MORE_IDS.map((id) => id + '-')),
-    'the tab\'s own, then the other tabs\' columns, then the nineteen optional board columns — all of those unticked');
+  assert.deepEqual(p.boxes(), ['caseRef+!', 'clientName+!'].concat(ALL_IDS.slice(2, -1).map((id) => id + '+'), ALL_CAN_ADD.map((id) => id + '-'), PANEL_MORE_IDS.map((id) => id + '-')),
+    'the tab\'s own, then the other tabs\' columns, then the nineteen optional board columns (and the Client ID) — all of those unticked');
   assert.ok(!pop.innerHTML.includes('data-colpick="del"'));
   assert.equal((pop.innerHTML.match(/<span class="qp-c">Always shown<\/span>/g) || []).length, 2);
   assert.match(pop.innerHTML, /<label class="qp-row cmc-lock"><input type="checkbox" data-colpick="caseRef" checked disabled> <span>Case Ref<\/span><span class="qp-c">Always shown<\/span><\/label>/);
@@ -478,7 +483,7 @@ test('the panel: named for the tab on view, the tab\'s columns as tick boxes in 
   assert.ok(pop.innerHTML.indexOf('data-colpick="status"') < pop.innerHTML.indexOf('<div class="qp-t">More columns</div>') && pop.innerHTML.indexOf('<div class="qp-t">More columns</div>') < pop.innerHTML.indexOf('data-colpick="dependents"'));
   const names = [...pop.innerHTML.matchAll(/data-colpick="[^"]+"[^>]*> <span>([^<]*)<\/span>/g)].map((m) => m[1]);
   assert.deepEqual(names, ['Case Ref', 'Client', 'Type', 'Stage', 'Phase', 'Deadline', 'Promised', 'Health', 'SLA Risk', 'Support Officer', 'Manager', 'Readiness', 'Days', 'Status',
-    'Dependents', 'Client email', 'Contact number', 'Sub-type', 'Deadline type', 'Retained by', 'Retainer status', 'Payment status', 'Client portal', 'Questionnaire %', 'Documents uploaded %'].concat(MORE_LABELS));
+    'Dependents', 'Client email', 'Contact number', 'Sub-type', 'Deadline type', 'Retained by', 'Retainer status', 'Payment status', 'Client portal', 'Questionnaire %', 'Documents uploaded %'].concat(PANEL_MORE_LABELS));
   // the optional board columns are a group of their own, last, under a plain heading
   assert.ok(pop.innerHTML.indexOf('data-colpick="docPct"') < pop.innerHTML.indexOf('<div class="qp-t">More from the Monday board</div>')
     && pop.innerHTML.indexOf('<div class="qp-t">More from the Monday board</div>') < pop.innerHTML.indexOf('data-colpick="stageStart"'));
@@ -494,7 +499,7 @@ test('the panel: named for the tab on view, the tab\'s columns as tick boxes in 
   p.cols().close(); p.tab('assigning'); p.cols().open();
   assert.equal(pop.attrs['aria-label'], 'Columns on Assigning');
   assert.ok(pop.innerHTML.includes('<span>Columns on Assigning</span>'));
-  assert.deepEqual(p.boxes(), ['caseRef+!', 'clientName+!'].concat(VIEW_IDS.slice(2).map((id) => id + '+'), VIEW_CAN_ADD.map((id) => id + '-'), MORE_IDS.map((id) => id + '-')));
+  assert.deepEqual(p.boxes(), ['caseRef+!', 'clientName+!'].concat(VIEW_IDS.slice(2).map((id) => id + '+'), VIEW_CAN_ADD.map((id) => id + '-'), PANEL_MORE_IDS.map((id) => id + '-')));
   p.cols().close(); p.tab('eeita'); p.cols().open();
   assert.ok(pop.innerHTML.includes('<span>Columns on EE after ITA</span>'));
 });

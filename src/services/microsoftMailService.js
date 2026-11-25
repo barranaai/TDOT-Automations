@@ -160,7 +160,8 @@ async function sendEmail({ to, subject, html, replyTo, attachments, tag, testCli
 
   // A CLIENT email (a tag) carries one short line "Your client number: CL-…" at the end of the BODY when the
   // person has a Client ID (build step 5) — never in the subject. Best-effort: no ID, no copy column yet, or a
-  // slow / failed read = the body exactly as given.
+  // slow / failed read = the body exactly as given. The look-up (one Monday read) runs only while CLIENT_IDS is
+  // report or on — switched off, nothing is read here and the request is exactly as before.
   const content = (tag && typeof tag === 'object') ? await require('./clientIdDisplay').mailBody(html, tag) : html;
 
   const message = {

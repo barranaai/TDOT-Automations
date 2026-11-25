@@ -252,6 +252,14 @@ const FETCH_IDS_TODAY = ['text_mm142s49', 'dropdown_mm0xd1qn', 'color_mm0x8faa',
 const FETCH_IDS_MORE = ['date_mm0xjm1z', 'date_mm0x26t4', 'date_mm0xfgbp', 'date_mm0xgk76', 'date_mm34x2ga', 'color_mm0x9s08', 'text_mm0xvpr9', 'link_mm47dng8', 'color_mm6be76m',
   'text_mm8t8zhx', 'text_mm8tmcm7', 'text_mm8tsw2c', 'text_mm8tqsa5', 'link_mm8txy20'];
 const FETCH_IDS_NOW = FETCH_IDS_TODAY.slice(0, FETCH_IDS_TODAY.indexOf('link_mm2vta5') + 1).concat(FETCH_IDS_MORE, FETCH_IDS_TODAY.slice(FETCH_IDS_TODAY.indexOf('link_mm2vta5') + 1));
+/* The Client ID (2026-11-25): once the Client Master "Client ID" column is in the config (it is since 2026-11-25) every row carries
+   clientId — the readable ID ('' when none; fine to show, never the client account's item id) — right after retainerStatus (plain
+   rows) / portalLink (with the contact details), and the same one board read asks for that one column more, last. No new request. */
+const CID_COL = require('../src/services/clientIdDisplay').columns().cm;
+const withCid = (keys, after) => { if (!CID_COL) return keys; const k = keys.slice(); k.splice(k.indexOf(after) + 1, 0, 'clientId'); return k; };
+const KEYS_NOW = withCid(KEYS_TODAY, 'retainerStatus');
+const KEYS_NOW_CONTACT = withCid(KEYS_TODAY_CONTACT, 'portalLink');
+const FETCH_IDS_READ = FETCH_IDS_NOW.concat(CID_COL ? [CID_COL] : []);
 
 function fakeBoard(items) {
   const calls = [];
@@ -285,9 +293,9 @@ test('getDashboardStats: managerIds leaves the service ONLY with { todo: true } 
   await onBoard(BOARD, async (board) => {
     const plain = await dash.getDashboardStats();                                    // /api/dashboard/stats (the key-only route)
     assert.deepEqual(Object.keys(plain), STATS_KEYS_TODAY);
-    for (const c of plain.cases) assert.deepEqual(Object.keys(c), KEYS_TODAY);
+    for (const c of plain.cases) assert.deepEqual(Object.keys(c), KEYS_NOW);
     const contact = await dash.getDashboardStats(undefined, { contact: true });      // the page's own route, tab not on for this viewer
-    for (const c of contact.cases) assert.deepEqual(Object.keys(c), KEYS_TODAY_CONTACT);
+    for (const c of contact.cases) assert.deepEqual(Object.keys(c), KEYS_NOW_CONTACT);
     for (const opts of [{}, { fresh: false }, { contact: true, todo: false }, { todo: undefined }, { todo: null }, { todo: 1 }, { todo: 'true' }, { todo: 'on' }, { todo: {} }]) {
       const s = await dash.getDashboardStats(undefined, opts);
       assert.ok(s.cases.every((c) => !('managerIds' in c)), 'not kept for ' + JSON.stringify(opts) + ' — only a plain true keeps it');
@@ -295,7 +303,7 @@ test('getDashboardStats: managerIds leaves the service ONLY with { todo: true } 
     }
     // asked for: the same rows, plus the one field, right after officerIds
     const todo = await dash.getDashboardStats(undefined, { todo: true });
-    const withIt = KEYS_TODAY.slice(); withIt.splice(withIt.indexOf('officerIds') + 1, 0, 'managerIds');
+    const withIt = KEYS_NOW.slice(); withIt.splice(withIt.indexOf('officerIds') + 1, 0, 'managerIds');
     for (const c of todo.cases) assert.deepEqual(Object.keys(c), withIt);
     assert.deepEqual(todo.cases.map((c) => [c.id, c.managerIds]), [
       ['1', { personIds: ['211'], teamIds: [] }], ['2', { personIds: [], teamIds: [] }], ['3', { personIds: [], teamIds: [] }],
@@ -303,7 +311,7 @@ test('getDashboardStats: managerIds leaves the service ONLY with { todo: true } 
     ]);
     // both options together: the contact keys and the one field
     const both = await dash.getDashboardStats(undefined, { contact: true, todo: true });
-    const bothKeys = KEYS_TODAY_CONTACT.slice(); bothKeys.splice(bothKeys.indexOf('officerIds') + 1, 0, 'managerIds');
+    const bothKeys = KEYS_NOW_CONTACT.slice(); bothKeys.splice(bothKeys.indexOf('officerIds') + 1, 0, 'managerIds');
     for (const c of both.cases) assert.deepEqual(Object.keys(c), bothKeys);
     // the option changes nothing else in the answer
     const strip = (s) => JSON.stringify({ ...s, generatedAt: null, cases: s.cases.map(({ managerIds, ...rest }) => rest) });
@@ -323,12 +331,12 @@ test('the board read is unchanged: the same columns in the same order as before 
     const rowsQ = board.calls.filter((q) => /items\(ids: \$ids, limit: 100\)/.test(q));
     assert.equal(rowsQ.length, 1, 'one batch read for the six rows, served to both calls');
     const ids = /column_values\(ids: \[([^\]]*)\]\)/.exec(rowsQ[0])[1].split(',').map((x) => JSON.parse(x));
-    assert.deepEqual(ids, FETCH_IDS_NOW);
-    assert.deepEqual(ids.filter((id) => !FETCH_IDS_MORE.includes(id)), FETCH_IDS_TODAY, 'without the optional columns of 2026-11-20: the read of before, to the letter');
+    assert.deepEqual(ids, FETCH_IDS_READ);
+    assert.deepEqual(ids.filter((id) => !FETCH_IDS_MORE.includes(id) && id !== CID_COL), FETCH_IDS_TODAY, 'without the optional columns of 2026-11-20: the read of before, to the letter');
     assert.equal(FETCH_IDS_NOW.length, FETCH_IDS_TODAY.length + 14);
     assert.ok(ids.includes(dash.COLS.caseManager) && ids.includes(dash.COLS.caseSupportOfficer));
     assert.equal(board.calls.length, 3, 'the id listing, the board meta and the rows — as before');
-    assert.equal(rowsQ[0], 'query($ids: [ID!]) { items(ids: $ids, limit: 100) { id name created_at group { id title } column_values(ids: [' + FETCH_IDS_NOW.map((id) => '"' + id + '"').join(',') + ']) { id text value } } }');
+    assert.equal(rowsQ[0], 'query($ids: [ID!]) { items(ids: $ids, limit: 100) { id name created_at group { id title } column_values(ids: [' + FETCH_IDS_READ.map((id) => '"' + id + '"').join(',') + ']) { id text value } } }');
   });
 });
 
@@ -411,7 +419,7 @@ test('the answer per mode: off = no `todo`, no row marked, no managerIds — for
         for (const staff of [null, OFFICER, ADMIN]) {
           const a = await pageAnswer(staff);
           assert.ok(noTodoAnywhere(a), String(mode));
-          for (const c of a.cases) assert.deepEqual(Object.keys(c), KEYS_TODAY_CONTACT);
+          for (const c of a.cases) assert.deepEqual(Object.keys(c), KEYS_NOW_CONTACT);
         }
       });
     }

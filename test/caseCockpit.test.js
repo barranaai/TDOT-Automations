@@ -186,7 +186,15 @@ test('getCaseOverview: keys unchanged apart from the new sponsor key, which the 
     assert.deepEqual(o.familyAddTypes, require('../config/questionnaireFormMap').resolveMemberTypes(o.caseType, o.caseSubType), 'the Family card offers exactly the questionnaire\'s member types for this case');
     const keys = Object.keys(o);
     assert.ok(keys.includes('sponsor'));
-    assert.deepEqual(keys.filter((k) => k !== 'sponsor'), OVERVIEW_KEYS, 'no other key changes (the client portal and the cockpit page read these)');
+    // `client` (Client ID, 2026-11-25): last, and only once the Client Master "Client ID" column is in the config (it is since
+    // 2026-11-25). It holds the readable ID and the other cases only — never a token, a folder id or the client account's item id.
+    const cidMade = !!require('../src/services/clientIdDisplay').columns().cm;
+    assert.deepEqual(keys.filter((k) => k !== 'sponsor'), OVERVIEW_KEYS.concat(cidMade ? ['client'] : []), 'no other key changes (the client portal and the cockpit page read these)');
+    if (cidMade) {
+      assert.deepEqual(Object.keys(o.client), ['id', 'otherCases', 'otherCasesUnavailable', 'more']);
+      assert.ok(o.client.id === '' || /^CL-\d{4}-\d{5,}$/.test(o.client.id));
+      assert.ok(!/accessToken|folderId|clientAccountId|text_mm0x6haq|text_mm47y540|text_mm5xmeka/i.test(JSON.stringify(o.client)));
+    }
     assert.equal(o.sponsor.available, true);
     assert.equal(o.sponsor.status, 'ok');
     assert.equal(o.sponsor.name, 'Faheem Khan');

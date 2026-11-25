@@ -3,7 +3,7 @@
 // Build step 5 (2026-11-25): where the Client ID SHOWS — the Client Master page (an optional column + the search),
 // the case page (the ID under the name + "Other cases of this client"), the warn-and-link panels, the Leads search,
 // the client portal line and the one short line in client email BODIES (never the subject).
-// Everything is inert while the "Client ID" columns are not made (the shipped config): each test sets the config
+// Everything is inert while the "Client ID" columns are not made (NOT_MADE: the ids null): each test sets the config
 // it needs and puts it back. All made-up data. Monday, Graph and axios are stubbed; nothing leaves the machine.
 
 const test   = require('node:test');
@@ -19,20 +19,27 @@ const { listCore } = require('../src/routes/listFilters');
 
 const CM_COL = 'text_cid_cm', LEAD_COL = 'text_cid_lead', CL_COL = 'text_cid_clients';
 const CONFIGURED = { boardId: '1', columns: { clientId: CL_COL }, cmLinkColumns: { clientAccountId: 'text_mm5xmeka', clientId: CM_COL }, leadLinkColumns: { clientId: LEAD_COL } };
-const SHIPPED = { boardId: '1', columns: { clientId: null }, cmLinkColumns: { clientAccountId: 'text_mm5xmeka', clientId: null }, leadLinkColumns: { clientId: null } };
+const NOT_MADE = { boardId: '1', columns: { clientId: null }, cmLinkColumns: { clientAccountId: 'text_mm5xmeka', clientId: null }, leadLinkColumns: { clientId: null } };
 
 function stub(obj, key, fn) { const keep = obj[key]; obj[key] = fn; return () => { obj[key] = keep; }; }
 async function withConfig(cfg, fn) {
   D._resetForTests(); D._setConfigForTests(cfg);
   try { return await fn(); } finally { D._resetForTests(); }
 }
+/** The CLIENT_IDS switch said out loud for fn (undefined = unset), put back after. */
+async function withIds(mode, fn) {
+  const was = process.env.CLIENT_IDS;
+  if (mode === undefined) delete process.env.CLIENT_IDS; else process.env.CLIENT_IDS = mode;
+  try { return await fn(); } finally { if (was === undefined) delete process.env.CLIENT_IDS; else process.env.CLIENT_IDS = was; }
+}
 const scriptsOf = (html) => [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
 
 // ─── the pieces ────────────────────────────────────────────────────────────────
 
-test('the shipped config: every Client ID column is still missing, so nothing is read and nothing shows', () => {
+test('the shipped config: the three Client ID columns are made (2026-11-25) — the real file gives their text column ids; a config with them null gives none', async () => {
   D._resetForTests();
-  assert.deepEqual(D.columns(), { clients: '', cm: '', lead: '' });
+  assert.deepEqual(D.columns(), { clients: 'text_mm9ewm14', cm: 'text_mm9ep9bw', lead: 'text_mm9etdaj' });
+  await withConfig(NOT_MADE, () => assert.deepEqual(D.columns(), { clients: '', cm: '', lead: '' }));
 });
 
 test('shownId / the line: only a stored ID shows; a blank, a typo, a Monday item id or markup shows NOTHING (never "CL-" or "undefined")', () => {
@@ -129,7 +136,7 @@ test('the Client ID column: none until the Monday column exists; then ONE option
 test('the Client Master rows carry clientId ONLY once the copy column is made — read from that column, a non-ID cell is ""; the board read asks for it', async () => {
   const dash = require('../src/services/dashboardService');
   const item = (cells) => ({ id: '9', name: 'Ann Example', created_at: '2026-11-01T00:00:00Z', group: { id: 'g', title: 'Nov' }, column_values: cells });
-  await withConfig(SHIPPED, () => { assert.ok(!('clientId' in dash.parseItem(item([{ id: CM_COL, text: 'CL-2026-00042' }]), 0))); });
+  await withConfig(NOT_MADE, () => { assert.ok(!('clientId' in dash.parseItem(item([{ id: CM_COL, text: 'CL-2026-00042' }]), 0))); });
   await withConfig(CONFIGURED, () => {
     assert.equal(dash.parseItem(item([{ id: CM_COL, text: 'CL-2026-00042' }]), 0).clientId, 'CL-2026-00042');
     assert.equal(dash.parseItem(item([{ id: CM_COL, text: '18425020416' }]), 0).clientId, '');
@@ -144,7 +151,7 @@ test('the Client Master page: with the column made it offers "Client ID" (CM_MOR
   const page = () => new Promise((resolve) => layer.route.stack[0].handle({ query: {} }, { type: () => ({ send: resolve }) }));
   const keep = process.env.TODO_TAB; delete process.env.TODO_TAB;
   try {
-    const off = await withConfig(SHIPPED, page);
+    const off = await withConfig(NOT_MADE, page);
     assert.ok(!off.includes(', clientIdCol: true') && !off.includes('"clientId":"text"') && !off.includes('"clientId":"Client ID"'));
     const on = await withConfig(CONFIGURED, page);
     const main = scriptsOf(on)[0];
@@ -175,7 +182,7 @@ test('otherCasesOfClient: no ID or no column = no read; one read by the copy col
     ] } };
   });
   try {
-    await withConfig(SHIPPED, async () => {
+    await withConfig(NOT_MADE, async () => {
       assert.deepEqual(await cockpit.otherCasesOfClient('CL-2026-00042', '100'), { otherCases: [], otherCasesUnavailable: false, more: false });
     });
     await withConfig(CONFIGURED, async () => {
@@ -207,7 +214,7 @@ test('readClientMaster: reads the Client ID copy only once the column is made; t
   let q = '';
   const back = stub(mondayApi, 'query', async (gql) => { q = gql; return { items: [{ group: { id: 'g', title: 'Nov' }, column_values: [{ id: CM_COL, text: 'CL-2026-00042' }], updates: [] }] }; });
   try {
-    await withConfig(SHIPPED, async () => { const r = await cockpit.readClientMaster('100'); assert.equal(r.clientId, ''); assert.ok(!q.includes(CM_COL)); });
+    await withConfig(NOT_MADE, async () => { const r = await cockpit.readClientMaster('100'); assert.equal(r.clientId, ''); assert.ok(!q.includes(CM_COL)); });
     await withConfig(CONFIGURED, async () => { const r = await cockpit.readClientMaster('100'); assert.equal(r.clientId, 'CL-2026-00042'); assert.ok(q.includes(`"${CM_COL}"`)); });
   } finally { back(); }
 });
@@ -433,7 +440,7 @@ test('the lead snapshot reads the Lead Board Client ID copy only once it is made
     stub(leadService, 'parseItem', (it) => ({ id: it.id, fullName: it.name })),
   ];
   try {
-    await withConfig(SHIPPED, async () => {
+    await withConfig(NOT_MADE, async () => {
       const leads = await snap.io.fetchLeads();
       assert.ok(!queries[0].includes(LEAD_COL));
       assert.equal(leads[0][snap.CONTACT].clientId, '');
@@ -482,7 +489,7 @@ test('the portal snapshot reads the Client ID copy with the same row once it is 
   ];
   const vc = { itemId: '1', clientName: 'Ann', caseType: 'Study Permit', caseSubType: null, accessToken: 'tok' };
   try {
-    await withConfig(SHIPPED, async () => { const s = await portal.getPortalSnapshot({ caseRef: '2026-SP-001', validatedCase: vc }); assert.equal(s.clientId, ''); assert.ok(!q.includes(CM_COL)); });
+    await withConfig(NOT_MADE, async () => { const s = await portal.getPortalSnapshot({ caseRef: '2026-SP-001', validatedCase: vc }); assert.equal(s.clientId, ''); assert.ok(!q.includes(CM_COL)); });
     await withConfig(CONFIGURED, async () => {
       assert.equal((await portal.getPortalSnapshot({ caseRef: '2026-SP-001', validatedCase: vc })).clientId, 'CL-2026-00042');
       assert.ok(q.includes(`"${CM_COL}"`));
@@ -494,7 +501,28 @@ test('the portal snapshot reads the Client ID copy with the same row once it is 
 
 // ─── client emails ─────────────────────────────────────────────────────────────
 
-test('idForMail: the case\'s Client Master copy first, else the lead\'s copy; nothing read while the columns are missing; a sponsor or test email never; a failed or slow read = ""; cached', async () => {
+test('idForMail (CLIENT_IDS on or report): the case\'s Client Master copy first, else the lead\'s copy; nothing read while the columns are missing; a sponsor or test email never; a failed or slow read = ""; cached', async () => {
+  for (const mode of ['on', 'report']) await withIds(mode, () => idForMailRun(mode));
+});
+
+test('idForMail, CLIENT_IDS off (unset, "off", anything else): NO Monday read for an email, even with the columns made — only an ID the caller passes shows', async () => {
+  const keep = D.io.query;
+  let reads = 0;
+  D.io.query = async () => { reads++; return { items: [{ column_values: [{ id: CM_COL, text: 'CL-2026-00042' }] }] }; };
+  try {
+    for (const mode of [undefined, 'off', 'yes']) {
+      await withIds(mode, () => withConfig(CONFIGURED, async () => {
+        assert.equal(await D.idForMail({ caseItemId: '555', leadId: '77', kind: 'doc-reminder' }), '', String(mode));
+        assert.equal(await D.mailBody('<p>x</p>', { caseItemId: '555', kind: 'doc-reminder' }), '<p>x</p>', String(mode) + ': the body exactly as given');
+        assert.equal(await D.idForMail({ clientId: 'CL-2026-00099', caseItemId: '555', kind: 'x' }), 'CL-2026-00099', 'a caller that knows it: no read needed');
+        assert.equal(await D.idForMail({ clientId: 'CL-2026-00099', kind: 'sponsor' }), '', 'never to a sponsor');
+      }));
+    }
+    assert.equal(reads, 0, 'switched off: not one Monday read on the way to Graph');
+  } finally { D.io.query = keep; }
+});
+
+async function idForMailRun(mode) {
   const calls = [];
   const answers = { [`${CM_COL}:555`]: 'CL-2026-00042', [`${LEAD_COL}:77`]: 'CL-2026-00007', [`${CM_COL}:556`]: '' };
   const keep = { q: D.io.query, ms: D.io.readMs };
@@ -507,7 +535,7 @@ test('idForMail: the case\'s Client Master copy first, else the lead\'s copy; no
   };
   D.io.readMs = () => 20;
   try {
-    await withConfig(SHIPPED, async () => {
+    await withConfig(NOT_MADE, async () => {
       assert.equal(await D.idForMail({ caseItemId: '555', leadId: '77', kind: 'doc-reminder' }), '');
       assert.equal(calls.length, 0, 'no column: no read');
     });
@@ -526,12 +554,14 @@ test('idForMail: the case\'s Client Master copy first, else the lead\'s copy; no
       assert.equal(await D.idForMail({ caseItemId: '998', kind: 'x' }), '');
       assert.equal(calls.filter((c) => c === `${CM_COL}:998`).length, 2, 'a slow read is not kept as "no ID": the next email asks again');
       assert.equal(await D.idForMail({ clientId: 'CL-2026-00099', caseItemId: '555', kind: 'x' }), 'CL-2026-00099', 'a caller that knows it');
-      assert.equal(await D.mailBody('<p>x</p>', { caseItemId: '999', kind: 'x' }), '<p>x</p>');
+      assert.equal(await D.mailBody('<p>x</p>', { caseItemId: '999', kind: 'x' }), '<p>x</p>', mode);
     });
   } finally { D.io.query = keep.q; D.io.readMs = keep.ms; }
-});
+}
 
-async function sendWith({ cfg, tag, html, answer }) {
+async function sendWith(opts) {
+  const { cfg, tag, html, answer, readMs } = opts;
+  const mode = 'mode' in opts ? opts.mode : 'on';   // the switch as said (mode: undefined = unset); not said = on
   const mail = require('../src/services/microsoftMailService');
   const keys = ['MS_TENANT_ID', 'MS_CLIENT_ID', 'MS_CLIENT_SECRET', 'MS_FROM_EMAIL', 'CLIENT_MAIL_FROM'];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
@@ -542,13 +572,20 @@ async function sendWith({ cfg, tag, html, answer }) {
     if (/oauth2\/v2\.0\/token/.test(url)) return { data: { access_token: 'tok', expires_in: 3600 } };
     sent.push(JSON.parse(JSON.stringify(body))); return { status: 202, data: '' };
   };
-  D.io.query = async (gql, v) => { reads.push(v); return { items: [{ column_values: [{ id: CM_COL, text: answer }] }] }; };
+  const keepMs = D.io.readMs;
+  D.io.query = async (gql, v) => {
+    reads.push(v);
+    if (answer instanceof Error) throw answer;
+    if (answer === 'hang') return new Promise(() => {});
+    return { items: [{ column_values: [{ id: CM_COL, text: answer }] }] };
+  };
+  if (readMs) D.io.readMs = () => readMs;
   mail.invalidateAccessToken(); mail._reset();
   try {
-    await withConfig(cfg, () => mail.sendEmail({ to: 'ann@example.com', subject: 'Documents still needed — 2026-SPE-016 · Internal Review', html, ...(tag ? { tag } : {}) }));
-    return { message: sent[0].message, reads };
+    const result = await withIds(mode, () => withConfig(cfg, () => mail.sendEmail({ to: 'ann@example.com', subject: 'Documents still needed — 2026-SPE-016 · Internal Review', html, ...(tag ? { tag } : {}) })));
+    return { message: sent[0].message, body: sent[0], reads, sends: sent.length, result };
   } finally {
-    axios.post = keepPost; D.io.query = keepQ; mail.invalidateAccessToken(); mail._reset();
+    axios.post = keepPost; D.io.query = keepQ; D.io.readMs = keepMs; mail.invalidateAccessToken(); mail._reset();
     for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
   }
 }
@@ -566,11 +603,35 @@ test('sendEmail: a CLIENT email (tagged) carries "Your client number: CL-…" in
   const staff = await sendWith({ cfg: CONFIGURED, tag: null, html, answer: 'CL-2026-00042' });
   assert.equal(staff.message.body.content, html);
   assert.equal(staff.reads.length, 0, 'a staff alert reads nothing');
-  const shipped = await sendWith({ cfg: SHIPPED, tag, html, answer: 'CL-2026-00042' });
-  assert.equal(shipped.message.body.content, html);
-  assert.equal(shipped.reads.length, 0, 'no column: nothing read');
+  const notMade = await sendWith({ cfg: NOT_MADE, tag, html, answer: 'CL-2026-00042' });
+  assert.equal(notMade.message.body.content, html);
+  assert.equal(notMade.reads.length, 0, 'no column: nothing read');
   const sponsor = await sendWith({ cfg: CONFIGURED, tag: { caseItemId: '555', kind: 'sponsor' }, html, answer: 'CL-2026-00042' });
   assert.equal(sponsor.message.body.content, html, 'the sponsor is not the client: never their number');
+  // report: the same look-up (a read is not a write)
+  const report = await sendWith({ cfg: CONFIGURED, tag, html, answer: 'CL-2026-00042', mode: 'report' });
+  assert.equal(report.message.body.content, '<html><body><p>Hello Ann</p>' + D.mailLineHtml('CL-2026-00042') + '</body></html>');
+});
+
+test('sendEmail with the columns made: switched OFF a client email makes no Monday read and goes byte-for-byte as before; switched on a failed or hung look-up is swallowed — the email still goes once, from the same mailbox, saveToSentItems:false, the body as given', async () => {
+  const html = '<html><body><p>Hello Ann</p></body></html>';
+  const tag = { caseRef: '2026-SPE-016', caseItemId: '555', kind: 'doc-reminder' };
+  const plain = await sendWith({ cfg: CONFIGURED, tag: null, html, answer: '', mode: undefined });
+  for (const mode of [undefined, 'off']) {
+    const off = await sendWith({ cfg: CONFIGURED, tag, html, answer: 'CL-2026-00042', mode });
+    assert.equal(off.reads.length, 0, String(mode) + ': no Monday read');
+    assert.equal(JSON.stringify(off.body), JSON.stringify(plain.body), String(mode) + ': the very request an untagged send makes');
+  }
+  for (const answer of [new Error('Monday 503'), 'hang']) {
+    const t0 = Date.now();
+    const r = await sendWith({ cfg: CONFIGURED, tag, html, answer, mode: 'on', readMs: 30 });
+    assert.ok(Date.now() - t0 < 2000, 'a hung read does not hold the email');
+    assert.equal(r.reads.length, 1);
+    assert.equal(r.sends, 1, 'sent once');
+    assert.equal(JSON.stringify(r.body), JSON.stringify(plain.body), 'the same request: from, saveToSentItems, body');
+    assert.equal(r.body.saveToSentItems, false);
+    assert.deepEqual(r.result, { sendId: null, via: 'default', stamped: false });
+  }
 });
 
 test('never in a subject, a folder name, an Otter code, Square or a payment reference: the display code is used by none of them', () => {

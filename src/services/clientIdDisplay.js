@@ -119,12 +119,18 @@ function withTimeout(p, ms) {
  * Client Master copy of the case first, else the Lead Board copy of the lead. Best-effort:
  * a read that fails or is slow gives '' (the email goes without the line, never late).
  * Nothing is read while the copy column is not made. Cached a few minutes per record.
+ *
+ * The look-up is one extra Monday request per email (the pages and the portal get the ID in
+ * the read they already make; an email has no such read). So it is made only while CLIENT_IDS
+ * is report or on: switched off, a client email sends exactly as before — no Monday call on the
+ * way to Graph — and carries the line only when the caller already knows the ID (tag.clientId).
  */
 async function idForMail(tag) {
   const t = tag && typeof tag === 'object' ? tag : null;
   if (!t || NO_LINE_KINDS.has(s(t.kind))) return '';
   const given = shownId(t.clientId);
   if (given) return given;
+  if (!require('../../config/features').clientIdsActive()) return '';
   const cols = columns();
   const tries = [];
   const caseItem = itemIdOf(t.caseItemId), lead = itemIdOf(t.leadId);

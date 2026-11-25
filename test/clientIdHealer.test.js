@@ -43,6 +43,11 @@ CFG.columns.clientId = 'text_cid';
 CFG.cmLinkColumns.clientId = 'text_cmcid';
 CFG.leadLinkColumns.clientId = 'text_leadcid';
 const C = CFG.columns;
+/** The board config as it was before the column script ran (the Client ID column ids null) — the shipped file has them since 2026-11-25. */
+const NOT_MADE = JSON.parse(JSON.stringify(shipped));
+NOT_MADE.columns.clientId = null;
+NOT_MADE.cmLinkColumns.clientId = null;
+NOT_MADE.leadLinkColumns.clientId = null;
 const CM = healer.CM_COL;
 
 /** A Clients row as Monday returns it. */
@@ -111,8 +116,8 @@ test('off: the hourly tick reads nothing, and the Needs-attention list gets no l
   } finally { w.restore(); }
 });
 
-test('the shipped config (column ids null): not-configured, nothing read', async () => {
-  const w = world({ cfg: shipped });
+test('the Client ID column ids null (a config before the column script): not-configured, nothing read', async () => {
+  const w = world({ cfg: NOT_MADE });
   try {
     await withEnv({ CLIENT_IDS: 'on' }, async () => {
       const r = await quiet(() => healer.tick());

@@ -703,7 +703,9 @@ test('the page: the wide table scrolls inside its own box with Case Ref and Clie
   assert.ok(print.includes('#all-cases-table.cm-wide { width:100%; min-width:0; font-size:7pt; }') && print.includes('.cm-clip, .cm-ell { display:block; overflow:visible; white-space:normal; }'));
   // the search box says what it finds; the engine gets the board order and the Real / Imaginary reading from the page
   assert.ok(html.includes('placeholder="Search by client, case ref, type, officer, email, phone…"'));
-  assert.ok(html.includes('meta: function() { return (_data && _data.meta) || null; }, typeOf: CMW.typeOf }'));
+  // (… and, once the Client Master "Client ID" column is in the config — it is since 2026-11-25 — that it has the Client ID column)
+  const cidMade = !!require('../src/services/clientIdDisplay').columns().cm;
+  assert.ok(html.includes('meta: function() { return (_data && _data.meta) || null; }, typeOf: CMW.typeOf' + (cidMade ? ', clientIdCol: true' : '') + ' }'));
   // the Summary page has no Client Master table and none of its look
   const sum = await renderRoute('/summary');
   assert.ok(!sum.includes('#all-cases-table.cm-wide') && !sum.includes('.cm-portal {') && !sum.includes('id="all-cases-table"'));

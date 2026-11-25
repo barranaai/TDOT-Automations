@@ -231,17 +231,15 @@ test('25 typed numbers in a row: stops with no number', quiet(async () => {
   assert.equal(seen.writes.length, 0);
 }));
 
-test('while the Client ID column is not set up (null in the config) nothing is read or written', quiet(async () => {
+test('while the Client ID column is not set up (null in a config) nothing is read or written', quiet(async () => {
   for (const cols of [{ ...COLS, clientsCol: '' }, { ...COLS, clientsBoardId: '' }, {}, null]) {
     const { a, seen } = harness({ cols });
     for (const r of [await a.allocate(), await a.allocateBlock(3), await a.repairCounter()]) assert.equal(r.reason, 'not-configured');
     assert.equal(seen.reads + seen.writes.length + seen.probes.length + seen.boardReads, 0);
   }
-  // and the shipped config really is null → the real readColumns says so
+  // and the shipped config (the columns made 2026-11-25): the real readColumns gives the Clients and Client Master Client ID columns
   const a = fresh();
-  assert.equal(a.readColumns().clientsCol, '');
-  assert.equal(a.readColumns().cmCol, '');
-  assert.equal(a.readColumns().clientsBoardId, '18425020416');
+  assert.deepEqual(a.readColumns(), { clientsBoardId: '18425020416', clientsCol: 'text_mm9ewm14', cmBoardId: '18401523447', cmCol: 'text_mm9ep9bw' });
 }));
 
 test('allocateBlock: ONE write moves the counter M → M+K; the block is contiguous', quiet(async () => {

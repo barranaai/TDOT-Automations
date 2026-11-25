@@ -74,6 +74,7 @@ function harness({ items = () => [], leads = () => [], deep = new Map(), deepFai
   NA.io.leadBalances = async () => [];
   NA.io.postNote = async (itemId, body) => { calls.notes.push({ itemId, body }); };
   NA.io.reminderTemplateProblems = async () => templates();
+  NA.io.clientIdProblems = async () => [];         // the Client ID check (CLIENT_IDS report / on, columns made 2026-11-25): no lines — its own tests are in test/clientIdHealer.test.js
   NA.io.leads = async () => leads();
   return calls;
 }

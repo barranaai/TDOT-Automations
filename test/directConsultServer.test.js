@@ -64,6 +64,8 @@ async function live(fn, { sw = '1' } = {}) {
 
 /** A future consultation 3 days ahead at 11:00 Toronto. */
 function futureDay(days = 3) { return torontoIn(days * DAY).slice(0, 10); }
+/** Toronto's calendar day n days from today — by the calendar, not by n × 24 h (across a clock change, n × 24 h from late evening lands a day off). */
+function torontoDay(n) { const [y, m, d] = futureDay(0).split('-').map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); }
 function entry(over = {}) {
   return {
     choice: 'new', fullName: 'Asha Example', email: 'asha@example.com', phone: '416 555 0101',
@@ -172,8 +174,8 @@ test('validator: every refusal, in plain words', () => {
   no({ durationMin: 10 }, /15 to 120/);
   no({ durationMin: 135 }, /15 to 120/);
   no({ durationMin: 20 }, /steps of 15/);
-  no({ date: torontoIn(-31 * DAY).slice(0, 10) }, /more than 30 days ago/);
-  no({ date: torontoIn(400 * DAY).slice(0, 10) }, /more than a year ahead/);
+  no({ date: torontoDay(-31) }, /more than 30 days ago/);
+  no({ date: torontoDay(400) }, /more than a year ahead/);
   no({ payment: { kind: 'invoice', amountCents: 100 } }, /Paid in Square, Cash, E-transfer, Free or Not paid yet/);
   no({ payment: { kind: 'cash' } }, /fee received/);
   no({ about: '' }, /what the consultation is about/);

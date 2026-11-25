@@ -81,11 +81,14 @@ test('the CLIENT_IDS switch: off unless exactly "report" or "on"; read on every 
   }
 });
 
-test('the Client ID column ids ship as null (the feature is inert until the column script runs)', () => {
+test('the Client ID column ids ship configured: three distinct Monday TEXT column ids (made 2026-11-25 by scripts/add-client-id-columns.js --apply)', () => {
   const cfg = require('../src/data/clientsBoard.json');
-  assert.ok('clientId' in cfg.columns && cfg.columns.clientId === null);
-  assert.ok('clientId' in cfg.cmLinkColumns && cfg.cmLinkColumns.clientId === null);
-  assert.ok(cfg.leadLinkColumns && cfg.leadLinkColumns.clientId === null);
+  const ids = [cfg.columns.clientId, cfg.cmLinkColumns.clientId, cfg.leadLinkColumns && cfg.leadLinkColumns.clientId];
+  for (const id of ids) assert.match(String(id), /^text_[a-z0-9]+$/, 'a text column id');
+  assert.equal(new Set(ids).size, 3, 'one column per board');
+  assert.deepEqual(ids, ['text_mm9ewm14', 'text_mm9ep9bw', 'text_mm9etdaj'], 'Clients (the source of truth), Client Master and Lead Board copies');
+  // never one of the item-id / secret columns
+  for (const id of ids) assert.ok(!['text_mm5xmeka', 'text_mm5x5dab', 'text_mm0x6haq', 'text_mm47y540'].includes(id));
   // the old item-id columns are untouched — never reused for the readable ID
   assert.equal(cfg.cmLinkColumns.clientAccountId, 'text_mm5xmeka');
   assert.equal(require('../src/data/newLeadsBoard.json').columns.clientAccountId, 'text_mm5x5dab');

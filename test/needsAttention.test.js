@@ -302,6 +302,7 @@ function harness({ items, checklist = {}, folders = [], deep = new Map(), deepFa
   NA.io.newestChecklistRowAt = async (ref) => newestRow[ref] || 0;
   NA.io.postNote = async (itemId, body) => { calls.notes.push({ itemId, body }); };
   NA.io.reminderTemplateProblems = async () => [];   // the Reminder Templates board: not set up (no read)
+  NA.io.clientIdProblems = async () => [];         // the Client ID check (CLIENT_IDS report / on, columns made 2026-11-25): no lines — its own tests are in test/clientIdHealer.test.js
   NA.io.leads = async () => leads();                  // the shared lead list (paid, no signed date) — never a board read
   NA.io.leadBalances = async (id) => { calls.balances = (calls.balances || []).concat(id); if (balances[id] instanceof Error) throw balances[id]; return balances[id] || []; };
   return calls;

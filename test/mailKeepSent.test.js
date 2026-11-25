@@ -74,9 +74,11 @@ test('mailTag: an invalid value is DROPPED, never thrown — only TdotSendId is 
  * 'ok' (202) or { status, code } (a Graph error) or { timeout: true } / { network: true }.
  */
 async function withMail({ env = {}, answers = [], now = Date.parse('2026-11-20T15:00:00Z') } = {}, fn) {
-  const keys = ['MS_TENANT_ID', 'MS_CLIENT_ID', 'MS_CLIENT_SECRET', 'MS_FROM_EMAIL', 'CLIENT_MAIL_FROM'];
+  // CLIENT_IDS too: these pins are about the office-mailbox switch; the Client ID line's own look-up (one Monday read per
+  // client email, only while CLIENT_IDS is report / on) is tested in test/clientIdDisplay.test.js — unset here, whatever the shell says.
+  const keys = ['MS_TENANT_ID', 'MS_CLIENT_ID', 'MS_CLIENT_SECRET', 'MS_FROM_EMAIL', 'CLIENT_MAIL_FROM', 'CLIENT_IDS'];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
-  const all = { MS_TENANT_ID: 't', MS_CLIENT_ID: 'c', MS_CLIENT_SECRET: 's', MS_FROM_EMAIL: NOREPLY, CLIENT_MAIL_FROM: undefined, ...env };
+  const all = { MS_TENANT_ID: 't', MS_CLIENT_ID: 'c', MS_CLIENT_SECRET: 's', MS_FROM_EMAIL: NOREPLY, CLIENT_MAIL_FROM: undefined, CLIENT_IDS: undefined, ...env };
   for (const k of keys) { if (all[k] === undefined) delete process.env[k]; else process.env[k] = all[k]; }
   const keep = { post: axios.post, warn: console.warn, now: mail.io.now };
   const h = { calls: [], warns: [], now, queue: typeof answers === 'function' ? [] : answers.slice() };

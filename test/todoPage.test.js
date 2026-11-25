@@ -63,6 +63,13 @@ const COLNAMES_MORE = "\"stageStart\":\"Stage start date\",\"hardDeadlineSys\":\
 const COLNAMES_NOW = COLNAMES_TODAY.slice(0, -1) + ',' + COLNAMES_MORE + '}';
 const QUICK_TODAY = ['assigning', 'deadlines', 'eeita'];
 const CTX_TODAY = '{ healthOrder: HEALTH_ORDER, views: CM_VIEWS, initial: cmInitial, onChange: cmOnChange, meta: function() { return (_data && _data.meta) || null; }, typeOf: CMW.typeOf }';
+/* The Client ID (2026-11-25): once the Client Master "Client ID" column is in the config (it is since 2026-11-25) the page has one more
+   optional column — its name after the nineteen, the list script told so at the very end of its context (", clientIdCol: true"), and
+   the Columns panel offers it last on every tab, the To-do tab too. Nothing else of the page changes; nothing of the To-do tab. */
+const CID_MADE = !!require('../src/services/clientIdDisplay').columns().cm;
+const COLNAMES_PAGE = CID_MADE ? COLNAMES_NOW.slice(0, -1) + ',"clientId":"Client ID"}' : COLNAMES_NOW;
+const CTX_TAIL = CID_MADE ? ', clientIdCol: true' : '';
+const CTX_PAGE = CTX_TODAY.slice(0, -2) + CTX_TAIL + ' }';
 const TWELVE = ['caseRef', 'clientName', 'todoWith', 'caseTypeV', 'subType', 'stageV', 'actualDeadline', 'deadlineType', 'internalDeadline', 'officerV', 'qPct', 'docPct'];
 
 const ADMIN = { id: '501', name: 'Admin One', email: 'admin.one@example.com', teamIds: ['7'] };
@@ -178,12 +185,12 @@ test('tab off: CM_VIEWS, CM_TABCOLS, CM_COLNAMES and the tab values are literal 
       const html = await renderRoute('/', req), f = pageFacts(html);
       assert.equal(f.views, VIEWS_TODAY, what);
       assert.equal(f.tabcols, TABCOLS_TODAY, what);
-      assert.equal(f.colnames, COLNAMES_NOW, what + ': the names of before, then the optional columns\' names');
+      assert.equal(f.colnames, COLNAMES_PAGE, what + ': the names of before, then the optional columns\' names');
       assert.equal(f.scripts, 2, what + ': the page script and the list engine\'s, as before');
       for (const w of TAB_WORDS) assert.ok(!html.includes(w), what + ': the page holds "' + w + '"');
       assert.ok(!/to-do/i.test(html), what + ': not in any spelling');
       assert.ok(html.includes('var LT = listCore((') && html.includes(')(CTX), window); })();</script>'), 'nothing is added after the list script');
-      assert.ok(html.includes('var CTX = ' + CTX_TODAY + ';'), what + ': the list script\'s context is today\'s, to the letter');
+      assert.ok(html.includes('var CTX = ' + CTX_PAGE + ';'), what + ': the list script\'s context is today\'s, to the letter');
       for (const s of inlineScripts(html)) new vm.Script(s);
       // the tabs the engine is given, and the columns it draws, from that page's own values
       const views = JSON.parse(f.views);
@@ -231,8 +238,8 @@ test('tab on: To-do is the LAST tab; CM_TABCOLS.todo is the twelve in their orde
   const before = JSON.parse(TABCOLS_TODAY);
   assert.deepEqual(Object.keys(tabcols), ['', 'assigning', 'deadlines', 'eeita', 'todo']);
   for (const k of Object.keys(before)) assert.deepEqual(tabcols[k], before[k], 'the ' + (k || 'All') + ' tab\'s columns are as they were');
-  assert.deepEqual(names, { ...JSON.parse(COLNAMES_NOW), todoWith: 'With' });
-  assert.deepEqual(Object.keys(names), Object.keys(JSON.parse(COLNAMES_NOW)).concat(['todoWith']), '"With" is the last name');
+  assert.deepEqual(names, { ...JSON.parse(COLNAMES_PAGE), todoWith: 'With' });
+  assert.deepEqual(Object.keys(names), Object.keys(JSON.parse(COLNAMES_PAGE)).concat(['todoWith']), '"With" is the last name');
   // the engine's own set for the tab is the same twelve (its order is the list's; the page's order is CM_TABCOLS)
   const opts = S.casesListOpts({ views });
   assert.deepEqual(listCore({}).colsOnTab(opts.cols, 'todo').map((c) => c.id).sort(), TWELVE.slice().sort());
@@ -244,7 +251,7 @@ test('tab on: To-do is the LAST tab; CM_TABCOLS.todo is the twelve in their orde
   assert.ok(main.indexOf('var CMCOLS = (') < main.indexOf('var CM_TODO_WHO_KEY = ') && main.indexOf('var TDU = (') < main.indexOf('var CM_TODO_WHO_KEY = '));
   assert.ok(main.includes(todoPage.TODO_PAGE_JS) && html.includes(todoPage.TODO_CSS));
   // the list script: the hook sits BEFORE meta: (the pinned head and tail of the context are untouched), the boot call after the script
-  assert.ok(html.includes('var CTX = { healthOrder: HEALTH_ORDER, views: CM_VIEWS, initial: cmInitial, onChange: cmOnChange, todoHas: cmTodoHas, meta: function() { return (_data && _data.meta) || null; }, typeOf: CMW.typeOf };'));
+  assert.ok(html.includes('var CTX = { healthOrder: HEALTH_ORDER, views: CM_VIEWS, initial: cmInitial, onChange: cmOnChange, todoHas: cmTodoHas, meta: function() { return (_data && _data.meta) || null; }, typeOf: CMW.typeOf' + CTX_TAIL + ' };'));
   assert.ok(html.includes(')(CTX), window); })();\ncmTodoBoot();</script>'));
   assert.equal(f.scripts, 2, 'still two script blocks');
   // the page under the tab's own additions is the page without it: same title, same subtitle, same toolbar
@@ -1409,7 +1416,7 @@ test('"With" may be added on the other tabs through the Columns button (the same
 
 test('the optional board columns (More from the Monday board, 2026-11-20) on the To-do tab: off by default — the twelve as they were; offered by the Columns button as on every tab; one switched on comes after the twelve; a system date changes neither the order nor any "Passed" mark', async () => {
   const MORE_IDS = ['stageStart', 'hardDeadlineSys', 'softDeadlineSys', 'prepDeadlineSys', 'reminderCount', 'paymentConfirmed', 'retainerSigned', 'missingRequired', 'qStatus', 'lastActivity',
-    'supervisor', 'escalationReason', 'folder', 'docsLocation', 'consultant', 'consultOutcome', 'consultFee', 'sourceRef', 'consultRecord'];
+    'supervisor', 'escalationReason', 'folder', 'docsLocation', 'consultant', 'consultOutcome', 'consultFee', 'sourceRef', 'consultRecord'].concat(CID_MADE ? ['clientId'] : []);   // … then the Client ID, once its column is made
   const withMore = () => { const cs = CASES(); cs[1].more = { hardDeadlineSys: '2026-11-01', softDeadlineSys: '2026-10-20', prepDeadlineSys: '2026-10-10', reminderCount: 2 }; return cs; };   // case 2: Officer One's, promised 2026-12-01 — not passed
   const p = await openPage({ search: '?view=todo&who=me' });
   p.answer(withMore(), { todo: I });
