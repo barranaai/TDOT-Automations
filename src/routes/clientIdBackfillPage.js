@@ -56,7 +56,8 @@ function job(req, res, deps) {
 function uploadGate(req, res, next, deps) {
   const actor = deps.namedAdmin(req, res, PAGE_WHAT);
   if (!actor) return;
-  if (jobs(deps)._current()) return res.status(409).json({ ok: false, reason: 'in-progress', error: 'A check or a run is going right now — wait for it to finish.' });
+  const J = jobs(deps);
+  if (J._busy ? J._busy() : J._current()) return res.status(409).json({ ok: false, reason: 'in-progress', error: 'A check or a run is going right now — wait for it to finish.' });
   req.backfillActor = actor;
   next();
 }
@@ -178,6 +179,7 @@ ${buildNavHeader('client-ids')}
       <dt>Run</dt><dd id="st-run">…</dd>
     </dl>
     <div class="row"><button class="btn" id="btn-refresh" type="button">Look again</button></div>
+    <div class="msg" id="st-msg"></div>
   </section>
 
   <section class="card" id="up-card">
@@ -236,7 +238,7 @@ ${PAGE_JS}
 
 /* The page's own script (browser code, as text). No backslash, no backtick, no dollar-brace. */
 const PAGE_JS = `
-var BF = { st: null, job: null, sheetFile: '', phrase: '', mode: 'start', timer: null };
+var BF = { st: null, job: null, sheetFile: '', phrase: '', mode: 'start', timer: null, stTimer: null, checking: '', offered: '' };
 function el(id) { return document.getElementById(id); }
 function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function hdrs(json) { var h = {}; var k = peekKey(); if (k) h['X-Api-Key'] = k; if (json) h['Content-Type'] = 'application/json'; return h; }
@@ -264,11 +266,25 @@ function listTable(rows, heads) {
 }
 
 function loadState() {
+  if (BF.stTimer) { clearTimeout(BF.stTimer); BF.stTimer = null; }
   return api('GET', '/admin/client-ids/backfill/state').then(function (r) {
     if (!r.ok) { el('st-run').textContent = r.d.message || r.d.error || 'The state could not be read.'; return; }
-    BF.st = r.d; renderState(r.d); renderJob(r.d.job);
-    if (r.d.running) poll();
+    BF.st = r.d; renderState(r.d);
+    if (r.d.running) { renderJob(r.d.job); poll(); return; }
+    if (r.d.run && r.d.run.status === 'running') { renderElsewhere(r.d.run); BF.stTimer = setTimeout(loadState, 30000); return; }
+    renderJob(r.d.job);
   });
+}
+
+/* The checkpoint says 'running' but no run goes on this copy of the server: a restart or a deploy
+   (or another copy runs it). Say so, and look again every 30 seconds until it is cut off or done. */
+function renderElsewhere(run) {
+  el('job-card').classList.remove('hide');
+  el('job-title').textContent = 'Giving the Client IDs';
+  el('job-bar').classList.add('hide');
+  el('job-skipped').innerHTML = '';
+  el('job-body').innerHTML = '<p>' + pill('amber', 'not running here') + ' This run is not going on this copy of the server right now — most likely the server restarted or a deploy is under way. Its progress was last saved ' + esc(when(run.heartbeatAt)) + '.</p>'
+    + '<p>Wait 5 minutes: if nothing saves its progress by then, it counts as cut off and the Resume button shows here. This page looks again every 30 seconds.</p>';
 }
 
 function renderState(st) {
@@ -293,7 +309,8 @@ function renderState(st) {
   // a sheet just checked here keeps its own button (it goes on with the stopped run's numbers too)
   if (run && run.canResume && !st.running && !(BF.mode === 'start' && BF.phrase)) showGo('resume', run.resumePhrase);
   else if (BF.mode === 'resume' && !(run && run.canResume && !st.running)) el('go-card').classList.add('hide');
-  el('unlock-card').classList.toggle('hide', !(c.lock && !st.running));
+  // never while the checkpoint is fresh (a run may still be going on another copy of the server)
+  el('unlock-card').classList.toggle('hide', !(c.lock && !st.running && !(run && run.status === 'running')));
   el('un-word').textContent = st.unlockWord || 'UNLOCK';
   renderDone(run && run.status === 'finished' ? { summary: run.summary, healSince: run.healSince, skipped: run.skipped } : null);
 }
@@ -336,26 +353,42 @@ function renderJob(job) {
     el('job-bar').classList.add('hide');
     el('job-skipped').innerHTML = '';
     if (job.state === 'running') el('job-body').innerHTML = '<p>Reading the Clients board, Client Master and the Lead Board… this takes a minute or two.</p>';
-    else if (job.result && job.result.ok) { el('job-body').innerHTML = '<p>' + pill('green', 'checked') + ' ' + esc(when(job.endedAt)) + '</p>'; BF.sheetFile = job.result.sheetFile || BF.sheetFile; renderPreview(job.result); }
-    else el('job-body').innerHTML = '<p class="msg bad">' + esc((job.result && job.result.message) || 'The check did not finish.') + '</p>';
+    else if (job.result && job.result.ok) {
+      el('job-body').innerHTML = '<p>' + pill('green', 'checked') + ' ' + esc(when(job.endedAt)) + '</p>';
+      BF.sheetFile = job.result.sheetFile || BF.sheetFile;
+      if (BF.checking === job.id) { setMsg('up-msg', 'Saved in OneDrive as ' + (job.result.sheetFile || BF.sheetFile) + ' and checked — see What would happen below.', true); BF.checking = ''; }
+      renderPreview(job.result);
+    } else {
+      el('job-body').innerHTML = '<p class="msg bad">' + esc((job.result && job.result.message) || 'The check did not finish.') + '</p>';
+      if (BF.checking === job.id) { setMsg('up-msg', 'The check did not finish — see below.'); BF.checking = ''; }
+    }
     return;
   }
   el('job-title').textContent = 'Giving the Client IDs';
   var p = job.progress, r = job.result, h = '';
-  if (job.state === 'running') h += '<p>' + pill('blue', job.phase === 'reading' ? 'reading the boards' : 'writing') + ' started ' + esc(when(job.startedAt)) + ' by ' + esc(job.by) + '</p>';
+  if (job.state === 'running') h += '<p>' + pill('blue', job.phase === 'reading' ? 'reading the boards' : job.phase === 'writing' ? 'writing' : 'checking') + ' started ' + esc(when(job.startedAt)) + ' by ' + esc(job.by) + '</p>';
+  else if (r && r.ok && r.left) h += '<p>' + pill('amber', 'stopped') + ' ' + esc(when(job.endedAt)) + ' — ' + esc(r.left) + ' to try again (a write did not go through). Press Resume.</p>';
   else if (r && r.ok) h += '<p>' + pill('green', 'finished') + ' ' + esc(when(job.endedAt)) + '</p>';
   else h += '<p class="msg bad">' + esc((r && r.message) || 'The run did not finish.') + '</p>';
+  // the fresh read found other numbers: the button comes back with the NEW phrase (typed again)
+  if (r && !r.ok && r.reason === 'confirm' && r.phrase && BF.offered !== job.id) {
+    BF.offered = job.id;
+    if (!job.resume && job.sheetFile) BF.sheetFile = job.sheetFile;
+    el('go-typed').value = '';
+    showGo(job.resume ? 'resume' : 'start', r.phrase);
+    setMsg('go-msg', 'The numbers changed since the check — read the message under Progress before you type the new phrase.');
+  }
   if (r && !r.ok && r.unclear) h += listTable(r.unclear, [['Key', 'key'], ['Name', 'name'], ['What is wrong', 'why']]);
   if (r && !r.ok && r.changed) h += listTable(r.changed, [['Key', 'key'], ['Name', 'name'], ['What changed', 'why']]);
   if (p) {
     h += '<div class="grid4">' + stat('People done', p.processed + ' / ' + p.total) + stat('Client records made', p.records) + stat('Client IDs written', p.ids)
-      + stat('Kept (had one)', p.kept) + stat('Cases linked', p.cases) + stat('Consultation records linked', p.leads) + stat('Copies written', p.copies) + stat('Left for the admin', p.skippedCount) + '</div>';
+      + stat('Kept (had one)', p.kept) + stat('Cases linked', p.cases) + stat('Consultation records linked', p.leads) + stat('Copies written', p.copies) + stat('Not done (see below)', p.skippedCount) + '</div>';
     if (p.alreadyDone) h += '<p>' + esc(p.alreadyDone) + ' people were done by an earlier run (skipped).</p>';
     el('job-bar').classList.remove('hide');
     el('job-fill').style.width = (p.total ? Math.round(100 * p.processed / p.total) : 100) + '%';
   } else el('job-bar').classList.add('hide');
   el('job-body').innerHTML = h;
-  el('job-skipped').innerHTML = p && p.skipped && p.skipped.length ? '<p>Left for the admin (look at these by hand):</p>' + listTable(p.skipped, [['Key', 'key'], ['Name', 'name'], ['Why', 'why']]) : '';
+  el('job-skipped').innerHTML = p && p.skipped && p.skipped.length ? '<p>Not done (the ones marked Resume are tried again on Resume; look at the others by hand):</p>' + listTable(p.skipped.map(function (x) { return { key: x.key, name: x.name, why: x.why, next: x.again ? 'Resume' : 'By hand' }; }), [['Key', 'key'], ['Name', 'name'], ['Why', 'why'], ['Next', 'next']]) : '';
   if (r && r.ok) renderDone({ summary: r, healSince: r.healSince, skipped: r.skipped });
 }
 
@@ -364,9 +397,15 @@ function renderDone(d) {
   if (!d || !d.summary) { card.classList.add('hide'); return; }
   card.classList.remove('hide');
   var s = d.summary, h = '<div class="grid4">' + stat('Client records made', s.records) + stat('Client IDs given', s.ids) + stat('Kept', s.kept)
-    + stat('Cases linked', s.cases) + stat('Consultation records linked', s.leads) + stat('Copies written', s.copies) + stat('Left for the admin', typeof s.skipped === 'number' ? s.skipped : s.skippedCount) + '</div>';
+    + stat('Cases linked', s.cases) + stat('Consultation records linked', s.leads) + stat('Copies written', s.copies) + stat('Not done', typeof s.skipped === 'number' ? s.skipped : s.skippedCount) + '</div>';
   if (s.unused) h += '<p>' + esc(s.unused) + ' reserved number(s) were not needed — gaps in the numbers are normal.</p>';
+  if (s.left) {
+    h += '<p class="msg bad">Not finished: ' + esc(s.left) + ' ' + (s.left === 1 ? 'person was' : 'people were') + ' left to try again (a write did not go through). Press Resume (above) to try them again. Do not change CLIENT_IDS until the run is finished.</p>';
+    el('done-body').innerHTML = h;
+    return;
+  }
   h += '<p><b>Next, on Render:</b></p><ol>';
+  if (s.unlocked === false) h += '<li><b>Unlock the counter first</b> — the lock could not be taken out at the end of the run (the Unlock card on this page). While it is locked the app gives no new Client ID.</li>';
   h += '<li>Look at the Client ID check: <a href="/admin/client-ids/audit" target="_blank" rel="noopener">/admin/client-ids/audit</a>.</li>';
   if (d.healSince) h += '<li>Set <b>CLIENT_IDS_HEAL_SINCE</b> to <span class="phrase">' + esc(d.healSince.iso) + '</span> — that is ' + esc(d.healSince.toronto) + ', when the backfill STARTED. People who came while it ran then get theirs from the hourly check.</li>';
   h += '<li>Then set <b>CLIENT_IDS</b> to <span class="phrase">on</span>.</li></ol>';
@@ -393,7 +432,7 @@ function doUpload() {
   api('POST', '/admin/client-ids/backfill/upload', fd).then(function (r) {
     el('btn-upload').disabled = false;
     if (r.status !== 202) { setMsg('up-msg', r.d.error || r.d.message || 'The upload did not work.'); return; }
-    BF.sheetFile = r.d.sheetFile; setMsg('up-msg', 'Saved in OneDrive as ' + r.d.sheetFile + '. Checking…', true);
+    BF.sheetFile = r.d.sheetFile; BF.checking = r.d.jobId; setMsg('up-msg', 'Saved in OneDrive as ' + r.d.sheetFile + '. Checking…', true);
     poll();
   }, function () { el('btn-upload').disabled = false; setMsg('up-msg', 'The upload did not reach the server.'); });
 }
@@ -413,10 +452,12 @@ function doGo() {
 function doUnlock() {
   el('btn-unlock').disabled = true;
   api('POST', '/admin/client-ids/backfill/unlock', { confirm: el('un-typed').value.trim() }).then(function (r) {
-    setMsg('un-msg', r.d.message || r.d.error || (r.ok ? 'Done.' : 'It did not work.'), r.ok);
+    var text = r.d.message || r.d.error || (r.ok ? 'Done.' : 'It did not work.');
+    setMsg('un-msg', text, r.ok);
+    setMsg('st-msg', 'Unlock: ' + text, r.ok);   // stays in sight when the Unlock card hides
     el('un-typed').value = '';
     loadState();
-  }, function () { setMsg('un-msg', 'The request did not reach the server.'); });
+  }, function () { setMsg('un-msg', 'The request did not reach the server.'); el('btn-unlock').disabled = false; });
 }
 
 el('btn-refresh').addEventListener('click', loadState);

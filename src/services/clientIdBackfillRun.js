@@ -24,6 +24,13 @@
  *   3. the copies: each case (linkCase) and each consultation record (linkLead).
  * Every step is saved in the checkpoint (resume = start again: what is done is skipped) and
  * an apply log (the rollback list: one JSON line per record made and per cell written).
+ * A write that did not go through (a client record, the Client ID, a link or a copy) leaves the
+ * person NOT done: the run ends 'stopped' with "N left to try again", and Resume (the page) or
+ * the same command again (the script) tries exactly those again — a link that failed is retried
+ * even when a fresh read shows part of it landed (cp.retry). A person left out for good (the
+ * check list keeps them apart, a box holding something else) never holds the run open.
+ * Rollback lines a store could not save are kept in the checkpoint (cp.pendingLog) and written
+ * first by the next session.
  *
  * The STORE keeps the checkpoint and the log: fsStore (a local folder, the script) or the
  * OneDrive store of clientIdBackfillJobs.js (the page). Both are async; a store write that
@@ -132,8 +139,10 @@ function mondayIo({ pauseMs = PAUSE_MS } = {}) {
     peekCounter: () => allocator.peekCounter(),
     allocateBlock: (k) => allocator.allocateBlock(k),
     findOrCreate: (p) => accounts.findOrCreate(p),
-    linkCase: (accountId, o) => backoff(() => accounts.linkCase(accountId, o)),
-    linkLead: (accountId, leadId, o) => backoff(() => accounts.linkLead(accountId, leadId, o)),
+    // strict: a write inside that did not go through THROWS (it is never swallowed here), so the
+    // backoff waits out a complexity answer and the person is left for the resume (review 2026-11-25)
+    linkCase: (accountId, o) => backoff(() => accounts.linkCase(accountId, { ...o, strict: true })),
+    linkLead: (accountId, leadId, o) => backoff(() => accounts.linkLead(accountId, leadId, { ...o, strict: true })),
     /** The Clients row's Client ID box, read fresh: { state: 'ok', text } | { state: 'not-found'|'merged'|'archived'|'unreadable'|'unavailable' }. */
     async readIdCell(cfg, accountId) {
       let d;
@@ -186,6 +195,7 @@ const WORDS = {
     automations: 'First check that no Monday automation watches the "Client ID" columns, "Client account (system)" (text_mm5xmeka) or the Client relation (board_relation_mm5xd2bh) on Client Master, the Clients board or the Lead Board. Then add --automations-checked.',
     confirm: (want) => `To go ahead, type exactly: --confirm "${want}" — nothing was written.`,
     unlockHint: 'node scripts/backfill-client-ids.js --unlock --admin <you>',
+    resumeHint: 'run the same command again',
   },
   page: {
     liveOn: 'CLIENT_IDS is "on" on the server. Set it to report (or off) on Render, wait for the restart, then start again. Nothing was written.',
@@ -194,6 +204,7 @@ const WORDS = {
     automations: 'First check that no Monday automation watches the "Client ID" columns, "Client account (system)" or the Client relation — then tick the box.',
     confirm: (want) => `To go ahead, type exactly: ${want} — nothing was written.`,
     unlockHint: 'the Unlock button on this page',
+    resumeHint: 'press Resume',
   },
 };
 
@@ -334,15 +345,37 @@ async function applyPlan({ x, store, cfg, ready, admin, typed, extra = {}, via =
 
   let lost = false;     // a newer checkpoint was found: another copy runs it now — its lock, its run
   let result;
+  let logKept = false;
+  /** Before the last save of this session: rollback lines the store could not save go into the checkpoint. */
+  async function keepLog() {
+    if (logKept || typeof store.flush !== 'function') return;
+    logKept = true;
+    let r;
+    try { r = await store.flush(); } catch (err) { r = { ok: false, unsaved: [] }; }
+    const unsaved = (r && r.unsaved) || [];
+    if (unsaved.length) {
+      cp.pendingLog = [...(cp.pendingLog || []), ...unsaved];
+      log(`  ! ${unsaved.length} line(s) of the rollback list could not be saved on OneDrive — they are kept in the checkpoint and written by the next run.`);
+    }
+  }
   try {
     result = await applyAll();
-    if (!result.ok) { cp.status = 'stopped'; cp.stoppedAt = isoOf(x.now()); cp.error = result.message; await save(); }
+    if (!result.ok) { cp.status = 'stopped'; cp.stoppedAt = isoOf(x.now()); cp.error = result.message; await keepLog(); await save(); }
     return result;
   } catch (err) {
-    if (err && err.conflict) lost = true;
-    else {
+    if (err && err.conflict) {
+      lost = true;
+      // the checkpoint is the other copy's now: unsaved rollback lines can only be shown here
+      const f = typeof store.flush === 'function' ? await store.flush().catch(() => ({ unsaved: [] })) : { unsaved: [] };
+      for (const e of (f && f.unsaved) || []) log(`    rollback line not saved: ${JSON.stringify(e)}`);
+    } else {
       cp.status = 'stopped'; cp.stoppedAt = isoOf(x.now()); cp.error = String((err && err.message) || err).slice(0, 300);
-      try { await save(); } catch (e2) { if (e2 && e2.conflict) lost = true; }
+      await keepLog();
+      try { await save(); } catch (e2) {
+        if (e2 && e2.conflict) lost = true;
+        if (cp.pendingLog && cp.pendingLog.length) log(`  ! The checkpoint could not be saved either: ${cp.pendingLog.length} rollback line(s) are lost — they are in this page's details below.`);
+        for (const e of cp.pendingLog || []) log(`    rollback line not saved: ${JSON.stringify(e)}`);
+      }
     }
     throw err;
   } finally {
@@ -359,6 +392,13 @@ async function applyPlan({ x, store, cfg, ready, admin, typed, extra = {}, via =
   async function applyAll() {
     const entry = (o) => store.log({ at: isoOf(x.now()), admin, ...o });
     await save();
+    if (cp.pendingLog && cp.pendingLog.length) {
+      // the rollback lines the last session could not save: into this session's log first
+      const carried = cp.pendingLog;
+      delete cp.pendingLog;
+      for (const e of carried) await store.log(e);
+      log(`  ${carried.length} rollback line(s) the last run could not save are written now.`);
+    }
     await entry({ kind: 'start', run: cp.runs, newIds: c.newIds });
     onPhase('writing');
 
@@ -380,7 +420,11 @@ async function applyPlan({ x, store, cfg, ready, admin, typed, extra = {}, via =
 
     const done = { records: 0, ids: 0, kept: 0, cases: 0, leads: 0, copies: 0, skipped: [], skippedItems: [] };
     const skip = (p, why, key) => { done.skippedItems.push({ key: key || p.anchor, name: p.name || '', why }); done.skipped.push(`${p.name}: ${why}`); };
-    const skipOther = (key, label, why) => { done.skippedItems.push({ key, name: label, why }); done.skipped.push(`${label}: ${why}`); };
+    const skipOther = (key, label, why, again = false) => { done.skippedItems.push({ key, name: label, why, ...(again ? { again: true } : {}) }); done.skipped.push(`${label}: ${why}`); };
+    // People left NOT done because a write did not go through: the run ends 'stopped' and they are tried again.
+    const leftAgain = new Set();
+    const skipAgain = (p, why) => { done.skippedItems.push({ key: p.anchor, name: p.name || '', why, again: true }); done.skipped.push(`${p.name}: ${why}`); leftAgain.add(p.anchor); };
+    if (!cp.retry || typeof cp.retry !== 'object') cp.retry = {};
     const lb = leadCols;
     const leadCopyCol = s((cfg.leadLinkColumns || {}).clientId);
     const ordered = [...plan.people].sort((a, b) => (a.gets ? a.order : Infinity) - (b.gets ? b.order : Infinity) || a.minItem - b.minItem);
@@ -412,8 +456,8 @@ async function applyPlan({ x, store, cfg, ready, admin, typed, extra = {}, via =
       if (!accountId) {
         let r;
         try { r = await x.findOrCreate({ email: p.email, phone: p.phone, fullName: p.name, residentialAddress: p.residentialAddress, source: 'backfill' }); }
-        catch (err) { skip(p, `no client record could be made (${err.message})`); return; }
-        if (!r || !r.clientId) { skip(p, 'no client record could be made'); return; }
+        catch (err) { skipAgain(p, `no client record could be made (${err.message}) — tried again on Resume`); return; }
+        if (!r || !r.clientId) { skipAgain(p, 'no client record could be made — tried again on Resume'); return; }
         const owner = claimed.get(String(r.clientId));
         if (!r.created && owner && owner !== p.anchor) {
           const whose = owner === 'left-out' ? 'a record the check list leaves out' : owner === 'merged' ? 'a Merged record' : `${nameOfAnchor(owner)}'s client record`;
@@ -431,7 +475,8 @@ async function applyPlan({ x, store, cfg, ready, admin, typed, extra = {}, via =
 
       // 2. the Client ID on the record — never renumbered, never over a value, never after a failed read
       const cell = await x.readIdCell(cfg, accountId);
-      if (cell.state !== 'ok') { skip(p, `the client record is ${cell.state} — left for the next run`); return; }
+      if (cell.state === 'unavailable') { skipAgain(p, 'its client record could not be read just now — tried again on Resume'); return; }
+      if (cell.state !== 'ok') { skip(p, `the client record is ${cell.state} — left for the admin`); return; }
       let clientIdText = '';
       if (cell.text) {
         if (!isClientId(cell.text)) { skip(p, `its Client ID box holds "${cell.text.slice(0, 40)}" — never typed over`); return; }
@@ -440,12 +485,12 @@ async function applyPlan({ x, store, cfg, ready, admin, typed, extra = {}, via =
         let n = cp.given[p.anchor] || cp.byAccount[accountId];
         if (!n) {
           n = takeNumber();
-          if (!n) { skip(p, 'no number left in the reserved block — run again'); return; }
+          if (!n) { skipAgain(p, 'no number left in the reserved block — tried again on Resume'); return; }
           cp.given[p.anchor] = n; cp.byAccount[accountId] = n; await save();
         }
         const value = formatClientId(p.year, n);
         try { await x.writeIdCell(cfg, accountId, value); }
-        catch (err) { skip(p, `${value} could not be written (${err.message}) — tried again on the next run`); return; }
+        catch (err) { skipAgain(p, `${value} could not be written (${err.message}) — tried again on Resume`); return; }
         await entry({ kind: 'cell', person: p.anchor, board: cfg.boardId, item: accountId, column: cfg.columns.clientId, from: '', to: value });
         const back = await x.readIdCell(cfg, accountId);
         clientIdText = back.state === 'ok' && isClientId(back.text) ? back.text : value;
@@ -457,56 +502,89 @@ async function applyPlan({ x, store, cfg, ready, admin, typed, extra = {}, via =
       // 3. the copies — cases, then consultation records
       // (the plan gives a person only cases / consultation records whose box is blank or names
       // this person's record — directly or through a Merged one — so a different id here is a link to make)
+      // A link or copy that did not go through: the person stays NOT done, and that case /
+      // consultation record is linked again on Resume (even when a fresh read shows part landed).
+      const retry = new Set(Array.isArray(cp.retry[p.anchor]) ? cp.retry[p.anchor] : []);
+      const failedNow = [];
       for (const cs of p.cases) {
-        if (cs.accountId !== accountId) {
+        const key = `C${cs.id}`;
+        if (cs.accountId !== accountId || retry.has(key)) {
           try { await x.linkCase(accountId, { cmItemId: cs.id, clientIdText }); }
-          catch (err) { skipOther(`C${cs.id}`, cs.caseRef || cs.name, `could not be linked (${err.message})`); continue; }
+          catch (err) {
+            // some of its writes may have landed: the rollback list keeps where it was linked before
+            await entry({ kind: 'link-case', person: p.anchor, board: cfg.clientMasterBoardId, item: cs.id, from: cs.accountId || '', to: accountId, clientId: clientIdText, caseRef: cs.caseRef, failed: String(err.message).slice(0, 200) });
+            skipOther(key, cs.caseRef || cs.name, `could not be linked (${err.message}) — tried again on Resume`, true); failedNow.push(key);
+            await x.sleep(pauseMs);
+            continue;
+          }
           await entry({ kind: 'link-case', person: p.anchor, board: cfg.clientMasterBoardId, item: cs.id, from: cs.accountId || '', to: accountId, clientId: clientIdText, caseRef: cs.caseRef });
           done.cases++;
         } else if (cs.copy !== undefined && cs.copy !== null && cs.copy !== clientIdText) {
           try {
             await x.writeText(cfg.clientMasterBoardId, cs.id, cfg.cmLinkColumns.clientId, clientIdText);
-            await entry({ kind: 'cell', person: p.anchor, board: cfg.clientMasterBoardId, item: cs.id, column: cfg.cmLinkColumns.clientId, from: cs.copy, to: clientIdText });
-            done.copies++;
-          } catch (err) { skipOther(`C${cs.id}`, cs.caseRef || cs.name, `the Client ID copy could not be written (${err.message})`); }
+          } catch (err) { skipOther(key, cs.caseRef || cs.name, `the Client ID copy could not be written (${err.message}) — tried again on Resume`, true); failedNow.push(key); await x.sleep(pauseMs); continue; }
+          await entry({ kind: 'cell', person: p.anchor, board: cfg.clientMasterBoardId, item: cs.id, column: cfg.cmLinkColumns.clientId, from: cs.copy, to: clientIdText });
+          done.copies++;
         } else continue;
         await x.sleep(pauseMs);
       }
       for (const l of p.leads) {
         if (l.accountId === null) continue;    // its box did not come back: never written
-        if (l.accountId !== accountId) {
+        const key = `L${l.id}`;
+        if (l.accountId !== accountId || retry.has(key)) {
           try { await x.linkLead(accountId, l.id, { clientIdText }); }
-          catch (err) { skipOther(`L${l.id}`, `lead ${l.id}`, `could not be linked (${err.message})`); continue; }
+          catch (err) {
+            await entry({ kind: 'link-lead', person: p.anchor, board: lb.boardId, item: l.id, from: l.accountId || '', to: accountId, clientId: clientIdText, failed: String(err.message).slice(0, 200) });
+            skipOther(key, `lead ${l.id}`, `could not be linked (${err.message}) — tried again on Resume`, true); failedNow.push(key);
+            await x.sleep(pauseMs);
+            continue;
+          }
           await entry({ kind: 'link-lead', person: p.anchor, board: lb.boardId, item: l.id, from: l.accountId || '', to: accountId, clientId: clientIdText });
           done.leads++;
         } else if (leadCopyCol && l.copy !== undefined && l.copy !== null && l.copy !== clientIdText) {
           try {
             await x.writeText(lb.boardId, l.id, leadCopyCol, clientIdText);
-            await entry({ kind: 'cell', person: p.anchor, board: lb.boardId, item: l.id, column: leadCopyCol, from: l.copy, to: clientIdText });
-            done.copies++;
-          } catch (err) { skipOther(`L${l.id}`, `lead ${l.id}`, `the Client ID copy could not be written (${err.message})`); }
+          } catch (err) { skipOther(key, `lead ${l.id}`, `the Client ID copy could not be written (${err.message}) — tried again on Resume`, true); failedNow.push(key); await x.sleep(pauseMs); continue; }
+          await entry({ kind: 'cell', person: p.anchor, board: lb.boardId, item: l.id, column: leadCopyCol, from: l.copy, to: clientIdText });
+          done.copies++;
         } else continue;
         await x.sleep(pauseMs);
       }
 
+      if (failedNow.length) {
+        cp.retry[p.anchor] = failedNow;
+        leftAgain.add(p.anchor);
+        await save();
+        return;
+      }
+      delete cp.retry[p.anchor];
       cp.done[p.anchor] = { accountId, clientId: clientIdText };
       await save();
     }
 
-    const unused = pool.slice();
+    // Numbers still in the pool are only "unused" when nobody is left to try again (a resume uses them).
+    const left = leftAgain.size;
+    const unused = left ? [] : pool.slice();
     if (unused.length) await entry({ kind: 'unused-numbers', numbers: unused });
-    cp.finishedAt = isoOf(x.now());
-    cp.status = 'finished';
-    cp.summary = { records: done.records, ids: done.ids, kept: done.kept, cases: done.cases, leads: done.leads, copies: done.copies, skipped: done.skippedItems.length, unused: unused.length };
+    cp.summary = { records: done.records, ids: done.ids, kept: done.kept, cases: done.cases, leads: done.leads, copies: done.copies, skipped: done.skippedItems.length, unused: unused.length, left };
     cp.skippedItems = done.skippedItems.slice(0, 500);
+    if (left) {
+      cp.status = 'stopped'; cp.stoppedAt = isoOf(x.now());
+      cp.error = `${left} ${left === 1 ? 'person was' : 'people were'} left to try again (a write did not go through) — ${W.resumeHint}.`;
+    } else {
+      cp.finishedAt = isoOf(x.now());
+      cp.status = 'finished';
+    }
+    await entry({ kind: 'end', records: done.records, ids: done.ids, kept: done.kept, cases: done.cases, leads: done.leads, copies: done.copies, skipped: done.skippedItems.length, left });
+    await keepLog();
     await save();
-    await entry({ kind: 'end', records: done.records, ids: done.ids, kept: done.kept, cases: done.cases, leads: done.leads, copies: done.copies, skipped: done.skippedItems.length });
     log(`Done: ${done.records} client record(s) made · ${done.ids} Client ID(s) given · ${done.kept} kept · ${done.cases} case(s) linked · ${done.leads} consultation record(s) linked · ${done.copies} copy(ies) fixed`);
     if (unused.length) log(`  ${unused.length} reserved number(s) were not needed (left unused: ${unused.slice(0, 10).join(', ')}${unused.length > 10 ? '…' : ''}) — gaps are normal`);
     for (const sk of done.skipped) log(`  ! ${sk}`);
     log(`Apply log → ${store.where.log} (the rollback list: archive, never delete). Checkpoint → ${store.where.checkpoint}`);
-    log(`Next: check /admin/client-ids/audit; then set CLIENT_IDS_HEAL_SINCE to ${cp.startedAt} (when this apply STARTED — people who came while it ran are then given theirs by the hourly check) and CLIENT_IDS=on.`);
-    return { ok: true, mode: 'apply', plan, done, unused, logFile: store.where.log, checkpoint: store.where.checkpoint, startedAt: cp.startedAt, healSince: healSinceText(cp.startedAt) };
+    if (left) log(`NOT finished: ${cp.error} Set CLIENT_IDS_HEAL_SINCE and CLIENT_IDS=on only after that.`);
+    else log(`Next: check /admin/client-ids/audit; then set CLIENT_IDS_HEAL_SINCE to ${cp.startedAt} (when this apply STARTED — people who came while it ran are then given theirs by the hourly check) and CLIENT_IDS=on.`);
+    return { ok: true, mode: 'apply', plan, done, unused, left, finished: !left, logFile: store.where.log, checkpoint: store.where.checkpoint, startedAt: cp.startedAt, healSince: healSinceText(cp.startedAt) };
   }
 }
 

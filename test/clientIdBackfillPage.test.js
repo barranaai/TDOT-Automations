@@ -571,3 +571,223 @@ test('readSystemFile / writeSystemFile: only under "TDOT System/"; the two write
     for (const rel of ['axios', '../src/services/microsoftMailService', '../src/services/oneDriveService']) delete require.cache[require.resolve(rel)];
   }
 });
+
+/* ═════════════════════════════ review fixes (2026-11-25) ═════════════════════════════ */
+
+test('a case link that did not go through is NOT counted as linked: the person stays not done, the run ends "stopped" with 1 to try again, and Resume links it again (even when part of it landed)', async () => {
+  const w = office(); const drive = fakeDrive(); wire(w, drive);
+  const { sheetFile } = await uploadAndCheck(w, drive, await answeredSheet(w, { 'G:103+104': { same: 'N' }, A12: { give: 'Y' } }));
+  const keep = w.io.linkCase;
+  let calls103 = 0;
+  // the record link lands, then the Cases relation fails (what linkCase strict throws)
+  w.io.linkCase = async (accountId, o) => {
+    if (String(o.cmItemId) === '103') { calls103++; w.cases.get('103').account = String(accountId); throw new Error("case 103: the client record's Cases link not saved (Monday 500)"); }
+    return keep(accountId, o);
+  };
+  await jobs.startApply({ sheetFile, admin: ADMIN, automationsChecked: true, confirm: 'GIVE 5 CLIENT IDS' });
+  await settle();
+  const j = jobs.jobState().job;
+  assert.equal(j.state, 'done', JSON.stringify(j.result));
+  assert.equal(j.result.left, 1); assert.equal(j.result.finished, false);
+  assert.ok(j.result.skipped.some((x) => x.key === 'C103' && x.again === true && /tried again on Resume/.test(x.why)));
+  assert.equal(j.result.unused, 0, 'the numbers left in the block are kept for the resume');
+  assert.equal(w.lock, null, 'the lock is cleared: nothing runs');
+  const ptr = drive.json(jobs.POINTER);
+  const cp = drive.json(`${jobs.FOLDER}/checkpoint-${ptr.run}.json`);
+  assert.equal(cp.status, 'stopped'); assert.match(cp.error, /1 person was left to try again/);
+  assert.equal(Object.keys(cp.done).length, 5, 'everyone else is done');
+  const anchor = Object.keys(cp.retry)[0];
+  assert.deepEqual(cp.retry[anchor], ['C103']);
+  assert.ok(!cp.done[anchor]);
+  const logKey = [...drive.files.keys()].find((k) => k.includes(`apply-log-${ptr.run}-`));
+  const entries = drive.files.get(logKey).body.toString().trim().split('\n').map((l) => JSON.parse(l));
+  assert.ok(entries.some((e) => e.kind === 'link-case' && String(e.item) === '103' && e.failed && e.from === ''), 'the rollback list keeps where it was linked before');
+  const st = await jobs.state();
+  assert.equal(st.run.status, 'stopped'); assert.equal(st.run.canResume, true);
+  // Resume: the fresh read shows 103 linked already — it is linked again anyway (the relation)
+  w.io.linkCase = keep;
+  const before = w.writes.filter((x) => x[0] === 'linkCase' && String(x[1]) === '103').length;
+  assert.equal((await jobs.startApply({ resume: true, admin: ADMIN, automationsChecked: true, confirm: 'GIVE 5 CLIENT IDS' })).started, true);
+  await settle();
+  const j2 = jobs.jobState().job;
+  assert.equal(j2.state, 'done', JSON.stringify(j2.result)); assert.equal(j2.result.left, 0); assert.equal(j2.result.finished, true);
+  assert.equal(w.writes.filter((x) => x[0] === 'linkCase' && String(x[1]) === '103').length, before + 1);
+  assert.equal(calls103, 1);
+  const cp2 = drive.json(`${jobs.FOLDER}/checkpoint-${ptr.run}.json`);
+  assert.equal(cp2.status, 'finished'); assert.deepEqual(cp2.retry, {});
+  assert.equal(w.blocks.length, 1);
+  const ids = [...w.clients.values()].map((c) => c.cid).filter(Boolean);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test('a copy write that fails keeps the person for Resume too; the script says "run the same command again" and its next run finishes', async () => {
+  const w = office();
+  const out = tmp();
+  const dry = await script.run({ argv: ['--out', out], io: w.io, log: () => {} });
+  const keep = w.io.writeText;
+  let failOnce = true;
+  w.io.writeText = async (...a) => { if (failOnce) { failOnce = false; throw new Error('Monday 500'); } return keep(...a); };
+  // the copy for case 101 ("Has Id": CL-2025-00003) is already right, so make it wrong first
+  w.cases.get('101').copy = 'CL-2025-00099';
+  const lines = [];
+  const args = ['--apply', '--out', out, '--decisions', dry.file, '--admin', ADMIN, '--automations-checked'];
+  const phrase = `GIVE ${dry.plan.counts.newIds} CLIENT IDS`;
+  const r = await script.run({ argv: [...args, '--confirm', phrase], io: w.io, log: (l) => lines.push(l) });
+  assert.equal(r.ok, true, r.message);
+  assert.equal(r.left, 1); assert.equal(r.finished, false);
+  assert.ok(lines.some((l) => /NOT finished: .*run the same command again/.test(l)));
+  const cp = JSON.parse(fs.readFileSync(path.join(out, 'apply-checkpoint.json'), 'utf8'));
+  assert.equal(cp.status, 'stopped'); assert.ok(!cp.finishedAt);
+  const r2 = await script.run({ argv: [...args, '--confirm', phrase], io: w.io, log: () => {} });
+  assert.equal(r2.ok, true, r2.message); assert.equal(r2.left, 0);
+  assert.equal(w.cases.get('101').copy, 'CL-2025-00003');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'apply-checkpoint.json'), 'utf8')).status, 'finished');
+});
+
+test('one run at a time, for real: two Start presses at the same moment — the second is refused before it reads anything, and the page never shows the live run as stopped', async () => {
+  const w = office(); const drive = fakeDrive(); wire(w, drive);
+  const { sheetFile } = await uploadAndCheck(w, drive, await answeredSheet(w, { 'G:103+104': { same: 'N' }, A12: { give: 'Y' } }));
+  const body = { sheetFile, admin: ADMIN, automationsChecked: true, confirm: 'GIVE 5 CLIENT IDS' };
+  const [a, b] = await Promise.all([jobs.startApply(body), jobs.startApply(body)]);
+  assert.equal(a.started, true);
+  assert.equal(b.started, false); assert.equal(b.reason, 'in-progress');
+  // while the first is being checked, an upload and an unlock wait too
+  const p1 = jobs.startApply(body);
+  const g = res(); let passed = false; pageMod.uploadGate(named(), g, () => { passed = true; }, routeDeps);
+  assert.equal(passed, false); assert.equal(g.statusCode, 409);
+  assert.equal((await jobs.unlock({ admin: ADMIN, confirm: 'UNLOCK' })).reason, 'in-progress');
+  assert.equal((await p1).reason, 'in-progress');
+  assert.equal(jobs.jobState().running, true, 'the live run is shown as running');
+  await settle();
+  assert.equal(jobs.jobState().job.state, 'done', JSON.stringify(jobs.jobState().job.result));
+  assert.equal(jobs.jobState().job.id, a.job.id);
+  assert.equal(w.blocks.length, 1);
+  assert.equal(jobs._busy(), false, 'nothing is left claimed');
+  // a refused start releases the claim at once
+  assert.equal((await jobs.startApply({ ...body, automationsChecked: false })).reason, 'automations');
+  assert.equal(jobs._busy(), false);
+});
+
+test('the rollback list is never quietly short: a failed line is carried over a part boundary; an earlier write that landed late is written over; unsaved lines go into the checkpoint and the next session writes them first', async () => {
+  const drive = fakeDrive();
+  const store = jobs.driveStore(drive, 'R2', 'S1');
+  await store.load();
+  for (let i = 0; i < 199; i++) await store.log({ i });
+  const keep = drive.writeSystemFile;
+  let fail = 1;
+  drive.writeSystemFile = async (...a) => { if (fail-- > 0) throw new Error('OneDrive busy'); return keep(...a); };
+  await store.log({ i: 199 });                 // line 200 of part 1: not saved
+  await store.log({ i: 200 });                 // a new part would lose it — it stays in part 1
+  const parts = () => [...drive.files.keys()].filter((k) => k.includes('apply-log-R2-S1-')).sort();
+  assert.equal(parts().length, 1);
+  const p1 = drive.files.get(parts()[0]).body.toString().trim().split('\n').map((l) => JSON.parse(l).i);
+  assert.equal(p1.length, 201); assert.deepEqual(p1.slice(-2), [199, 200]);
+  await store.log({ i: 201 });
+  assert.equal(parts().length, 2, 'a new part once everything before is saved');
+  // a PUT that timed out but landed: the next one conflicts → read again, written over
+  drive.writeSystemFile = async (p, c, o) => { const r = await keep(p, c, o); if (!drive.lateDone) { drive.lateDone = true; throw new Error('timeout'); } return r; };
+  await store.log({ i: 202 });
+  await store.log({ i: 203 });
+  const p2 = drive.files.get(parts()[1]).body.toString().trim().split('\n').map((l) => JSON.parse(l).i);
+  assert.deepEqual(p2, [201, 202, 203]);
+  // flush: nothing unsaved
+  drive.writeSystemFile = keep;
+  assert.deepEqual(await store.flush(), { ok: true, unsaved: [] });
+  // the end of a run while OneDrive refuses the log: the lines go into the checkpoint
+  const w = office(); wire(w, drive);
+  const { sheetFile } = await uploadAndCheck(w, drive, await answeredSheet(w, { 'G:103+104': { same: 'N' }, A12: { give: 'Y' } }));
+  let logDown = false;
+  drive.writeSystemFile = async (p, ...a) => { if (logDown && p.includes('apply-log-')) throw new Error('OneDrive busy'); return keep(p, ...a); };
+  w.onSleep = async (n) => { if (n >= 8) logDown = true; };
+  w.crashAfter = w.sleeps + 9;                // the run stops right after a log write failed
+  await jobs.startApply({ sheetFile, admin: ADMIN, automationsChecked: true, confirm: 'GIVE 5 CLIENT IDS' });
+  await settle();
+  w.onSleep = null; w.crashAfter = Infinity; logDown = false;
+  const j = jobs.jobState().job;
+  assert.equal(j.state, 'failed', JSON.stringify(j.result));
+  const ptr = drive.json(jobs.POINTER);
+  const cp = drive.json(`${jobs.FOLDER}/checkpoint-${ptr.run}.json`);
+  assert.ok(Array.isArray(cp.pendingLog) && cp.pendingLog.length >= 1, 'the unsaved rollback lines are in the checkpoint');
+  assert.ok(j.lines.some((l) => /rollback list could not be saved on OneDrive — they are kept in the checkpoint/.test(l)));
+  const pending = cp.pendingLog.map((e) => JSON.stringify(e));
+  // Resume: they are written first into the new session's log, and leave the checkpoint
+  assert.equal((await jobs.startApply({ resume: true, admin: ADMIN, automationsChecked: true, confirm: 'GIVE 5 CLIENT IDS' })).started, true);
+  await settle();
+  assert.equal(jobs.jobState().job.state, 'done', JSON.stringify(jobs.jobState().job.result));
+  const cp2 = drive.json(`${jobs.FOLDER}/checkpoint-${ptr.run}.json`);
+  assert.ok(!cp2.pendingLog);
+  const all = [...drive.files.keys()].filter((k) => k.includes(`apply-log-${ptr.run}-`)).map((k) => drive.files.get(k).body.toString()).join('');
+  for (const line of pending) assert.ok(all.includes(line), 'the carried line is on OneDrive now');
+});
+
+test('the fresh read finds other numbers: the job offers the new phrase, and the server takes it (typed again); the words after a failure fit what failed', async () => {
+  const w = office(); const drive = fakeDrive(); wire(w, drive);
+  const { sheetFile } = await uploadAndCheck(w, drive, await answeredSheet(w, { 'G:103+104': { same: 'N' }, A12: { give: 'Y' } }));
+  w.addCase(130, 'Late Comer', { email: 'late@x.com' });
+  await jobs.startApply({ sheetFile, admin: ADMIN, automationsChecked: true, confirm: 'GIVE 5 CLIENT IDS' });
+  await settle();
+  const j = jobs.jobState().job;
+  assert.equal(j.result.reason, 'confirm'); assert.equal(j.result.phrase, 'GIVE 6 CLIENT IDS');
+  assert.match(j.result.message, /now finds 6 new Client IDs \(the check said 5\)/);
+  assert.equal(j.sheetFile, sheetFile); assert.equal(j.resume, false);
+  assert.equal((await jobs.startApply({ sheetFile, admin: ADMIN, automationsChecked: true, confirm: 'GIVE 5 CLIENT IDS' })).reason, 'confirm', 'the old phrase no longer counts');
+  assert.equal((await jobs.startApply({ sheetFile, admin: ADMIN, automationsChecked: true, confirm: 'GIVE 6 CLIENT IDS' })).started, true);
+  await settle();
+  assert.equal(jobs.jobState().job.state, 'done', JSON.stringify(jobs.jobState().job.result));
+  assert.equal(jobs.jobState().job.result.ids, 6);
+  // the page script shows the go card again for that answer
+  assert.match(pageMod.PAGE_JS, /r\.reason === 'confirm' && r\.phrase/);
+
+  // a new run that fails before its first checkpoint: "nothing was written — start again" (no Resume)
+  const w2 = office(); const d2 = fakeDrive(); wire(w2, d2);
+  const s2 = await uploadAndCheck(w2, d2, await answeredSheet(w2, { 'G:103+104': { same: 'N' }, A12: { give: 'Y' } }));
+  const keepJ = d2.writeJsonFile;
+  d2.writeJsonFile = async (p, ...a) => { if (p.includes('checkpoint-')) throw new Error('OneDrive 503'); return keepJ(p, ...a); };
+  await jobs.startApply({ sheetFile: s2.sheetFile, admin: ADMIN, automationsChecked: true, confirm: 'GIVE 5 CLIENT IDS' });
+  await settle();
+  d2.writeJsonFile = keepJ;
+  const f = jobs.jobState().job;
+  assert.equal(f.state, 'failed'); assert.match(f.result.message, /before it wrote anything.*start again/); assert.ok(!/Resume/.test(f.result.message));
+  assert.equal(w2.lock, null); assert.equal(w2.writes.length, 0);
+
+  // Resume when the saved sheet is gone from OneDrive: "upload it again" — never "press Resume"
+  const w3 = office(); const d3 = fakeDrive(); wire(w3, d3);
+  const s3 = await uploadAndCheck(w3, d3, await answeredSheet(w3, { 'G:103+104': { same: 'N' }, A12: { give: 'Y' } }));
+  w3.crashAfter = w3.sleeps + 2;
+  await jobs.startApply({ sheetFile: s3.sheetFile, admin: ADMIN, automationsChecked: true, confirm: 'GIVE 5 CLIENT IDS' });
+  await settle();
+  w3.crashAfter = Infinity;
+  d3.files.delete(`${jobs.FOLDER}/${s3.sheetFile}`);
+  await jobs.startApply({ resume: true, admin: ADMIN, automationsChecked: true, confirm: 'GIVE 5 CLIENT IDS' });
+  await settle();
+  const g = jobs.jobState().job;
+  assert.equal(g.state, 'failed'); assert.equal(g.result.reason, 'sheet-gone');
+  assert.match(g.result.message, /upload it again/); assert.ok(!/press Resume/.test(g.result.message));
+
+  // a check (preview) that crashes says so — and "upload again", not Resume
+  const w4 = office(); const d4 = fakeDrive(); wire(w4, d4);
+  const buf = await answeredSheet(w4, {});
+  const keepPlan = backfill.readAndPlan;
+  backfill.readAndPlan = async () => { throw new Error('boom'); };
+  try {
+    const saved = await jobs.saveSheet({ buffer: buf, originalName: 'a.xlsx' });
+    jobs.startPreview({ sheetFile: saved.sheetFile, sheet: saved.sheet, by: 'Boss' });
+    await settle();
+  } finally { backfill.readAndPlan = keepPlan; }
+  const pv = jobs.jobState().job;
+  assert.equal(pv.state, 'failed'); assert.match(pv.result.message, /^The check did not finish: boom\. Nothing was written — upload the sheet again\./);
+});
+
+test('the page: a run the checkpoint calls running but that is not going here is said so (and looked at again every 30 s); Unlock hides while it is fresh; the unlock answer stays in sight; a lock left at the end is the first step', () => {
+  const js = pageMod.PAGE_JS;
+  assert.match(js, /function renderElsewhere\(run\)/);
+  assert.match(js, /not going on this copy of the server right now/);
+  assert.match(js, /setTimeout\(loadState, 30000\)/);
+  assert.match(js, /!\(run && run\.status === 'running'\)/);
+  assert.match(js, /setMsg\('st-msg', 'Unlock: '/);
+  assert.match(js, /s\.unlocked === false/);
+  assert.match(js, /Unlock the counter first/);
+  assert.match(js, /BF\.checking === job\.id/);
+  const html = pageMod.buildBackfillHTML();
+  assert.match(html, /id="st-msg"/);
+});

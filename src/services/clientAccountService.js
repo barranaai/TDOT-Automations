@@ -214,9 +214,10 @@ async function findOrCreate({ email, phone, fullName, residentialAddress, dob, s
  * The read uses the typed fragment (a link cell's text/value come back null —
  * reading those made every append REPLACE the account's earlier case/lead,
  * 2026-08…10); a cell that cannot be read is never written.
+ * @returns {Promise<{ ok: true } | { ok: false, message: string }>}  never throws
  */
 async function appendAccountRelation(cfg, clientId, relColId, itemId, label) {
-  if (!relColId) return;
+  if (!relColId) return { ok: true };
   const { RELATION_FIELDS, linkedIds } = require('./mondayColumnRead');
   try {
     const existing = await mondayApi.query(
@@ -226,14 +227,32 @@ async function appendAccountRelation(cfg, clientId, relColId, itemId, label) {
     const have = linkedIds(existing?.items?.[0]?.column_values?.[0]);
     if (have === null) {
       console.warn(`[ClientAccount] ${label} links of client ${clientId} could not be read — not written (a write would replace links it cannot see)`);
-      return;
+      return { ok: false, message: `the ${label} links of the client record could not be read` };
     }
-    if (have.includes(String(itemId))) return;   // already linked
+    if (have.includes(String(itemId))) return { ok: true };   // already linked
     await mondayApi.query(
       'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
       { b: String(cfg.boardId), i: String(clientId), c: JSON.stringify({ [relColId]: { item_ids: [...have, String(itemId)].map(Number) } }) }
     );
-  } catch (err) { console.warn(`[ClientAccount] ${label} relation append failed for client ${clientId}: ${err.message}`); }
+    return { ok: true };
+  } catch (err) {
+    console.warn(`[ClientAccount] ${label} relation append failed for client ${clientId}: ${err.message}`);
+    return { ok: false, message: err.message };
+  }
+}
+
+/**
+ * What linkCase / linkLead answer: { ok: true, failed: [] }, or { ok: false, failed: [{ what, message }] }.
+ * With `strict` (the backfill) a failure THROWS instead — one Error naming every write that was not
+ * saved — so the caller's backoff waits out a Monday complexity answer and the backfill leaves the
+ * person for the resume (review 2026-11-25: a swallowed failure was counted as linked and never retried).
+ */
+function linkOutcome(failed, strict, label) {
+  if (!failed.length) return { ok: true, failed: [] };
+  if (!strict) return { ok: false, failed };
+  const err = new Error(`${label}: ${failed.map((f) => `${f.what} not saved (${f.message})`).join('; ')}`);
+  err.failed = failed;
+  throw err;
 }
 
 /**
@@ -241,10 +260,12 @@ async function appendAccountRelation(cfg, clientId, relColId, itemId, label) {
  * clientIdText: the person's readable Client ID ("CL-2026-00042") — copied into the case's
  * "Client ID" column (a plain mirror) when given and the column exists. Every write here has
  * its OWN try/catch (review #1): one failing never stops the next, nor linkLead after it.
+ * Answers which writes failed (linkOutcome); `strict: true` throws instead (the backfill).
  */
-async function linkCase(clientId, { cmItemId, clientIdText = '' } = {}) {
+async function linkCase(clientId, { cmItemId, clientIdText = '', strict = false } = {}) {
   const cfg = loadBoard();
-  if (!cfg || !clientId || !cmItemId) return;
+  if (!cfg || !clientId || !cmItemId) return { ok: true, failed: [] };
+  const failed = [];
   const link = cfg.cmLinkColumns || {};
   const { clientMasterBoardId } = require('../../config/monday');
   // A case MOVED to a record that has no Client ID yet must not keep the old record's ID
@@ -269,7 +290,7 @@ async function linkCase(clientId, { cmItemId, clientIdText = '' } = {}) {
         'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
         { b: String(clientMasterBoardId), i: String(cmItemId), c: JSON.stringify({ [link.clientAccountId]: String(clientId) }) }
       );
-    } catch (err) { console.warn(`[ClientAccount] account id write failed for case ${cmItemId}: ${err.message}`); }
+    } catch (err) { console.warn(`[ClientAccount] account id write failed for case ${cmItemId}: ${err.message}`); failed.push({ what: 'the client record link', message: err.message }); }
   }
   if (link.clientId && isClientId(clientIdText)) {
     try {
@@ -277,7 +298,7 @@ async function linkCase(clientId, { cmItemId, clientIdText = '' } = {}) {
         'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
         { b: String(clientMasterBoardId), i: String(cmItemId), c: JSON.stringify({ [link.clientId]: String(clientIdText) }) }
       );
-    } catch (err) { console.warn(`[ClientAccount] Client ID copy failed for case ${cmItemId}: ${err.message}`); }
+    } catch (err) { console.warn(`[ClientAccount] Client ID copy failed for case ${cmItemId}: ${err.message}`); failed.push({ what: 'the Client ID copy', message: err.message }); }
   } else if (clearCopy) {
     try {
       await mondayApi.query(
@@ -285,7 +306,7 @@ async function linkCase(clientId, { cmItemId, clientIdText = '' } = {}) {
         { b: String(clientMasterBoardId), i: String(cmItemId), c: JSON.stringify({ [link.clientId]: '' }) }
       );
       console.log(`[ClientAccount] case ${cmItemId} moved to client ${clientId}, which has no Client ID yet — the old record's ID copy is cleared`);
-    } catch (err) { console.warn(`[ClientAccount] old Client ID copy not cleared for case ${cmItemId}: ${err.message}`); }
+    } catch (err) { console.warn(`[ClientAccount] old Client ID copy not cleared for case ${cmItemId}: ${err.message}`); failed.push({ what: 'the old Client ID copy (to clear)', message: err.message }); }
   }
   if (link.clientRelation) {
     try {
@@ -293,24 +314,28 @@ async function linkCase(clientId, { cmItemId, clientIdText = '' } = {}) {
         'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
         { b: String(clientMasterBoardId), i: String(cmItemId), c: JSON.stringify({ [link.clientRelation]: { item_ids: [Number(clientId)] } }) }
       );
-    } catch (err) { console.warn(`[ClientAccount] navigation relation write failed for case ${cmItemId}: ${err.message}`); }
+    } catch (err) { console.warn(`[ClientAccount] navigation relation write failed for case ${cmItemId}: ${err.message}`); failed.push({ what: 'the Client relation', message: err.message }); }
   }
   // Reverse navigation: add this case to the account's Cases relation.
-  await appendAccountRelation(cfg, clientId, cfg.columns.cases, cmItemId, 'Cases');
+  const rel = await appendAccountRelation(cfg, clientId, cfg.columns.cases, cmItemId, 'Cases');
+  if (!rel.ok) failed.push({ what: "the client record's Cases link", message: rel.message });
+  return linkOutcome(failed, strict, `case ${cmItemId}`);
 }
 
 /**
  * Stamp the account id on a lead AND add the lead to the account's Leads
  * relation — each client row references every enquiry/consultation/direct
  * entry of theirs, not just their cases (user directive 2026-08-04).
- * Best-effort; leadService validates the column.
+ * Best-effort; leadService validates the column. Answers which writes failed (linkOutcome);
+ * `strict: true` throws instead (the backfill).
  */
-async function linkLead(clientId, leadId, { clientIdText = '' } = {}) {
+async function linkLead(clientId, leadId, { clientIdText = '', strict = false } = {}) {
   const cfg = loadBoard();
-  if (!cfg || !clientId || !leadId) return;
+  if (!cfg || !clientId || !leadId) return { ok: true, failed: [] };
+  const failed = [];
   const leadService = require('./leadService');
   try { await leadService.updateLead(String(leadId), { clientAccountId: String(clientId) }); }
-  catch (err) { console.warn(`[ClientAccount] lead stamp failed for ${leadId}: ${err.message}`); }
+  catch (err) { console.warn(`[ClientAccount] lead stamp failed for ${leadId}: ${err.message}`); failed.push({ what: 'the client record link', message: err.message }); }
   // The lead's "Client ID" column (a plain mirror) — its own write, its own catch.
   const leadCol = (cfg.leadLinkColumns || {}).clientId;
   if (leadCol && isClientId(clientIdText)) {
@@ -320,9 +345,11 @@ async function linkLead(clientId, leadId, { clientIdText = '' } = {}) {
         'mutation($b:ID!,$i:ID!,$c:JSON!){ change_multiple_column_values(board_id:$b, item_id:$i, column_values:$c){ id } }',
         { b: String(leadBoardId), i: String(leadId), c: JSON.stringify({ [leadCol]: String(clientIdText) }) }
       );
-    } catch (err) { console.warn(`[ClientAccount] Client ID copy failed for lead ${leadId}: ${err.message}`); }
+    } catch (err) { console.warn(`[ClientAccount] Client ID copy failed for lead ${leadId}: ${err.message}`); failed.push({ what: 'the Client ID copy', message: err.message }); }
   }
-  await appendAccountRelation(cfg, clientId, cfg.columns.leads, leadId, 'Leads');
+  const rel = await appendAccountRelation(cfg, clientId, cfg.columns.leads, leadId, 'Leads');
+  if (!rel.ok) failed.push({ what: "the client record's Leads link", message: rel.message });
+  return linkOutcome(failed, strict, `consultation record ${leadId}`);
 }
 
 // ─── The readable Client ID ("CL-2026-00042") of an account ─────────────────────

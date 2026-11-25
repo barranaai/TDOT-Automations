@@ -700,3 +700,22 @@ test('the direct consultation and the Record payment paths both call it right af
   const k = cp.indexOf("await leadService.updateLead(leadId, { consultPayment: JSON.stringify(rec) });");
   assert.ok(k > 0 && cp.indexOf('queueConsultationPaid(leadId', k) - k < 600);
 });
+
+test('linkCase / linkLead answer what did not go through; strict (the backfill) throws one error naming it — never a quiet "linked" (review 2026-11-25)', quietly(async () => {
+  const w = world({ rows: [{ id: '77', name: 'Jane Doe', email: 'jane@x.com', clientId: 'CL-2026-00009' }], fail: { cmAccount: true, leadMirror: true } });
+  try {
+    const a = await svc.linkCase('77', { cmItemId: '700', clientIdText: 'CL-2026-00009' });
+    assert.equal(a.ok, false);
+    assert.deepEqual(a.failed.map((f) => f.what), ['the client record link']);
+    await assert.rejects(svc.linkCase('77', { cmItemId: '700', clientIdText: 'CL-2026-00009', strict: true }),
+      (e) => /case 700: the client record link not saved \(CM write failed\)/.test(e.message) && e.failed.length === 1);
+    await assert.rejects(svc.linkLead('77', '500', { clientIdText: 'CL-2026-00009', strict: true }), /consultation record 500: the Client ID copy not saved/);
+    const b = await svc.linkLead('77', '500', { clientIdText: 'CL-2026-00009' });
+    assert.equal(b.ok, false);
+  } finally { w.done(); }
+  const w2 = world({ rows: [{ id: '77', name: 'Jane Doe', email: 'jane@x.com', clientId: 'CL-2026-00009' }] });
+  try {
+    assert.deepEqual(await svc.linkCase('77', { cmItemId: '700', clientIdText: 'CL-2026-00009', strict: true }), { ok: true, failed: [] });
+    assert.deepEqual(await svc.linkLead('77', '500', { clientIdText: 'CL-2026-00009', strict: true }), { ok: true, failed: [] });
+  } finally { w2.done(); }
+}));

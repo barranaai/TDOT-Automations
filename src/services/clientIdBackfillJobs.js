@@ -22,8 +22,9 @@
  * done; the lock it set in the counter file is recognised as its own (the same `at`). Press
  * Resume: the boards are read again, the plan built again from the same answered sheet, and
  * what is done is skipped. A checkpoint still 'running' but not saved for 5 minutes = the run
- * was cut off (a restart). One run at a time in this process; the counter-file lock is the
- * guard across copies of the server.
+ * was cut off (a restart). One run at a time in this process (claimed before the first
+ * wait, so two Start presses at once never both begin); the counter-file lock is the guard
+ * across copies of the server.
  *
  * Never in the server log: names, emails, phones (counts and keys only). The staff-facing
  * lines (with names — the admin page shows the names staff already see in the app) stay in the
@@ -73,20 +74,40 @@ const deps = {
 /** "A12345678" (a sheet key = a Clients row's Monday id) → "A·····"; every other key as it is. */
 function maskKey(k) { return /^A\d+$/.test(s(k)) ? 'A·····' : s(k); }
 function maskText(t) { return String(t == null ? '' : t).replace(/\bA\d{3,}\b/g, 'A·····'); }
-const maskItems = (items) => (items || []).map((i) => ({ key: maskKey(i.key), name: s(i.name), why: maskText(i.why) }));
+const maskItems = (items) => (items || []).map((i) => ({ key: maskKey(i.key), name: s(i.name), why: maskText(i.why), ...(i.again ? { again: true } : {}) }));
 
 /* ───────────────────────────── the OneDrive store ───────────────────────────── */
 
 /**
- * The checkpoint and the apply log of one run, on OneDrive. A log write that fails is healed by
- * the next one (each write is the whole file part); three failures in a row stop the run.
+ * The checkpoint and the apply log of one run, on OneDrive. Each log write is the whole file
+ * part, so a write that fails is healed by the next one — and a new part is never started while
+ * lines of this one are unsaved. A part is this session's alone: a conflict on it can only be an
+ * earlier write of ours that landed after all (a timeout), so its version is read again and the
+ * part written over it once. Three failures in a row stop the run. flush() (the end of a
+ * session) tries once more and answers the lines still unsaved (the run keeps them in the
+ * checkpoint).
  */
 function driveStore(drive, run, session) {
   const cpPath = `${FOLDER}/checkpoint-${run}.json`;
   let etag = '';
   let loaded = false;
-  let part = 0, lines = [], partEtag = '', fails = 0;
+  let part = 0, lines = [], partEtag = '', fails = 0, savedLines = 0;
   const partPath = () => `${FOLDER}/apply-log-${run}-${session}-${String(part).padStart(3, '0')}.jsonl`;
+  const put = async () => {
+    const w = await drive.writeSystemFile(partPath(), `${lines.join('\n')}\n`, { etag: partEtag, contentType: 'application/x-ndjson' });
+    partEtag = w.etag || ((await drive.readSystemFile(partPath())) || {}).etag || '';
+  };
+  /** Write the part as it stands now; throws when it could not be saved. */
+  async function writePart() {
+    try { await put(); }
+    catch (err) {
+      if (!err || !err.conflict) throw err;
+      const cur = await drive.readSystemFile(partPath());
+      partEtag = cur ? cur.etag || '' : '';
+      await put();
+    }
+    savedLines = lines.length;
+  }
   return {
     where: { checkpoint: cpPath, log: `${FOLDER}/apply-log-${run}-${session}-*.jsonl` },
     async load() {
@@ -105,15 +126,18 @@ function driveStore(drive, run, session) {
       etag = w.etag || ((await drive.readJsonFile(cpPath)) || {}).etag || '';
     },
     async log(entry) {
-      if (!part || lines.length >= LOG_PART) { part++; lines = []; partEtag = ''; }
+      if (!part || (lines.length >= LOG_PART && savedLines === lines.length)) { part++; lines = []; partEtag = ''; savedLines = 0; }
       lines.push(JSON.stringify(entry));
-      try {
-        const w = await drive.writeSystemFile(partPath(), `${lines.join('\n')}\n`, { etag: partEtag, contentType: 'application/x-ndjson' });
-        partEtag = w.etag || ((await drive.readSystemFile(partPath())) || {}).etag || '';
-        fails = 0;
-      } catch (err) {
+      try { await writePart(); fails = 0; }
+      catch (err) {
         if (++fails >= 3) throw new Error(`the apply log could not be saved on OneDrive (${err.message})`);
       }
+    },
+    /** @returns {Promise<{ ok: boolean, unsaved: object[] }>}  never throws */
+    async flush() {
+      if (savedLines === lines.length) return { ok: true, unsaved: [] };
+      try { await writePart(); fails = 0; return { ok: true, unsaved: [] }; }
+      catch (_) { return { ok: false, unsaved: lines.slice(savedLines).map((l) => JSON.parse(l)) }; }
     },
   };
 }
@@ -163,6 +187,7 @@ async function loadSheet(sheetFile) {
 /* ───────────────────────────── the jobs (one at a time in this process) ───────────────────────────── */
 
 let current = null;            // the job running now
+let claim = '';                // a Start / Resume / Unlock being checked right now (before its job begins)
 let last = null;               // the last job that ended (the page still shows it)
 const previews = new Map();    // sheetFile → { phrase, newIds, unclear, changed }
 
@@ -174,11 +199,26 @@ function newJob(kind, by) {
   job.say = (m) => { job.lines.push(maskText(m)); if (job.lines.length > LINES_KEPT) job.lines.splice(0, job.lines.length - LINES_KEPT); };
   return job;
 }
+/** Busy = a job runs, or a Start / Resume / Unlock is being checked. */
+const busy = () => !!(current || claim);
+const busyMessage = () => (current
+  ? `A ${current.kind === 'preview' ? 'check' : 'run'} is going right now (started by ${current.by || 'an admin'}) — wait for it to finish.`
+  : 'Another admin is starting a run (or unlocking) right now — wait a moment, then look again.');
+
+/** The words when a job stops with an error: what to do next depends on what it was. */
+function failedMessage(job, err) {
+  const why = String((err && err.message) || err);
+  if (job.kind === 'preview') return `The check did not finish: ${why}. Nothing was written — upload the sheet again.`;
+  if (err && err.notFound) return `${why} Nothing more was written.`;
+  if (!job.checkpointed) return `The run stopped before it wrote anything: ${why}. Nothing was written — start again.`;
+  return `The run stopped: ${why}. What was done is saved — press Resume to go on.`;
+}
 function begin(job, work) {
+  if (current && current !== job) throw new Error('a job is running already');
   current = job;
   job.promise = Promise.resolve().then(work).then((r) => r, (err) => {
     job.state = 'failed';
-    job.result = { ok: false, reason: 'failed', message: maskText(`The run stopped: ${(err && err.message) || err}. What was done is saved — press Resume to go on.`) };
+    job.result = { ok: false, reason: err && err.notFound ? 'sheet-gone' : 'failed', message: maskText(failedMessage(job, err)) };
     deps.log(`[ClientIdBackfill] ${job.kind} ${job.id} stopped with an error (${maskText(String((err && err.message) || err)).slice(0, 160)})`);
   }).finally(() => {
     job.endedAt = new Date(deps.now()).toISOString();
@@ -195,6 +235,7 @@ function view(job) {
   const p = job.progress;
   return {
     id: job.id, kind: job.kind, state: job.state, phase: job.phase, by: job.by, startedAt: job.startedAt, endedAt: job.endedAt,
+    resume: !!job.resume, sheetFile: s(job.sheetFile),
     progress: p ? { total: p.total, processed: p.processed, alreadyDone: p.alreadyDone, records: p.records, ids: p.ids, kept: p.kept, cases: p.cases, leads: p.leads, copies: p.copies,
       skipped: maskItems(p.skipped).slice(0, SKIPPED_SHOWN), skippedCount: (p.skipped || []).length } : null,
     result: job.result, lines: job.lines.slice(-80),
@@ -224,7 +265,7 @@ function previewOf(ready, sheet) {
  * @returns {{ started: boolean, job: object }}
  */
 function startPreview({ sheetFile, sheet, by }) {
-  if (current) return { started: false, job: current };
+  if (busy()) return { started: false, job: current };
   const job = newJob('preview', by);
   job.sheetFile = sheetFile;
   begin(job, async () => {
@@ -250,8 +291,15 @@ const refused = (status, reason, message, extra = {}) => ({ started: false, stat
  * its first write.
  * @returns {Promise<{ started: true, job } | { started: false, status, reason, message }>}
  */
-async function startApply({ sheetFile = '', resume = false, admin, automationsChecked, confirm }) {
-  if (current) return refused(409, 'in-progress', `A ${current.kind === 'preview' ? 'check' : 'run'} is going right now (started by ${current.by || 'an admin'}) — wait for it to finish.`, { job: view(current) });
+async function startApply(opts) {
+  // claimed BEFORE the first wait: two Start presses at once (two tabs, two admins) never both begin
+  if (busy()) return refused(409, 'in-progress', busyMessage(), current ? { job: view(current) } : {});
+  claim = 'start';
+  try { return await checkAndStart(opts || {}); }
+  finally { claim = ''; }
+}
+
+async function checkAndStart({ sheetFile = '', resume = false, admin, automationsChecked, confirm }) {
   if (automationsChecked !== true) return refused(400, 'automations', backfill.WORDS.page.automations);
   const typed = s(confirm);
   if (!/^GIVE [0-9]+ CLIENT IDS$/.test(typed)) return refused(400, 'confirm', 'Type the phrase exactly as it is shown (GIVE <number> CLIENT IDS) — nothing was written.');
@@ -298,12 +346,27 @@ async function startApply({ sheetFile = '', resume = false, admin, automationsCh
     const sheet = await loadSheet(sheetFile);
     const cfg = x.loadBoard();
     deps.log(`[ClientIdBackfill] apply ${job.id} started (run ${run}${open ? ', resumed' : ''})`);
+    const store = driveStore(drive, run, `${stamp(deps.now())}-${tag()}`);
+    const save0 = store.save;
+    store.save = async (c) => { await save0(c); job.checkpointed = true; };
+    if (open) job.checkpointed = true;
     const r = await backfill.runApply({
-      x, store: driveStore(drive, run, `${stamp(deps.now())}-${tag()}`), cfg, sheet, admin: s(admin), automationsChecked: true, typed,
+      x, store, cfg, sheet, admin: s(admin), automationsChecked: true, typed,
       extra: { sheet: sheetFile, run }, via: 'page', heartbeat: true, pauseMs: deps.pauseMs,
       log: job.say, onProgress: (p) => { job.progress = p; }, onPhase: (ph) => { job.phase = ph; },
     });
     if (!r.ok) {
+      // the fresh read found other numbers than the check: the page offers the new phrase (it is typed again)
+      if (r.reason === 'confirm' && r.phrase) {
+        const m = /^GIVE ([0-9]+) CLIENT IDS$/.exec(r.phrase);
+        const was = previews.get(sheetFile);
+        previews.set(sheetFile, { ...(was || { unclear: 0, changed: 0 }), phrase: r.phrase, newIds: m ? Number(m[1]) : null });
+        r.message = `The numbers changed since the check: the fresh read now finds ${m ? m[1] : 'another number of'} new Client IDs${was && Number.isSafeInteger(was.newIds) ? ` (the check said ${was.newIds})` : ''}. Nothing was written. If that is what you expect, type the new phrase ${r.phrase} and press the button again — or upload the sheet again to see all the new numbers.`;
+      }
+      if (r.reason === 'unclear-answers' || r.reason === 'changed') {
+        const was = previews.get(sheetFile) || { phrase: '', newIds: null, unclear: 0, changed: 0 };
+        previews.set(sheetFile, { ...was, unclear: r.reason === 'unclear-answers' ? (r.unclear || []).length || 1 : was.unclear, changed: r.reason === 'changed' ? (r.changed || []).length || 1 : was.changed });
+      }
       job.state = 'refused';
       job.result = { ok: false, reason: r.reason, message: maskText(r.message), ...(r.phrase ? { phrase: r.phrase } : {}),
         ...(r.unclear ? { unclear: maskItems(r.unclear) } : {}), ...(r.changed ? { changed: maskItems(r.changed) } : {}) };
@@ -314,9 +377,10 @@ async function startApply({ sheetFile = '', resume = false, admin, automationsCh
     job.result = {
       ok: true, records: d.records, ids: d.ids, kept: d.kept, cases: d.cases, leads: d.leads, copies: d.copies,
       skipped: maskItems(d.skippedItems).slice(0, SKIPPED_SHOWN), skippedCount: d.skippedItems.length,
+      left: r.left || 0, finished: !r.left,
       unused: r.unused.length, unlocked: r.unlocked !== false, startedAt: r.startedAt, healSince: r.healSince,
     };
-    deps.log(`[ClientIdBackfill] apply ${job.id} finished: ${d.records} records, ${d.ids} IDs, ${d.kept} kept, ${d.cases} cases, ${d.leads} leads, ${d.copies} copies, ${d.skippedItems.length} left for the admin`);
+    deps.log(`[ClientIdBackfill] apply ${job.id} ${r.left ? 'stopped with people to try again' : 'finished'}: ${d.records} records, ${d.ids} IDs, ${d.kept} kept, ${d.cases} cases, ${d.leads} leads, ${d.copies} copies, ${d.skippedItems.length} listed, ${r.left || 0} to try again`);
   });
   return { started: true, job };
 }
@@ -325,8 +389,14 @@ async function startApply({ sheetFile = '', resume = false, admin, automationsCh
  * Take the backfill lock out of the counter file — after a run that stopped (a restart).
  * Refused while a run goes here, or while the checkpoint was saved in the last 5 minutes.
  */
-async function unlock({ admin, confirm }) {
-  if (current) return { ok: false, status: 409, reason: 'in-progress', message: 'A run is going right now — the lock is its own. Wait for it to finish.' };
+async function unlock(opts) {
+  if (busy()) return { ok: false, status: 409, reason: 'in-progress', message: current ? 'A run is going right now — the lock is its own. Wait for it to finish.' : busyMessage() };
+  claim = 'unlock';
+  try { return await checkAndUnlock(opts || {}); }
+  finally { claim = ''; }
+}
+
+async function checkAndUnlock({ admin, confirm }) {
   if (s(confirm) !== UNLOCK_WORD) return { ok: false, status: 400, reason: 'confirm', message: `Type ${UNLOCK_WORD} to take the lock out.` };
   const x = deps.io();
   if (!s(admin) || !x.isAdminEmail(s(admin))) return { ok: false, status: 403, reason: 'not-admin', message: backfill.WORDS.page.notAdmin };
@@ -394,11 +464,12 @@ async function state() {
 /** The cheap poll: the job only (no read at all). */
 function jobState() { return { job: view(current || last), running: !!current }; }
 
-function _resetForTests() { current = null; last = null; previews.clear(); }
+function _resetForTests() { current = null; claim = ''; last = null; previews.clear(); }
 
 module.exports = {
   saveSheet, loadSheet, startPreview, startApply, unlock, state, jobState, view, previewOf,
   driveStore, maskKey, maskText, deps, _resetForTests,
   FOLDER, POINTER, SHEET_RE, MAX_SHEET_BYTES, UNLOCK_WORD, LOG_PART,
   _current: () => current,
+  _busy: busy,
 };
