@@ -7,6 +7,9 @@
  * text box in its place and writes every pick back to it (with a `change` event).
  * If this script never runs, the plain select is still there and still works.
  *
+ * Also on "Edit lead" (the lead page, bd-casetype) and on "＋ Direct consultation"
+ * (dq-casetype) — the same case type list (2026-11-26).
+ *
  * Use on a page:
  *   <style> … ${SEARCH_SELECT_CSS} </style>
  *   <script> … ${SEARCH_SELECT_UI_JS}
@@ -68,13 +71,15 @@ function tdotSearchFilter(names, query) {
  * Turn <select id=selectId> into a search box. Returns { sync, input, list } —
  * call sync() after the page fills or resets the select by code (it sends no
  * event, so an untouched form stays "untouched").
+ * A form that is built fresh at every opening hands over the select itself
+ * instead of its id (＋ Direct consultation).
  */
 function tdotSearchSelect(selectId, opts) {
   opts = opts || {};
-  var sel = document.getElementById(selectId);
+  var sel = typeof selectId === 'string' ? document.getElementById(selectId) : selectId;
   if (!sel || !sel.parentNode) return null;
   if (sel.tdotSearch) return sel.tdotSearch;
-  var base = selectId + '-ss';
+  var base = (typeof selectId === 'string' ? selectId : (sel.id || 'ss')) + '-ss';
   var wrap = document.createElement('div'), box = document.createElement('div'), input = document.createElement('input'),
       clear = document.createElement('button'), list = document.createElement('div'), status = document.createElement('span');
   var items = [], optEls = [], active = -1, opened = false, mine = false, lastShown = '', down = false, pending = false;
@@ -226,9 +231,17 @@ function tdotSearchSelect(selectId, opts) {
     setTimeout(shut, 150);
   });
   function shut() { if (document.activeElement !== input) close(); }
+  /* A box whose form was taken out of the page (a pop-up built fresh at every opening) stops listening at the next press. */
+  function gone() {
+    if (wrap.isConnected !== false) return false;
+    if (document.removeEventListener) { document.removeEventListener('mousedown', onDown, true); document.removeEventListener('mouseup', onUp, true); }
+    return true;
+  }
+  function onDown() { if (!gone()) down = true; }
+  function onUp() { if (gone()) return; down = false; if (pending) { pending = false; setTimeout(shut, 0); } }
   if (document.addEventListener) {
-    document.addEventListener('mousedown', function () { down = true; }, true);
-    document.addEventListener('mouseup', function () { down = false; if (pending) { pending = false; setTimeout(shut, 0); } }, true);
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('mouseup', onUp, true);
   }
   /* The box's own change event (the browser sends one when a typed-in box loses focus) stops here: the select's is the only one the page hears. */
   input.addEventListener('change', function (e) { e.stopPropagation(); });

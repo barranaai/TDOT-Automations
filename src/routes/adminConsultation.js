@@ -24,6 +24,7 @@ const { deadlineBoxHtml, DEADLINE_BOX_JS, DEADLINE_BOX_CSS } = require('./deadli
 const { listTableScript, LIST_TABLE_CSS } = require('./listFilters');   // one filter look for every list (2026-11-05)
 const { consultListSpec, consultListOpts, retainerListSpec, retainerListOpts } = require('./listSpecs');
 const { DQ_CSS, DQ_JS, DQ_BUTTON_HTML, DQ_DONE_HTML, dqFormHtml } = require('./directConsultUi');   // "＋ Direct consultation" (step 2, 2026-11-09)
+const { SEARCH_SELECT_CSS, SEARCH_SELECT_UI_JS } = require('./searchSelectUi');   // search box on its "Case type" list (2026-11-26)
 
 function escAttr(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -864,6 +865,7 @@ function buildQueueHTML() {
   ${BLACKLIST_UI_CSS}
   ${REFERRAL_CSS}
   ${DQ_CSS}
+  ${SEARCH_SELECT_CSS}
   ${OTTER_MATCH_CSS}
 </style></head><body>
 ${buildNavHeader('consultations')}
@@ -922,6 +924,7 @@ startClock(); checkApiStatus();
 ${BLACKLIST_UI_JS}
 ${REFERRAL_UI_JS}
 var DQ_FORM=${jsLit(dqFormHtml())};
+${SEARCH_SELECT_UI_JS}
 ${DQ_JS}
 dqInitButton();
 </script>

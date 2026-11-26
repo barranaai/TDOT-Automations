@@ -143,7 +143,8 @@ const DQ_BUTTON_HTML = '<button class="btn-direct" id="btn-direct-consult" type=
 const DQ_DONE_HTML = '<div id="dq-done" role="status"></div>';
 
 /* Browser code. Needs: getKey/peekKey (SHARED_AUTH_JS), tdotDialogNew (DIALOG_UI_JS), tdotRef (REFERRAL_UI_JS),
-   tdotBlacklistHtml (BLACKLIST_UI_JS), DQ_FORM (the form markup), load(force) (the list). */
+   tdotBlacklistHtml (BLACKLIST_UI_JS), DQ_FORM (the form markup), load(force) (the list).
+   Uses when the page has it: tdotSearchSelect (SEARCH_SELECT_UI_JS) — the search box on "Case type". */
 const DQ_JS = `
 /* ── ＋ Direct consultation (step 2): a consultation booked outside the app ── */
 var DQ_OPTS=null;
@@ -220,6 +221,9 @@ function openDirectConsult(){
   q('dq-len').innerHTML=(o.lengths||[]).map(function(n){ return '<option value="'+n+'">'+n+' minutes</option>'; }).join('');
   q('dq-pay').innerHTML=(o.payments||[]).map(function(p){ return '<label><input type="radio" name="dq-pay" value="'+dqEsc(p.kind)+'"> '+dqEsc(p.label)+'</label>'; }).join('');
   q('dq-casetype').innerHTML='<option value="">— not sure yet —</option>'+(o.caseTypes||[]).map(function(c){ return '<option value="'+dqEsc(c)+'">'+dqEsc(c)+'</option>'; }).join('');
+  /* "Case type": the same search box as on Add a lead (2026-11-26), on this opening's own select — the form is built fresh
+     every time, so the box starts empty. The select stays underneath and is what Save reads. */
+  try{ if(typeof tdotSearchSelect==='function') tdotSearchSelect(q('dq-casetype'),{ placeholder:'Type to search — or leave blank if not sure yet' }); }catch(e){}   /* if it fails, the plain list is still there */
   var staff=(o.staff||[]).slice(); if(o.bookedBy && staff.indexOf(o.bookedBy)<0) staff.unshift(o.bookedBy);
   q('dq-bookedby').innerHTML='<option value="">Choose…</option>'+staff.map(function(n){ return '<option value="'+dqEsc(n)+'">'+dqEsc(n)+'</option>'; }).join('');
   if(o.bookedBy) q('dq-bookedby').value=o.bookedBy;

@@ -529,6 +529,7 @@ ${REMARKS_CSS}
   .btn-row .btn { flex:1 1 auto; }
   .file-row { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--navy); font-weight:600; padding:6px 0; border-top:1px solid #f8fafc; }
   .file-row:first-child { border-top:none; }
+  ${SEARCH_SELECT_CSS}
 </style></head><body>
 ${buildNavHeader('leads')}
 <main class="wrap">
@@ -1052,6 +1053,10 @@ document.getElementById('btn-la-att').onclick=function(){
 var BD_LOADED={ src:'', ref:'', email:'', phone:'' };
 function bdEl(id){ return document.getElementById('bd-'+id); }
 function bdOption(sel,val){ if(val && ![].some.call(sel.options,function(o){ return o.value===val; })){ var o=document.createElement('option'); o.value=val; o.textContent=val; sel.appendChild(o); } }
+${SEARCH_SELECT_UI_JS}
+/* "Case type interest": the same search box as on Add a lead (2026-11-26). The select stays underneath and is what Save reads.
+   Filling it from the lead sends no event (the form stays untouched); a pick or a clear sends the select's own change event. */
+var BD_CT=null; try{ BD_CT=tdotSearchSelect('bd-casetype',{ placeholder:'Type to search — or leave blank if not sure yet' }); }catch(e){}   /* if it fails, the plain list is still there */
 function hydrateBasic(d){
   var caseOpen=!!d.clientMasterItemId, direct=!!d.directRetainer;
   /* With a case the name, email and phone are locked — except an EMPTY email or phone, which can still be added (it goes on the case too). */
@@ -1066,13 +1071,13 @@ function hydrateBasic(d){
   bdEl('name').value=d.name||''; bdEl('email').value=d.email||''; bdEl('phone').value=d.phone||'';
   var src=bdEl('source'); bdOption(src,d.sourceChannel||''); src.value=d.sourceChannel||'Website';
   BD_REF.load(src.value, d.referredBy||''); BD_LOADED={ src:src.value, ref:d.referredBy||'', email:d.email||'', phone:d.phone||'' };
-  var ct=bdEl('casetype'); bdOption(ct,d.caseTypeInterest||''); ct.value=d.caseTypeInterest||'';
+  var ct=bdEl('casetype'); bdOption(ct,d.caseTypeInterest||''); ct.value=d.caseTypeInterest||''; if(BD_CT) BD_CT.sync();
   if(!BD_TYPES){ var key=getKey(); if(!key) return;
     BD_TYPES='loading';
     fetch('/api/consultation/direct-client/options',{headers:{'X-Api-Key':key}}).then(function(r){ return r.json(); })
       .then(function(o){ BD_TYPES=o.caseTypes||[]; var keep=ct.value;
         ct.innerHTML='<option value="">— not sure yet —</option>'+BD_TYPES.map(function(c){ return '<option>'+escHtml(c)+'</option>'; }).join('');
-        bdOption(ct,keep); ct.value=keep; })
+        bdOption(ct,keep); ct.value=keep; if(BD_CT) BD_CT.sync(); })
       .catch(function(){ BD_TYPES=null; });
   }
 }
