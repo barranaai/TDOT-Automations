@@ -321,7 +321,7 @@ async function onSubmissionReady({ masterItemId, caseRef }) {
           heading: '🔒 Case ready for filing',
           body: `<p>The case supervisor has marked this case as <strong>Submission Ready</strong>. The case is now locked — no further automated changes will be made.</p>
                  <p><strong>Action required (Submission Team):</strong> please proceed with filing this case to IRCC.</p>
-                 <p>All required documents and questionnaire responses have been collected and reviewed. Once the application has been filed, please update the Case Stage in Monday.com to <strong>Submitted</strong>.</p>`,
+                 <p>All required documents and questionnaire responses have been collected and reviewed. Once the application has been filed, please update the Case Stage in Monday.com to <strong>Application Submitted</strong>.</p>`,
           caseRef, clientName, caseType,
         })
       );
