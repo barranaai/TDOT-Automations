@@ -357,7 +357,22 @@ test('box: the list is shown before it is filled, starts from its top, and is br
   w.fire(w.input, 'click');
   assert.strictEqual(reveals, 3);
   assert.ok(hiddenWhenFilled.length >= 3 && hiddenWhenFilled.every((h) => h === false), 'never measured while hidden');
-  assert.match(SEARCH_SELECT_CSS, /@media \(max-width: 760px\)[\s\S]*\.ss-wrap\.ss-open \{ padding-bottom:45vh; \}/);
+  assert.match(SEARCH_SELECT_CSS, /@media \(max-width: 760px\)[\s\S]*\.tdlg \.ss-wrap\.ss-open \{ padding-bottom:45vh; \}/);
+  assert.doesNotMatch(SEARCH_SELECT_CSS, /[^g] \.ss-wrap\.ss-open \{ padding-bottom/, 'spare room only inside a pop-up: on a plain page (Edit lead) it would open a hole in the card');
+});
+
+test('box: on a phone the box goes to the top only inside a pop-up — on a plain page (Edit lead) it is only brought into sight', () => {
+  const run = (inDialog) => {
+    const w = world({ names: TYPES });
+    const wrap = w.input.parentNode.parentNode, blocks = [];
+    w.sandbox.window.matchMedia = () => ({ matches: true });
+    wrap.closest = (q) => (q === '.tdlg' && inDialog ? {} : null);
+    wrap.scrollIntoView = (o) => { blocks.push(o.block); };
+    w.type('wp');
+    return blocks;
+  };
+  assert.deepStrictEqual(run(true), ['start']);
+  assert.deepStrictEqual(run(false), ['nearest']);
 });
 
 test('box: the page sets the select while the list is open on the old pick — the box shows the new value and leaving does not undo it', () => {

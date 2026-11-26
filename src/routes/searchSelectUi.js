@@ -43,7 +43,7 @@ const SEARCH_SELECT_CSS = `
     .ss-opt { padding:11px 10px; }
     .ss-list { max-height:184px; }
     .ss-x { width:36px; height:36px; }
-    .ss-wrap.ss-open { padding-bottom:45vh; }   /* list open on a phone: spare room below, so the box can really be scrolled up to the top, clear of the keyboard */
+    .tdlg .ss-wrap.ss-open { padding-bottom:45vh; }   /* list open on a phone, in a pop-up: spare room below, so the box can really be scrolled up to the top, clear of the keyboard. On a plain page it would open a hole in the card. */
   }
 `;
 
@@ -157,7 +157,8 @@ function tdotSearchSelect(selectId, opts) {
   }
   function reveal() {
     var phone = false;
-    try { phone = !!(window.matchMedia && window.matchMedia('(max-width: 760px)').matches); } catch (e) {}
+    /* only in a pop-up (it has the spare room below, see the CSS): on a plain page the box would jump under the top bar */
+    try { phone = !!(wrap.closest && wrap.closest('.tdlg') && window.matchMedia && window.matchMedia('(max-width: 760px)').matches); } catch (e) {}
     /* a phone has the keyboard over the lower half: the box goes to the top so the list has room */
     if (wrap.scrollIntoView) wrap.scrollIntoView({ block: phone ? 'start' : 'nearest' });
   }
