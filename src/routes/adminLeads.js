@@ -14,6 +14,7 @@ const { UPDATES_WIDGET_CSS, updatesWidgetHtml, UPDATES_WIDGET_JS } = require('./
 const { REMARKS_CSS, remarksHtml, REMARKS_JS } = require('./leadRemarksWidget');
 const { leadsTableScript, LEADS_TABLE_CSS } = require('./leadsTableFilters');
 const { REFERRAL_CSS, REFERRAL_UI_JS, referralFieldsHtml, sourceOptionsHtml } = require('./referralPicker');   // Source / Reference second question (2026-11-04)   // header filters + sorting on the Leads list
+const { SEARCH_SELECT_CSS, SEARCH_SELECT_UI_JS } = require('./searchSelectUi');   // search box on the long "Case type interest" list (2026-11-26)
 const { ATTACH_CSS, ATTACH_UI_JS, attachFieldHtml } = require('./attachUi');   // Shafoli's screenshot attachments (2026-11-04)
 const { deadlineBoxHtml, DEADLINE_BOX_JS, DEADLINE_BOX_CSS } = require('./deadlineBox');   // the deadline box (2026-11-05)
 const { LEAD_OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
@@ -101,6 +102,7 @@ function buildLeadsQueueHTML() {
   ${DELETE_UI_CSS}
   ${BLACKLIST_UI_CSS}
   ${REFERRAL_CSS}
+  ${SEARCH_SELECT_CSS}
   ${ATTACH_CSS}
   ${DEADLINE_BOX_CSS}
 </style></head><body>
@@ -287,6 +289,9 @@ document.getElementById('btn-export').onclick=exportLeads;
 ${REFERRAL_UI_JS}
 var AL_ALLOW=false, AL_SIGNED=false;
 var AL_REF=tdotRef('al');   /* Source / Reference second question: which employee / which client (2026-11-04) */
+${SEARCH_SELECT_UI_JS}
+/* "Case type interest": type a few letters to shrink the long list (2026-11-26). The select stays underneath and is what the form reads. */
+var AL_CT=tdotSearchSelect('al-casetype',{ placeholder:'Type to search — or leave blank if not sure yet' });
 var AL_DL=window.tdotDeadlineBox('al');   /* the deadline (2026-11-05): optional on this form, asked again at retain */
 ${ATTACH_UI_JS}
 var AL_ATT=tdotAttach('al');   /* "Attach a screenshot": shows only for the staff allowed to (Shafoli), signed in with Monday */
@@ -298,7 +303,7 @@ function alOpen(){
   AL_ALLOW=false; alEl('al-err').textContent='';
   /* Always opens EMPTY (Faran 2026-11-05) — what was typed for the last caller never lands on the next one. */
   ['al-name','al-email','al-phone','al-address','al-note'].forEach(function(id){ var e=alEl(id); if(e) e.value=''; });
-  alEl('al-casetype').selectedIndex=0;
+  alEl('al-casetype').selectedIndex=0; if(AL_CT) AL_CT.sync();
   var cb=alEl('al-create'); cb.disabled=false; cb.textContent='Create lead';
   var m=alEl('al-matches'); m.style.display='none'; m.innerHTML='';
   /* Where the client is + who is adding them: asked fresh each time (a shared front-desk PC must not credit the last person). */
@@ -322,7 +327,7 @@ function alOpen(){
   if(sel.options.length<=1){ var key=getKey(); if(!key) return;
     fetch('/api/consultation/direct-client/options',{headers:{'X-Api-Key':key}})
       .then(function(r){ return r.json(); })
-      .then(function(o){ sel.innerHTML='<option value="">— not sure yet —</option>'+(o.caseTypes||[]).map(function(c){ return '<option>'+escHtml(c)+'</option>'; }).join(''); })
+      .then(function(o){ sel.innerHTML='<option value="">— not sure yet —</option>'+(o.caseTypes||[]).map(function(c){ return '<option>'+escHtml(c)+'</option>'; }).join(''); if(AL_CT) AL_CT.sync(); })
       .catch(function(){ /* optional field — the list just stays empty */ });
   }
 }

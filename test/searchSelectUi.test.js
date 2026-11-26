@@ -1,0 +1,242 @@
+// The search box on a long list (staff request 2026-11-26): "Case type interest" on Add a lead.
+// The filter is tested as the real function; the box itself runs here against a small fake DOM,
+// using the very same source the page gets.
+const test = require('node:test');
+const assert = require('node:assert');
+const vm = require('vm');
+const SS = require('../src/routes/searchSelectUi');
+const { SEARCH_SELECT_UI_JS, SEARCH_SELECT_CSS, tdotSearchFilter, tdotSearchMatch, tdotSearchNorm } = SS;
+
+const TYPES = ['BCPNP', 'Canadian Experience Class (EE after ITA)', 'Canadian Experience Class (Profile+ITA+Submission)', 'Citizenship',
+  'Co-op WP', 'LMIA Based WP', 'Manitoba PNP', 'OINP', 'PR Card Renewal', 'Visitor <b>Visa</b>'];
+
+// ── the filter ────────────────────────────────────────────────────────────
+test('filter: nothing typed keeps the whole list, in order', () => {
+  assert.deepStrictEqual(tdotSearchFilter(TYPES, ''), TYPES);
+  assert.deepStrictEqual(tdotSearchFilter(TYPES, '   '), TYPES);
+  assert.deepStrictEqual(tdotSearchFilter(TYPES, null), TYPES);
+  assert.deepStrictEqual(tdotSearchFilter(null, 'x'), []);
+});
+
+test('filter: any case, anywhere in the name', () => {
+  assert.deepStrictEqual(tdotSearchFilter(TYPES, 'pnp'), ['BCPNP', 'Manitoba PNP']);
+  assert.deepStrictEqual(tdotSearchFilter(TYPES, 'CITIZEN'), ['Citizenship']);
+  assert.deepStrictEqual(tdotSearchFilter(TYPES, 'wp'), ['Co-op WP', 'LMIA Based WP']);
+  assert.deepStrictEqual(tdotSearchFilter(TYPES, 'zzz'), []);
+});
+
+test('filter: extra spaces do not matter; every typed word must be there, in any order', () => {
+  assert.deepStrictEqual(tdotSearchFilter(TYPES, '  ee   ita '), ['Canadian Experience Class (EE after ITA)']);
+  assert.deepStrictEqual(tdotSearchFilter(TYPES, 'ita ee'), ['Canadian Experience Class (EE after ITA)']);
+  assert.deepStrictEqual(tdotSearchFilter(TYPES, 'class ita'), ['Canadian Experience Class (EE after ITA)', 'Canadian Experience Class (Profile+ITA+Submission)']);
+  assert.deepStrictEqual(tdotSearchFilter(TYPES, 'card  renewal'), ['PR Card Renewal']);
+  assert.deepStrictEqual(tdotSearchFilter(TYPES, 'ee zzz'), []);
+  assert.strictEqual(tdotSearchMatch('PR  Card Renewal', 'pr\tcard'), true, 'tabs and hard spaces count as spaces');
+  assert.strictEqual(tdotSearchNorm('  A   b\tC '), 'a b c');
+});
+
+// ── the page-script rules ─────────────────────────────────────────────────
+test('the browser code follows the page-script rules: no backtick, no dollar-brace, no backslash; it parses; it is the tested functions', () => {
+  for (const [name, s] of [['SEARCH_SELECT_UI_JS', SEARCH_SELECT_UI_JS], ['SEARCH_SELECT_CSS', SEARCH_SELECT_CSS]]) {
+    assert.ok(!s.includes('`'), name + ': no backtick');
+    assert.ok(!s.includes('${'), name + ': no dollar-brace');
+    assert.ok(!s.includes('\\'), name + ': no backslash');
+  }
+  new vm.Script(SEARCH_SELECT_UI_JS);
+  for (const fn of [SS.tdotSearchNorm, SS.tdotSearchMatch, SS.tdotSearchFilter, SS.tdotSearchSelect]) assert.ok(SEARCH_SELECT_UI_JS.includes(fn.toString()), fn.name);
+  // embedded in a template literal (as the pages do) it comes out unchanged
+  assert.strictEqual(new Function('return `' + SEARCH_SELECT_UI_JS + '`')(), SEARCH_SELECT_UI_JS);
+  assert.match(SEARCH_SELECT_CSS, /@media \(max-width: 760px\)[^}]*\{\s*\.ss-opt, \.ss-empty \{ font-size:16px; \}/, '16px rows on a phone');
+});
+
+test('Leads page: the box is switched on for al-casetype only; the select is still there; every script parses', () => {
+  const al = require('../src/routes/adminLeads');
+  const html = al.buildLeadsQueueHTML();
+  assert.ok(html.includes('<label class="al-l" for="al-casetype">Case type interest</label>'), 'the label');
+  assert.ok(html.includes('<select id="al-casetype"><option value="">— not sure yet —</option></select>'), 'the plain select stays as the fallback');
+  assert.ok(html.includes("var AL_CT=tdotSearchSelect('al-casetype',{ placeholder:'Type to search — or leave blank if not sure yet' });"));
+  assert.strictEqual(html.split('tdotSearchSelect(').length - 1, 2, 'one definition + one use: not on the edit-lead or other lists');
+  assert.ok(html.includes("alEl('al-casetype').selectedIndex=0; if(AL_CT) AL_CT.sync();"), 'the form reset clears the box');
+  assert.ok(html.includes("}).join(''); if(AL_CT) AL_CT.sync(); })"), 'the late-loaded list reaches the box');
+  assert.ok(html.includes("caseTypeInterest:alEl('al-casetype').value"), 'the form still sends the select value');
+  assert.ok(html.includes('.ss-list {'), 'the styles are on the page');
+  assert.ok(html.indexOf('function tdotSearchSelect(') < html.indexOf('var AL_CT='), 'defined before it is used');
+  let n = 0;
+  for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) { new vm.Script(m[1]); n++; }
+  assert.ok(n > 0);
+  assert.ok(!al.buildLeadDetailHTML('7').includes('tdotSearchSelect'), 'the lead page (edit lead) is unchanged');
+});
+
+// ── the box itself, on a fake DOM ─────────────────────────────────────────
+function world(opts) {
+  const listeners = new WeakMap();
+  const doc = { activeElement: null, byId: {}, parentNode: null,
+    getElementById(id) { return doc.byId[id] || (function find(n) { if (n.id === id) return n; for (const k of n.children) { const r = find(k); if (r) return r; } return null; })(doc.body); },
+    createElement(tag) { return el(tag); },
+    addEventListener(t, f) { on(doc, t, f); } };
+  function on(n, t, f) { if (!listeners.has(n)) listeners.set(n, {}); (listeners.get(n)[t] = listeners.get(n)[t] || []).push(f); }
+  function fire(target, type, extra) {
+    const e = Object.assign({ type, target, defaultPrevented: false, stopped: false, preventDefault() { e.defaultPrevented = true; }, stopPropagation() { e.stopped = true; } }, extra);
+    for (let p = target; p && !e.stopped; p = p.parentNode || (p === doc ? null : doc)) for (const f of ((listeners.get(p) || {})[type] || [])) f(e);
+    return e;
+  }
+  function el(tag) {
+    const n = { tagName: String(tag).toUpperCase(), id: '', className: '', type: '', hidden: false, style: {}, attrs: {}, children: [], parentNode: null, value: '', _text: '', selected: 0,
+      get firstChild() { return n.children[0] || null; },
+      get textContent() { return n._text + n.children.map((c) => c.textContent).join(''); }, set textContent(v) { n.children = []; n._text = String(v); },
+      setAttribute(k, v) { n.attrs[k] = String(v); }, getAttribute(k) { return k in n.attrs ? n.attrs[k] : null; }, removeAttribute(k) { delete n.attrs[k]; },
+      appendChild(c) { c.parentNode = n; n.children.push(c); return c; },
+      insertBefore(c, ref) { c.parentNode = n; n.children.splice(n.children.indexOf(ref), 0, c); return c; },
+      removeChild(c) { n.children.splice(n.children.indexOf(c), 1); c.parentNode = null; return c; },
+      addEventListener(t, f) { on(n, t, f); }, dispatchEvent(e) { fire(n, e.type, { bubbles: e.bubbles }); return true; },
+      focus() { if (doc.activeElement === n) return; const was = doc.activeElement; doc.activeElement = n; if (was) fire(was, 'blur'); fire(n, 'focus'); },
+      select() { n.selectedAll = true; } };
+    return n;
+  }
+  doc.body = el('body');
+  const label = doc.body.appendChild(el('label')); label.textContent = 'Case type interest'; label.htmlFor = 'al-casetype';
+  const sel = doc.body.appendChild(el('select')); sel.id = 'al-casetype';
+  let options = [], index = 0;
+  const setOptions = (names) => { options = [{ value: '', text: '— not sure yet —' }].concat(names.map((t) => ({ value: t, text: t }))); index = 0; };
+  Object.defineProperty(sel, 'options', { get: () => options });
+  Object.defineProperty(sel, 'selectedIndex', { get: () => (options.length ? index : -1), set: (i) => { index = i; } });
+  Object.defineProperty(sel, 'value', { get: () => (options[index] ? options[index].value : ''), set: (v) => { const i = options.findIndex((o) => o.value === v); index = i < 0 ? -1 : i; } });
+  Object.defineProperty(sel, 'labels', { get: () => (label.htmlFor === sel.id ? [label] : []) });
+  setOptions((opts && opts.names) || []);
+  const other = doc.body.appendChild(el('button'));
+  const timers = [], changes = [], docKeys = [];
+  on(sel, 'change', () => changes.push(sel.value));
+  on(doc, 'keydown', (e) => docKeys.push(e.key + (e.defaultPrevented ? ':used' : '')));   // where the pop-up listens for Escape
+  const sandbox = { document: doc, window: {}, setTimeout: (f) => { timers.push(f); }, Event: function (type, o) { this.type = type; this.bubbles = !!(o && o.bubbles); } };
+  vm.createContext(sandbox);
+  vm.runInContext(SEARCH_SELECT_UI_JS, sandbox);
+  const api = sandbox.tdotSearchSelect('al-casetype', { placeholder: 'Type to search' });
+  const input = api.input, list = api.list;
+  return { doc, sandbox, sel, label, api, input, list, other, changes, docKeys, setOptions, fire,
+    type(text) { input.focus(); input.value = text; fire(input, 'input'); },
+    key(k) { return fire(input, 'keydown', { key: k }); },
+    rows() { return list.children.map((c) => c.textContent); },
+    activeText() { const id = input.getAttribute('aria-activedescendant'); const r = list.children.find((c) => c.id === id); return r ? r.textContent : null; },
+    leave() { other.focus(); while (timers.length) timers.shift()(); } };
+}
+
+test('box: built on top of the select — label moved to the box, select hidden but kept, combobox roles', () => {
+  const w = world();
+  assert.strictEqual(w.sel.style.display, 'none');
+  assert.strictEqual(w.label.htmlFor, w.input.id);
+  assert.strictEqual(w.doc.body.children.indexOf(w.input.parentNode.parentNode) + 1, w.doc.body.children.indexOf(w.sel), 'the box sits right before the select');
+  assert.strictEqual(w.input.getAttribute('role'), 'combobox');
+  assert.strictEqual(w.input.getAttribute('aria-expanded'), 'false');
+  assert.strictEqual(w.input.getAttribute('aria-controls'), w.list.id);
+  assert.strictEqual(w.list.getAttribute('role'), 'listbox');
+  assert.strictEqual(w.list.getAttribute('aria-label'), 'Case type interest');
+  assert.strictEqual(w.list.hidden, true);
+  assert.strictEqual(w.input.value, '');
+  assert.strictEqual(w.sandbox.tdotSearchSelect('al-casetype'), w.api, 'asking twice gives the same box, not a second one');
+  assert.strictEqual(w.sandbox.tdotSearchSelect('no-such-select'), null);
+});
+
+test('box: options loaded late, type, arrows, Enter picks — the select gets the value and one change event', () => {
+  const w = world();
+  w.type('pnp');
+  assert.deepStrictEqual(w.rows(), ['— not sure yet —', 'No match. Try fewer letters.'], 'before the list arrives');
+  w.setOptions(TYPES); w.api.sync();   // the fetch lands while the staffer is typing
+  assert.strictEqual(w.input.value, 'pnp', 'the typed text is kept');
+  assert.deepStrictEqual(w.rows(), ['— not sure yet —', 'BCPNP', 'Manitoba PNP']);
+  assert.deepStrictEqual(w.changes, [], 'loading the list sends no event (the form stays untouched)');
+  assert.strictEqual(w.input.getAttribute('aria-expanded'), 'true');
+  assert.strictEqual(w.activeText(), 'BCPNP', 'Enter would take the first match');
+  assert.strictEqual(w.key('ArrowDown').defaultPrevented, true);
+  assert.strictEqual(w.activeText(), 'Manitoba PNP');
+  w.key('ArrowDown'); assert.strictEqual(w.activeText(), '— not sure yet —', 'wraps round');
+  w.key('ArrowUp'); assert.strictEqual(w.activeText(), 'Manitoba PNP');
+  const e = w.key('Enter');
+  assert.strictEqual(e.defaultPrevented, true);
+  assert.strictEqual(w.sel.value, 'Manitoba PNP');
+  assert.strictEqual(w.input.value, 'Manitoba PNP');
+  assert.deepStrictEqual(w.changes, ['Manitoba PNP']);
+  assert.strictEqual(w.list.hidden, true);
+  assert.strictEqual(w.input.getAttribute('aria-expanded'), 'false');
+  assert.strictEqual(w.input.getAttribute('aria-activedescendant'), null);
+  assert.strictEqual(w.key('Enter').defaultPrevented, false, 'list closed: Enter is left alone');
+});
+
+test('box: Escape closes the list only (the pop-up never sees it); with the list closed Escape is the pop-up\'s', () => {
+  const w = world({ names: TYPES });
+  w.type('citi');
+  const e = w.key('Escape');
+  assert.strictEqual(e.defaultPrevented, true);
+  assert.strictEqual(w.list.hidden, true);
+  assert.strictEqual(w.input.value, '', 'back to the last pick (nothing)');
+  assert.deepStrictEqual(w.docKeys, [], 'the page-level Escape handler did not run');
+  const e2 = w.key('Escape');
+  assert.strictEqual(e2.defaultPrevented, false);
+  assert.deepStrictEqual(w.docKeys, ['Escape'], 'now it reaches the pop-up');
+});
+
+test('box: junk text never reaches the form — leaving the box goes back to the last pick', () => {
+  const w = world({ names: TYPES });
+  w.type('citizen'); w.key('Enter');
+  assert.strictEqual(w.sel.value, 'Citizenship');
+  w.type('something made up');
+  assert.deepStrictEqual(w.rows(), ['— not sure yet —', 'No match. Try fewer letters.']);
+  assert.strictEqual(w.key('Enter').defaultPrevented, true);   // nothing to take
+  assert.strictEqual(w.sel.value, 'Citizenship');
+  w.other.focus();   // straight to another control: the value is right at once, before any timer
+  assert.strictEqual(w.input.value, 'Citizenship');
+  assert.strictEqual(w.sel.value, 'Citizenship');
+  w.leave();
+  assert.strictEqual(w.list.hidden, true);
+  assert.deepStrictEqual(w.changes, ['Citizenship']);
+});
+
+test('box: emptying it means "not sure yet"; a full name typed out counts as picked; the x clears', () => {
+  const w = world({ names: TYPES });
+  w.type('oinp'); w.key('Enter');
+  w.type(''); w.leave();
+  assert.strictEqual(w.sel.value, '');
+  assert.strictEqual(w.input.value, '');
+  w.type('  pr card   RENEWAL '); w.leave();
+  assert.strictEqual(w.sel.value, 'PR Card Renewal');
+  assert.strictEqual(w.input.value, 'PR Card Renewal');
+  const x = w.input.parentNode.children[1];
+  assert.strictEqual(x.hidden, false);
+  assert.strictEqual(x.getAttribute('tabindex'), '-1');
+  assert.strictEqual(w.fire(x, 'mousedown').defaultPrevented, true, 'the click does not take focus out of the box');
+  w.fire(x, 'click');
+  assert.strictEqual(w.sel.value, ''); assert.strictEqual(w.input.value, ''); assert.strictEqual(x.hidden, true);
+  assert.deepStrictEqual(w.changes, ['OINP', '', 'PR Card Renewal', '']);
+});
+
+test('box: a click opens the whole list with the pick marked; a click on a row picks it; names are shown as text', () => {
+  const w = world({ names: TYPES });
+  w.type('co-op'); w.key('Enter');
+  w.input.focus(); w.fire(w.input, 'click');
+  assert.deepStrictEqual(w.rows(), ['— not sure yet —'].concat(TYPES), 'the box showing the pick means the whole list');
+  assert.strictEqual(w.activeText(), 'Co-op WP');
+  assert.strictEqual(w.list.children.find((c) => c.textContent === 'Co-op WP').getAttribute('aria-selected'), 'true');
+  assert.ok(w.list.children.every((c) => c.getAttribute('role') === 'option' && !('tabindex' in c.attrs)), 'rows are options and not tab stops');
+  const row = w.list.children.find((c) => c.textContent === 'Visitor <b>Visa</b>');
+  assert.strictEqual(row.children.length, 0, 'set as text, never as HTML');
+  assert.strictEqual(w.fire(row, 'mousedown').defaultPrevented, true);
+  w.fire(row, 'click');
+  assert.strictEqual(w.sel.value, 'Visitor <b>Visa</b>');
+  assert.strictEqual(w.list.hidden, true);
+  w.key('ArrowDown');
+  assert.strictEqual(w.list.hidden, false, 'Arrow Down opens the list');
+});
+
+test('box: the form reset (selectedIndex=0 then sync) empties the box and sends no event', () => {
+  const w = world({ names: TYPES });
+  w.type('bcpnp'); w.key('Enter'); w.leave();
+  assert.strictEqual(w.input.value, 'BCPNP');
+  const before = w.changes.length;
+  w.sel.selectedIndex = 0; w.api.sync();
+  assert.strictEqual(w.input.value, '');
+  assert.strictEqual(w.input.parentNode.children[1].hidden, true);
+  assert.strictEqual(w.list.hidden, true);
+  assert.strictEqual(w.changes.length, before);
+  w.sel.value = 'OINP'; w.api.sync();   // a value set by code shows too
+  assert.strictEqual(w.input.value, 'OINP');
+  assert.strictEqual(w.fire(w.input, 'change').stopped, true, 'the box\'s own change event stays in the box — only the select\'s reaches the page');
+});
