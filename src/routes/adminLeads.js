@@ -291,7 +291,7 @@ var AL_ALLOW=false, AL_SIGNED=false;
 var AL_REF=tdotRef('al');   /* Source / Reference second question: which employee / which client (2026-11-04) */
 ${SEARCH_SELECT_UI_JS}
 /* "Case type interest": type a few letters to shrink the long list (2026-11-26). The select stays underneath and is what the form reads. */
-var AL_CT=tdotSearchSelect('al-casetype',{ placeholder:'Type to search — or leave blank if not sure yet' });
+var AL_CT=null; try{ AL_CT=tdotSearchSelect('al-casetype',{ placeholder:'Type to search — or leave blank if not sure yet' }); }catch(e){}   /* if it fails, the plain list is still there */
 var AL_DL=window.tdotDeadlineBox('al');   /* the deadline (2026-11-05): optional on this form, asked again at retain */
 ${ATTACH_UI_JS}
 var AL_ATT=tdotAttach('al');   /* "Attach a screenshot": shows only for the staff allowed to (Shafoli), signed in with Monday */

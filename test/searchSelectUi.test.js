@@ -54,7 +54,7 @@ test('Leads page: the box is switched on for al-casetype only; the select is sti
   const html = al.buildLeadsQueueHTML();
   assert.ok(html.includes('<label class="al-l" for="al-casetype">Case type interest</label>'), 'the label');
   assert.ok(html.includes('<select id="al-casetype"><option value="">— not sure yet —</option></select>'), 'the plain select stays as the fallback');
-  assert.ok(html.includes("var AL_CT=tdotSearchSelect('al-casetype',{ placeholder:'Type to search — or leave blank if not sure yet' });"));
+  assert.ok(html.includes("var AL_CT=null; try{ AL_CT=tdotSearchSelect('al-casetype',{ placeholder:'Type to search — or leave blank if not sure yet' }); }catch(e){}"), 'switched on, and a failure leaves the plain list working');
   assert.strictEqual(html.split('tdotSearchSelect(').length - 1, 2, 'one definition + one use: not on the edit-lead or other lists');
   assert.ok(html.includes("alEl('al-casetype').selectedIndex=0; if(AL_CT) AL_CT.sync();"), 'the form reset clears the box');
   assert.ok(html.includes("}).join(''); if(AL_CT) AL_CT.sync(); })"), 'the late-loaded list reaches the box');
@@ -117,6 +117,7 @@ function world(opts) {
     key(k) { return fire(input, 'keydown', { key: k }); },
     rows() { return list.children.map((c) => c.textContent); },
     activeText() { const id = input.getAttribute('aria-activedescendant'); const r = list.children.find((c) => c.id === id); return r ? r.textContent : null; },
+    tick() { while (timers.length) timers.shift()(); },
     leave() { other.focus(); while (timers.length) timers.shift()(); } };
 }
 
@@ -139,7 +140,7 @@ test('box: built on top of the select — label moved to the box, select hidden 
 test('box: options loaded late, type, arrows, Enter picks — the select gets the value and one change event', () => {
   const w = world();
   w.type('pnp');
-  assert.deepStrictEqual(w.rows(), ['— not sure yet —', 'No match. Try fewer letters.'], 'before the list arrives');
+  assert.deepStrictEqual(w.rows(), ['— not sure yet —', 'The list has not loaded yet.'], 'before the list arrives: not called "no match"');
   w.setOptions(TYPES); w.api.sync();   // the fetch lands while the staffer is typing
   assert.strictEqual(w.input.value, 'pnp', 'the typed text is kept');
   assert.deepStrictEqual(w.rows(), ['— not sure yet —', 'BCPNP', 'Manitoba PNP']);
@@ -239,4 +240,88 @@ test('box: the form reset (selectedIndex=0 then sync) empties the box and sends 
   w.sel.value = 'OINP'; w.api.sync();   // a value set by code shows too
   assert.strictEqual(w.input.value, 'OINP');
   assert.strictEqual(w.fire(w.input, 'change').stopped, true, 'the box\'s own change event stays in the box — only the select\'s reaches the page');
+});
+
+// ── review fixes (2026-11-26) ─────────────────────────────────────────────
+test('box: emptied and then Enter means "not sure yet" — it does not take the old pick back', () => {
+  const w = world({ names: TYPES });
+  w.type('citizen'); w.key('Enter');
+  assert.strictEqual(w.sel.value, 'Citizenship');
+  w.type('');
+  assert.deepStrictEqual(w.rows(), ['— not sure yet —'].concat(TYPES));
+  assert.strictEqual(w.activeText(), '— not sure yet —', 'the blank choice is the one Enter takes');
+  w.key('Enter');
+  assert.strictEqual(w.sel.value, '');
+  assert.strictEqual(w.input.value, '');
+  assert.deepStrictEqual(w.changes, ['Citizenship', '']);
+});
+
+test('box: the window loses focus while typing — the list follows the box, Enter cannot take a row from the old search', () => {
+  const w = world({ names: TYPES });
+  w.type('pnp');
+  assert.strictEqual(w.activeText(), 'BCPNP');
+  w.fire(w.input, 'blur'); w.tick();   // alt-tab: blur, but the box is still the page's active element
+  assert.strictEqual(w.input.value, '', 'back to the last pick');
+  assert.strictEqual(w.list.hidden, false);
+  assert.deepStrictEqual(w.rows(), ['— not sure yet —'].concat(TYPES), 'no leftover "pnp" filter');
+  w.key('Enter');
+  assert.strictEqual(w.sel.value, '');
+  assert.deepStrictEqual(w.changes, []);
+});
+
+test('box: a held mouse press on another field — the list stays until the button is let go, then closes', () => {
+  const w = world({ names: TYPES });
+  w.type('wp');
+  w.fire(w.other, 'mousedown'); w.other.focus(); w.tick();
+  assert.strictEqual(w.list.hidden, false, 'nothing moves under the press');
+  assert.strictEqual(w.input.value, '', 'but the value is already settled');
+  w.fire(w.other, 'mouseup'); w.tick();
+  assert.strictEqual(w.list.hidden, true);
+  assert.strictEqual(w.input.parentNode.parentNode.className, 'ss-wrap');
+});
+
+test('box: the list is shown before it is filled, starts from its top, and is brought into sight every time it changes', () => {
+  const w = world({ names: TYPES });
+  const wrap = w.input.parentNode.parentNode, hiddenWhenFilled = [];
+  let reveals = 0;
+  wrap.scrollIntoView = () => { reveals++; };
+  Object.defineProperty(w.list, 'scrollTop', { get: () => 0, set: () => { hiddenWhenFilled.push(w.list.hidden); } });
+  w.type('zz');
+  assert.strictEqual(wrap.className, 'ss-wrap ss-open', 'the phone rule for spare room below hangs on this');
+  assert.strictEqual(reveals, 1);
+  w.type('');   // back to the long list: it may now reach under the pop-up's buttons
+  assert.strictEqual(reveals, 2);
+  w.key('Escape');
+  w.fire(w.input, 'click');
+  assert.strictEqual(reveals, 3);
+  assert.ok(hiddenWhenFilled.length >= 3 && hiddenWhenFilled.every((h) => h === false), 'never measured while hidden');
+  assert.match(SEARCH_SELECT_CSS, /@media \(max-width: 760px\)[\s\S]*\.ss-wrap\.ss-open \{ padding-bottom:45vh; \}/);
+});
+
+test('box: the page sets the select while the list is open on the old pick — the box shows the new value and leaving does not undo it', () => {
+  const w = world({ names: TYPES });
+  w.type('oinp'); w.key('Enter');
+  w.fire(w.input, 'click');
+  assert.strictEqual(w.list.hidden, false);
+  w.sel.selectedIndex = 0; w.api.sync();
+  assert.strictEqual(w.input.value, '');
+  w.leave();
+  assert.strictEqual(w.sel.value, '');
+  assert.deepStrictEqual(w.changes, ['OINP']);
+});
+
+test('box: a screen reader hears the result count and "no match"; the hover text is only for a cut-off name', () => {
+  const w = world({ names: TYPES });
+  const status = w.input.parentNode.children[2];
+  assert.strictEqual(status.getAttribute('role'), 'status');
+  w.type('pnp'); assert.strictEqual(status.textContent, '2 matches');
+  w.type('citizen'); assert.strictEqual(status.textContent, '1 match');
+  w.type('zzz'); assert.strictEqual(status.textContent, 'No match. Try fewer letters.');
+  w.type(''); assert.strictEqual(status.textContent, '');
+  w.type('citizen'); w.key('Enter');
+  assert.strictEqual(status.textContent, '');
+  assert.strictEqual(w.input.title, '', 'fits in the box: no second reading');
+  w.input.scrollWidth = 400; w.input.clientWidth = 200;
+  w.sel.value = 'Canadian Experience Class (EE after ITA)'; w.api.sync();
+  assert.strictEqual(w.input.title, 'Canadian Experience Class (EE after ITA)');
 });

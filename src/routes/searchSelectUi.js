@@ -25,6 +25,7 @@ const SEARCH_SELECT_CSS = `
   .ss-in { width:100%; box-sizing:border-box; }
   .ss-x { position:absolute; top:50%; right:4px; transform:translateY(-50%); width:28px; height:28px; display:flex; align-items:center; justify-content:center; border:0; border-radius:6px; background:transparent; color:var(--st-grey-solid, #64748b); font:inherit; font-size:18px; line-height:1; cursor:pointer; padding:0; }
   .ss-x[hidden] { display:none; }
+  .ss-sr { position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }   /* read out, not seen */
   .ss-x:hover { background:var(--st-grey-bg, #e8edf3); color:var(--st-grey-fg, #334155); }
   .ss-list { position:relative; background:#fff; border:1px solid #cbd5e1; border-radius:8px; box-shadow:0 6px 18px rgba(15,23,42,.12); margin-top:4px; max-height:220px; overflow-y:auto; padding:4px; }   /* in the flow: a pop-up's scroll area would cut off a floating list */
   .ss-list[hidden] { display:none; }
@@ -39,6 +40,7 @@ const SEARCH_SELECT_CSS = `
     .ss-opt { padding:11px 10px; }
     .ss-list { max-height:184px; }
     .ss-x { width:36px; height:36px; }
+    .ss-wrap.ss-open { padding-bottom:45vh; }   /* list open on a phone: spare room below, so the box can really be scrolled up to the top, clear of the keyboard */
   }
 `;
 
@@ -74,8 +76,8 @@ function tdotSearchSelect(selectId, opts) {
   if (sel.tdotSearch) return sel.tdotSearch;
   var base = selectId + '-ss';
   var wrap = document.createElement('div'), box = document.createElement('div'), input = document.createElement('input'),
-      clear = document.createElement('button'), list = document.createElement('div');
-  var items = [], optEls = [], active = -1, opened = false, mine = false;
+      clear = document.createElement('button'), list = document.createElement('div'), status = document.createElement('span');
+  var items = [], optEls = [], active = -1, opened = false, mine = false, lastShown = '', down = false, pending = false;
 
   wrap.className = 'ss-wrap'; wrap.id = base;
   box.className = 'ss-box';
@@ -84,11 +86,12 @@ function tdotSearchSelect(selectId, opts) {
   input.setAttribute('role', 'combobox'); input.setAttribute('aria-autocomplete', 'list');
   input.setAttribute('aria-expanded', 'false'); input.setAttribute('aria-controls', base + '-list');
   input.setAttribute('placeholder', opts.placeholder || 'Type to search');
-  input.style.paddingRight = '38px';   /* room for the clear button — set here, a page rule on its inputs would win over a class */
+  input.style.paddingRight = '44px';   /* room for the clear button — set here, a page rule on its inputs would win over a class */
   clear.type = 'button'; clear.className = 'ss-x'; clear.textContent = '×'; clear.hidden = true;
   clear.setAttribute('tabindex', '-1'); clear.setAttribute('aria-label', 'Clear'); clear.setAttribute('title', 'Clear');
   list.id = base + '-list'; list.className = 'ss-list'; list.hidden = true; list.setAttribute('role', 'listbox');
-  box.appendChild(input); box.appendChild(clear); wrap.appendChild(box); wrap.appendChild(list);
+  status.className = 'ss-sr'; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+  box.appendChild(input); box.appendChild(clear); box.appendChild(status); wrap.appendChild(box); wrap.appendChild(list);
 
   var label = sel.labels && sel.labels[0];
   sel.parentNode.insertBefore(wrap, sel);
@@ -100,7 +103,10 @@ function tdotSearchSelect(selectId, opts) {
   function blank() { var a = all(), i; for (i = 0; i < a.length; i++) if (a[i].v === '') return a[i]; return null; }
   function current() { var i = sel.selectedIndex, o = i >= 0 ? sel.options[i] : null; return o ? { v: o.value, t: o.text } : { v: '', t: '' }; }
   function shown() { var c = current(); return c.v === '' ? '' : c.t; }   /* the blank choice shows as an empty box */
-  function setText() { input.value = shown(); input.title = input.value; clear.hidden = !input.value; }   /* the title shows a long name in full */
+  function setText() {
+    input.value = shown(); lastShown = input.value; clear.hidden = !input.value;
+    input.title = input.scrollWidth > input.clientWidth ? input.value : '';   /* only a name that is cut off gets a hover text — otherwise a screen reader says it twice */
+  }
   /* What to filter by: the box showing exactly the picked value means "show the whole list". */
   function query() { return tdotSearchNorm(input.value) === tdotSearchNorm(shown()) ? '' : input.value; }
   function setActive(i) {
@@ -115,8 +121,9 @@ function tdotSearchSelect(selectId, opts) {
     else if (el.offsetTop + el.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = el.offsetTop + el.offsetHeight - list.clientHeight;
   }
   function render(q) {
-    var a = all(), cur = current().v, b = null, first = -1, at = -1, i, d;
+    var a = all(), cur = current().v, b = null, first = -1, at = -1, typed = tdotSearchNorm(q), say = '', i, d;
     items = []; optEls = [];
+    list.scrollTop = 0;
     for (i = 0; i < a.length; i++) {
       if (a[i].v === '') { if (!b) { b = a[i]; items.unshift(b); } }   /* the blank choice is always offered, first */
       else if (tdotSearchMatch(a[i].t, q)) items.push(a[i]);
@@ -132,12 +139,16 @@ function tdotSearchSelect(selectId, opts) {
       if (items[i].v === cur) at = i;
       if (first < 0 && items[i].v !== '') first = i;
     }
-    if (first < 0 && tdotSearchNorm(q)) {
-      d = document.createElement('div'); d.className = 'ss-empty'; d.textContent = 'No match. Try fewer letters.';
+    if (a.length <= (b ? 1 : 0)) say = 'The list has not loaded yet.';   /* nothing to search in: not the same as "no match" */
+    else if (first < 0 && typed) say = 'No match. Try fewer letters.';
+    if (say) {
+      d = document.createElement('div'); d.className = 'ss-empty'; d.textContent = say;
       list.appendChild(d);
-    }
-    /* typing: Enter takes the first match. Just opened: the arrow keys start from the picked one. */
-    setActive(tdotSearchNorm(q) ? first : at);
+    } else if (typed) say = (items.length - (b ? 1 : 0)) === 1 ? '1 match' : (items.length - (b ? 1 : 0)) + ' matches';
+    status.textContent = say;
+    /* typing: Enter takes the first match. Box emptied: Enter takes the blank choice. Just opened: the arrow keys start from the picked one. */
+    setActive(typed ? first : (!tdotSearchNorm(input.value) && b ? 0 : at));
+    if (opened) reveal();   /* every time, not only on opening: the list may have grown under the pop-up's pinned buttons */
   }
   function reveal() {
     var phone = false;
@@ -146,11 +157,12 @@ function tdotSearchSelect(selectId, opts) {
     if (wrap.scrollIntoView) wrap.scrollIntoView({ block: phone ? 'start' : 'nearest' });
   }
   function open(q) {
+    /* shown first, filled second: a hidden list has no size, so the picked row could not be brought into sight */
+    if (!opened) { opened = true; list.hidden = false; wrap.className = 'ss-wrap ss-open'; input.setAttribute('aria-expanded', 'true'); }
     render(q);
-    if (!opened) { opened = true; list.hidden = false; input.setAttribute('aria-expanded', 'true'); reveal(); }
   }
   function close() {
-    opened = false; list.hidden = true; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant');
+    opened = false; pending = false; list.hidden = true; wrap.className = 'ss-wrap'; status.textContent = ''; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant');
     while (list.firstChild) list.removeChild(list.firstChild);
     items = []; optEls = []; active = -1;
   }
@@ -177,9 +189,12 @@ function tdotSearchSelect(selectId, opts) {
     for (i = 0; i < a.length; i++) if (a[i].v !== '' && tdotSearchNorm(a[i].t) === t) { choose(a[i]); return; }
     setText();
   }
-  /* The page filled or reset the select by code. No event goes out. Someone typing right now keeps their text. */
+  /* The page filled or reset the select by code. No event goes out. Someone typing right now keeps their text; a box still showing the old pick shows the new one. */
   function sync() {
-    if (opened && document.activeElement === input) { render(query()); return; }
+    if (opened && document.activeElement === input) {
+      if (tdotSearchNorm(input.value) === tdotSearchNorm(lastShown)) setText();
+      render(query()); return;
+    }
     close(); setText();
   }
 
@@ -205,8 +220,16 @@ function tdotSearchSelect(selectId, opts) {
   });
   input.addEventListener('blur', function () {
     commit();   /* now, not later: a click on the page's Save button reads the select straight away */
-    setTimeout(function () { if (document.activeElement !== input) close(); }, 150);
+    if (opened) render(query());   /* the text may have gone back to the last pick: the list follows the box (it can stay open when only the window lost focus) */
+    /* A mouse press on another field: the list closes after the button is let go, so nothing moves under a held press. */
+    if (down) { pending = true; return; }
+    setTimeout(shut, 150);
   });
+  function shut() { if (document.activeElement !== input) close(); }
+  if (document.addEventListener) {
+    document.addEventListener('mousedown', function () { down = true; }, true);
+    document.addEventListener('mouseup', function () { down = false; if (pending) { pending = false; setTimeout(shut, 0); } }, true);
+  }
   /* The box's own change event (the browser sends one when a typed-in box loses focus) stops here: the select's is the only one the page hears. */
   input.addEventListener('change', function (e) { e.stopPropagation(); });
   list.addEventListener('mousedown', function (e) { e.preventDefault(); });   /* keep focus in the box while clicking a choice */
