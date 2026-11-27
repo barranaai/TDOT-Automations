@@ -573,7 +573,7 @@ ${buildNavHeader('leads')}
             <span class="muted" id="convert-why" style="font-size:12px"></span>
           </div>
         </div>
-        <div class="card" id="la-att-card" style="display:none"><div class="card-t">${I.clip} Attachments <span class="muted">(staff only — saved in the client’s folder)</span></div>${attachFieldHtml('la')}
+        <div class="card" id="la-att-card" style="display:none"><div class="card-t">${I.clip} Add a file <span class="muted">(staff only — saved in the client’s folder)</span></div>${attachFieldHtml('la')}
           <div style="margin-top:8px"><button class="btn" id="btn-la-att" type="button">Attach</button></div>
         </div>
         <div class="card"><div class="card-t">${I.clip} Their inquiry <button class="btn tbtn" id="btn-inq-edit" type="button" title="Edit the inquiry text">Edit</button></div>

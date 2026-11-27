@@ -157,6 +157,8 @@ test('lead page: every script parses; the pop-up code, then the button code, the
 test('lead page: the old bottom card is gone — markup, its drawing code and its row style', () => {
   for (const gone of ['c-attach-card', 'id="c-attach"', 'OneDrive · Intake', 'd.attachments', 'file-row']) assert.ok(!html.includes(gone), 'gone: ' + gone);
   assert.ok(html.includes('id="la-att-card"'), 'the staff-only attach card stays');
+  assert.ok(/id="la-att-card"[^>]*><div class="card-t">[^<]*(<svg[\s\S]*?<\/svg>)?\s*Add a file <span class="muted">\(staff only/.test(html), 'the upload card is titled "Add a file", so only the button at the top is called Attachments');
+  assert.ok(!/Attachments <span class="muted">\(staff only/.test(html), 'the old card title is gone');
   assert.ok(html.includes('<div id="c-sections"></div>'), 'the intake sections stay');
 });
 
