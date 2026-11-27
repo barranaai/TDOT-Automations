@@ -17,6 +17,7 @@ const { REFERRAL_CSS, REFERRAL_UI_JS, referralFieldsHtml, sourceOptionsHtml } = 
 const { SEARCH_SELECT_CSS, SEARCH_SELECT_UI_JS } = require('./searchSelectUi');   // search box on the long "Case type interest" list (2026-11-26)
 const { ATTACH_CSS, ATTACH_UI_JS, attachFieldHtml } = require('./attachUi');   // Shafoli's screenshot attachments (2026-11-04)
 const { deadlineBoxHtml, DEADLINE_BOX_JS, DEADLINE_BOX_CSS } = require('./deadlineBox');   // the deadline box (2026-11-05)
+const { LEAD_FILES_CSS, LEAD_FILES_UI_JS, PAPERCLIP_PATH } = require('./leadFilesUi');   // "Attachments" beside Priority on the lead page (2026-11-27)
 const { LEAD_OUTCOME_LABELS, REMARK_PRESETS } = require('../services/consultantPortalService');
 const { OUTCOME_NOT_WANTED, OUTCOME_FOLLOW_UP } = require('../../config/outcomes');
 const router  = express.Router();
@@ -37,6 +38,7 @@ const I = {
   file:  _svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/>'),
   video: _svg('<path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2"/>'),
   user:  _svg('<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'),
+  paperclip: _svg(PAPERCLIP_PATH),   // files ("clip" above is a clipboard)
 };
 // JSON.stringify does NOT escape </script>; neutralise `<` for safe inlining.
 const jsLit = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
@@ -470,6 +472,7 @@ function buildLeadDetailHTML(leadId) {
   .chip.amber { background:var(--st-amber-bg); color:var(--st-amber-fg); } .chip.grey { background:var(--st-grey-bg); color:var(--st-grey-fg); }
   .chip.red { background:var(--st-red-bg); color:var(--st-red-fg); }
   .chip .pk { font-weight:500; opacity:1; }   /* the key word: lighter weight, full colour (a faded word fell under 4.5:1 on the tint) */
+${LEAD_FILES_CSS}
 
   /* urgency banner */
   ${BLACKLIST_UI_CSS}
@@ -527,8 +530,6 @@ ${REMARKS_CSS}
   #invite-msg:focus, #webinar-msg:focus { outline:none; border-color:var(--navy); }
   .btn-row { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
   .btn-row .btn { flex:1 1 auto; }
-  .file-row { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--navy); font-weight:600; padding:6px 0; border-top:1px solid #f8fafc; }
-  .file-row:first-child { border-top:none; }
   ${SEARCH_SELECT_CSS}
 </style></head><body>
 ${buildNavHeader('leads')}
@@ -610,7 +611,6 @@ ${buildNavHeader('leads')}
           <div id="lead-dl-msg" class="act-msg"></div>
         </div>
         <div id="c-sections"></div>
-        <div class="card" id="c-attach-card" style="display:none"><div class="card-t">${I.file} Attachments <span class="muted">(OneDrive · Intake)</span></div><div id="c-attach"></div></div>
       </div>
 
       <div class="col">
@@ -718,8 +718,14 @@ tdotRemarksMount({ prefix:'rmk', leadId: LEAD_ID, presets: REMARKS, updatesPrefi
 })();
 var WANTS_TO=''; // the client's stated intent — set in render(d); gates the invite confirmation
 var FEE_RECORDED=''; // a consultation fee staff already recorded — the invite warns (the booking link charges again)
-var ICONS=${jsLit({ flag: I.flag, file: I.file, user: I.user, clock: I.clock })};
+var ICONS=${jsLit({ flag: I.flag, file: I.file, user: I.user, clock: I.clock, paperclip: I.paperclip })};
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+${LEAD_FILES_UI_JS}
+/* "Attachments" beside Priority (Faran 2026-11-27): the client's letters and the files staff attached, opened from the top of
+   the page. ONE button, made once and kept: render() rebuilds the chip row after every save and only puts this same button
+   back into its slot, so the count, a "checking" state and an open pop-up survive a re-render. Always shown — greyed
+   "Attachments 0" when the lead has no files. If this fails to build, the rest of the page still works. */
+var LEAD_FILES=null; try{ LEAD_FILES=tdotLeadFiles({ leadId:LEAD_ID, key:getKey, icons:{ clip:ICONS.paperclip, file:ICONS.file }, name:function(){ return (LEAD_DETAIL&&LEAD_DETAIL.name)||''; } }); }catch(e){}
 function initials(n){ return String(n||'?').split(/\\s+/).map(function(w){return w.charAt(0);}).join('').slice(0,2).toUpperCase(); }
 /* The email edit box is easier to find (step 3, 2026-11-09 — the lock rules are unchanged): a "Change" link
    beside the email (and "Add it here" on the No email warning) jumps to Basic details. Shown only while the
@@ -765,10 +771,13 @@ function render(d){
   pills+='<span class="chip '+(bs==='Booked'?'green':bs==='Slot Held'?'blue':(bs==='Abandoned'||bs==='Not Yet')?'grey':'amber')+'"><span class="pk">Booking</span> '+escHtml(bs)+'</span>';
   if(d.tier) pills+='<span class="chip blue"><span class="pk">Tier</span> '+escHtml(d.tier)+'</span>';
   if(d.priority) pills+='<span class="chip '+(d.priority==='Critical'?'red':d.priority==='High'?'amber':'grey')+'"><span class="pk">Priority</span> '+escHtml(d.priority)+'</span>';
+  if(LEAD_FILES) pills+=LEAD_FILES.slotHtml;   /* "Attachments": always here — right after Priority, and in this same place when there is no Priority or Tier */
   if(d.wantsTo && d.wantsTo!=='Book consultation') pills+='<span class="chip amber"><span class="pk">Asked for</span> '+escHtml(d.wantsTo)+'</span>';
   if(d.consultant) pills+='<span class="chip green">'+ICONS.user+' '+escHtml(d.consultant)+'</span>';
   if((d.flags||[]).length) pills+='<span class="chip red">'+ICONS.flag+' URGENT</span>';
+  var attFocus=!!(LEAD_FILES && document.activeElement===LEAD_FILES.chip);   /* rebuilding the row takes the button out for a moment: keep the keyboard focus on it */
   document.getElementById('c-pills').innerHTML=pills;
+  if(LEAD_FILES) LEAD_FILES.place(attFocus);
 
   document.getElementById('c-alert').innerHTML=(d.flags||[]).length
     ? '<div class="alert">'+ICONS.flag+'<div>'+d.flags.map(function(f){return escHtml(f);}).join(' · ')+' — review urgently</div></div>' : '';
@@ -801,11 +810,6 @@ function render(d){
           '<div class="kvgrid">'+(s.rows||[]).map(function(r){ return kv(r.label,r.value); }).join('')+'</div></div>';
       }).join('')
     : '<div class="card"><div class="notyet">'+(d.hasIntakeArchive?'The intake archive is empty.':'Intake archive unavailable — showing lead-board data only (older lead or folder moved after case handoff).')+'</div></div>';
-
-  if((d.attachments||[]).length){
-    document.getElementById('c-attach-card').style.display='block';
-    document.getElementById('c-attach').innerHTML=d.attachments.map(function(a){ return '<div class="file-row">'+ICONS.file+' '+escHtml(a)+'</div>'; }).join('');
-  }
 
   var st='';
   st+=kv('Booking status', d.bookingStatus||'Not Yet');
@@ -1022,6 +1026,7 @@ function load(){
      render(d);
      document.getElementById('loading').style.display='none';
      document.getElementById('content').style.display='block';
+     if(LEAD_FILES) LEAD_FILES.start();   /* the files are looked up once, after the page is there — not on every re-load */
    })
    .catch(function(e){ if(e.message==='x')return;
      document.getElementById('loading').style.display='none';
@@ -1045,9 +1050,10 @@ document.getElementById('btn-la-att').onclick=function(){
   b.disabled=true;
   LA_ATT.upload(LEAD_ID).then(function(o){
     b.disabled=false;
-    if(!o.failed.length){ LA_ATT.reset(); LA_ATT.setStatus(o.sent+' attached — the link is in the updates below.','ok'); }
+    if(!o.failed.length){ LA_ATT.reset(); LA_ATT.setStatus(o.sent+' attached — open "Attachments" at the top of this page to see '+(o.sent===1?'it':'them')+'.','ok'); }
     else LA_ATT.setStatus((o.sent?o.sent+' attached; ':'')+o.failed.length+' not attached: '+o.failed.map(function(x){ return x.name+' ('+x.error+')'; }).join('; ')+'. Attaching again sends only these.','err');   /* always said here too */
     var r=window.tdotUpdatesReload_updw; if(typeof r==='function') r();
+    if(o.sent && LEAD_FILES) LEAD_FILES.reload();   /* the count at the top goes up without a page refresh */
   });
 };
 var BD_LOADED={ src:'', ref:'', email:'', phone:'' };
