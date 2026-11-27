@@ -2246,6 +2246,13 @@ app.get('/api/lead/:leadId', async (req, res) => {
   }
 });
 
+// The lead page's "Attachments" (Faran 2026-11-27): the client's letters from the intake form + the files a
+// staff member attached, listed and opened inside the app. READ-ONLY. Same team key as the lead page (/api) —
+// no second sign-in; the Monday sign-in, when present, only names the staff member in the log line. A file is
+// named by a key, never by its name (routes/leadFilesRoutes.js, services/leadFilesService.js).
+app.get('/api/leads/:leadId/files', (req, res) => require('./routes/leadFilesRoutes').list(req, res, { staff: tryStaffAuth }));
+app.get('/api/leads/:leadId/files/:key', (req, res) => require('./routes/leadFilesRoutes').file(req, res, { staff: tryStaffAuth }));
+
 // Consultant portal — direct retainer client (walk-in/referral, no consultation):
 // option lists for the form + creation. Creation is validated in the service
 // (badRequest on missing name/email/case type/consultant).

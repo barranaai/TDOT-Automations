@@ -45,6 +45,40 @@ function stamp(d) {
 }
 
 /**
+ * The stored name of a staff attachment — "2026-11-04 1432 - <staff> - <name>.<ext>" (no staff part when
+ * the sign-in carries no name). `ext` comes with its dot, from config/staffAttachments.
+ * parseStaffFileName below reads the same shape back: change the two TOGETHER (the lead page's
+ * "Attachments" list — leadFilesService — shows and serves only names that parse).
+ */
+function staffFileName({ at, who, base, ext }) {
+  return `${stamp(at)} - ${who ? `${who} - ` : ''}${base}${ext}`;
+}
+
+const STAFF_FILE_RE = new RegExp(
+  `^(\\d{4})-(\\d{2})-(\\d{2}) (\\d{2})(\\d{2}) - (.+)\\.(${Object.keys(RULES.EXTENSIONS).map((e) => e.slice(1)).join('|')})$`, 'i');
+
+/**
+ * Is this stored file name one that attach() writes? Returns null when it is not, else
+ * { date: '2026-11-04', time: '14:32', who, name, ext } — `name` is the file's own name as the staff
+ * member uploaded it (cleaned, no extension), `ext` lower-case with no dot, `who` '' when the name
+ * carries no staff part. (A file attached with no staff name whose own name holds " - " reads its
+ * first part as `who` — the shape cannot tell the two apart.)
+ */
+function parseStaffFileName(stored) {
+  const s = String(stored == null ? '' : stored);
+  if (!s || s.length > 255 || /[\u0000-\u001f\u007f/\\]/.test(s)) return null;
+  const m = STAFF_FILE_RE.exec(s);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, rest, ext] = m;
+  if (+mo < 1 || +mo > 12 || +d < 1 || +d > 31 || +h > 23 || +mi > 59) return null;
+  const cut = rest.indexOf(' - ');
+  const who = cut > 0 ? rest.slice(0, cut).trim() : '';
+  const name = (cut > 0 ? rest.slice(cut + 3) : rest).trim() || rest.trim();
+  if (!name) return null;
+  return { date: `${y}-${mo}-${d}`, time: `${h}:${mi}`, who, name, ext: ext.toLowerCase() };
+}
+
+/**
  * @param {{ leadId: string, file: { originalname: string, buffer: Buffer, size: number }, staff: { name?: string, email?: string } }} p
  * @returns {Promise<{ ok: true, name: string, url: string, notedOn: string[] }>}
  * @throws .badRequest | .notFound | .forbidden | .retry (try again later) | .noFolder (an admin must make the folder)
@@ -86,7 +120,7 @@ async function attach({ leadId, file, staff } = {}) {
 
   const who = String((staff && staff.name) || '').trim().slice(0, 40);
   const base = String(file.originalname || 'attachment').replace(/\.[a-z0-9]{1,5}$/i, '').replace(/[^\p{L}\p{N} ._()-]+/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'attachment';
-  const filename = `${stamp(io.now())} - ${who ? `${who} - ` : ''}${base}${ext}`;
+  const filename = staffFileName({ at: io.now(), who, base, ext });
   const up = await io.upload({ folderId, subfolder: 'Intake', filename, buffer: file.buffer, mimeType: RULES.EXTENSIONS[ext] });
 
   const body = `📎 <b>Attachment added${who ? ` by ${esc(who)}` : ''}</b>: <a href="${esc(up.url)}">${esc(up.name)}</a> ` +
@@ -100,4 +134,4 @@ async function attach({ leadId, file, staff } = {}) {
   return { ok: true, name: up.name, url: up.url, notedOn };
 }
 
-module.exports = { attach, io, stamp, FOLDER_WAIT_TRIES, FOLDER_WAIT_MS };
+module.exports = { attach, io, stamp, staffFileName, parseStaffFileName, FOLDER_WAIT_TRIES, FOLDER_WAIT_MS };
