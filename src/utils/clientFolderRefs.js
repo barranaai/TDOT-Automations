@@ -115,6 +115,17 @@ async function refFromFolderId(od, lead) {
     console.warn(`[FolderRefs] lead ${lead && lead.id}'s folder sits outside "${ONEDRIVE_ROOT_FOLDER}" (${parent}) — not writing to it`);
     return null;
   }
+  return refOfRootFolderItem(item);
+}
+
+/**
+ * The { clientName, caseRef } a client folder answers to, read from the folder item itself
+ * (oneDriveService.getDriveItemById's answer). null unless it sits DIRECTLY under the client-documents
+ * root and its name has the " - <reference>" shape. Pure — no lookups.
+ */
+function refOfRootFolderItem(item) {
+  if (!item) return null;
+  if (!String(item.parentPath || '').endsWith(`/${ONEDRIVE_ROOT_FOLDER}`)) return null;
   const name = String(item.name || '');
   const at = name.lastIndexOf(' - ');          // a client name may itself contain " - "
   if (at < 0) return null;
@@ -223,4 +234,4 @@ async function readFirst(oneDrive, lead, { subfolder, filename }) {
   return null;
 }
 
-module.exports = { candidateFolderRefs, candidateFolderState, writeRef, readFirst, caseRefForLead, caseRefStateForLead, CM_CASE_REF_COL };
+module.exports = { candidateFolderRefs, candidateFolderState, writeRef, readFirst, caseRefForLead, caseRefStateForLead, refOfRootFolderItem, CM_CASE_REF_COL };

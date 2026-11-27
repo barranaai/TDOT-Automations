@@ -18,7 +18,8 @@
  * the chip row).
  *
  * HONEST STATES: "Attachments 0" is shown only after the server looked and found nothing. When the
- * files could not be checked the button says so and a click tries again — never a false 0.
+ * files could not be checked the button says so — and says "try again", in its words — and a click tries
+ * again; never a false 0.
  *
  * OPENING A FILE: a plain link to an /api address cannot carry the team key, so the click (1) opens a
  * blank tab at once — inside the click, or the browser's pop-up blocker stops it — (2) fetches the bytes
@@ -69,7 +70,8 @@ const LEAD_FILES_CSS = `
   .lf-msg.err { color:#dc2626; }
   .lf-msg[hidden] { display:none; }
   .lf-empty { font-size:13px; color:#64748b; padding:12px 0 4px; }
-  @media (max-width:560px) { .lf-open { min-height:44px; } }
+  /* Phones: Open / Download are 44px tall. Two classes on purpose: the house pop-up's own 38px rule for .tdlg-btn comes LATER on the page, and a one-class rule here would lose to it. */
+  @media (max-width:560px) { .tdlg .lf-open { min-height:44px; } }
   /* Printing the lead page: the chip prints as plain words; the pop-up never prints */
   @media print { .lf-ov { display:none !important; } .chip-btn::after { display:none; } }
 `;
@@ -82,7 +84,11 @@ function tdotLfSize(n) {
   return Math.max(1, Math.round(n / 1024)) + ' KB';
 }
 
-/** The small line under a file's name: type · size, and for a staff file who added it and when (Toronto time). */
+/**
+ * The small line under a file's name: type · size, and for a staff file who added it and when (Toronto time).
+ * A client letter this lead also has in its own folder says where this other copy is from (fromCase) —
+ * the two rows would otherwise read the same.
+ */
 function tdotLfMeta(f) {
   var parts = [], size = tdotLfSize(f && f.size);
   if (f && f.ext) parts.push(String(f.ext).toUpperCase());
@@ -90,7 +96,7 @@ function tdotLfMeta(f) {
   if (f && f.kind === 'staff') {
     if (f.addedBy) parts.push('added by ' + f.addedBy);
     if (f.addedAt) parts.push(f.addedAt);
-  }
+  } else if (f && f.fromCase === true) parts.push('from the case folder');
   return parts.join(' · ');
 }
 
@@ -148,7 +154,8 @@ function tdotLeadFiles(o) {
   function paint() {
     var n = S.files.length, st = S.state;
     chip.className = 'chip chip-btn ' + (st === 'unchecked' ? 'amber' : (st === 'ok' && n > 0) ? 'blue' : 'grey');
-    count.textContent = ' ' + (st === 'loading' ? '…' : st === 'unchecked' ? '— could not check' : String(n));
+    /* "try again" is in the words, not only in the tooltip: a phone or tablet has no hover */
+    count.textContent = ' ' + (st === 'loading' ? '…' : st === 'unchecked' ? '— could not check · try again' : String(n));
     chip.disabled = (st === 'ok' && n === 0);
     if (st === 'loading') { chip.setAttribute('aria-busy', 'true'); chip.setAttribute('aria-disabled', 'true'); }
     else { chip.removeAttribute('aria-busy'); chip.removeAttribute('aria-disabled'); }
@@ -167,7 +174,7 @@ function tdotLeadFiles(o) {
       ext = String(f.ext || '').toLowerCase();
       out.push({ key: String(f.key), label: String(f.label || 'File'), kind: f.kind === 'client' ? 'client' : 'staff', ext: ext,
         size: f.size, view: (f.view === 'tab' && IN_TAB[ext] === 1) ? 'tab' : 'download',
-        addedBy: String(f.addedBy || ''), addedAt: String(f.addedAt || '') });
+        addedBy: String(f.addedBy || ''), addedAt: String(f.addedAt || ''), fromCase: f.kind === 'client' && f.fromCase === true });
     }
     return out;
   }
@@ -263,7 +270,7 @@ function tdotLeadFiles(o) {
     var save = f.view !== 'tab';
     var b = mk('button', 'tdlg-btn lf-open', save ? 'Download' : 'Open');
     b.type = 'button';
-    b.setAttribute('aria-label', (save ? 'Download ' : 'Open ') + f.label);
+    b.setAttribute('aria-label', (save ? 'Download ' : 'Open ') + f.label + (f.fromCase ? ' (from the case folder)' : ''));
     b.title = save ? 'This kind of file does not open in the browser — it is saved to your computer.' : 'Opens in a new tab';
     var msg = mk('div', 'lf-msg'); msg.hidden = true;
     b.onclick = function () { openFile(f, b, msg); };

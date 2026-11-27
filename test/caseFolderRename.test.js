@@ -575,3 +575,48 @@ test('a folder the tie-break merely guessed does not pin the case to itself', as
   assert.deepEqual(listed.map((f) => f.name), ['a.pdf'], 'and reads follow the documents');
 });
 
+test('a folder listing that loses a LATER page is an error, never a clean empty list - only the first page can mean "folder absent"', async () => {
+  const h = harness({ folders: [EXPECT], files: { [EXPECT]: { 'Identity/a.pdf': 'A' } } });
+  const axios = require('axios');            // the harness's fake - the service calls the same object
+  const firstPages = axios.get;
+  let page2 = 'ok';
+  axios.get = async (url, opts) => {
+    const dec = decodeURIComponent(url);
+    if (/skiptoken=2/.test(dec)) {
+      h.calls.get.push(url);
+      if (page2 === '404') { const e = new Error('itemNotFound'); e.response = { status: 404 }; throw e; }
+      if (page2 === '503') { const e = new Error('serviceNotAvailable'); e.response = { status: 503 }; throw e; }
+      return { data: { value: [{ name: 'b.pdf', size: 2, lastModifiedDateTime: 't', file: {} }] } };
+    }
+    const res = await firstPages(url, opts);
+    if (/\/Identity:\/children/.test(dec)) return { data: { ...res.data, '@odata.nextLink': 'https://graph.example/next?$skiptoken=2' } };
+    return res;
+  };
+  const where = { clientName: CLIENT, caseRef: REF, subfolder: 'Identity' };
+
+  // both pages answer: both files
+  assert.deepEqual((await h.svc.listChildren(where)).map((x) => x.name), ['a.pdf', 'b.pdf']);
+
+  // page 2 is gone (a stale continuation): NOT [] - a transient error, and it is not mistaken for a renamed folder
+  page2 = '404';
+  const roots = h.rootListings();
+  await assert.rejects(h.svc.listChildren(where), (err) => {
+    assert.equal(err.transient, true);
+    assert.match(err.message, /^OneDrive list failed: listing continuation was not found \(partial listing\)$/);
+    assert.equal(err.response, undefined, 'nothing a caller could read as "absent"');
+    return true;
+  });
+  await assert.rejects(h.svc.listFiles(where), (err) => err.transient === true);
+  assert.equal(h.rootListings(), roots, 'no re-resolving of the folder: it is not a missing-folder answer');
+
+  // any other failure on a later page is what it always was
+  page2 = '503';
+  await assert.rejects(h.svc.listChildren(where), (err) => err.transient === true && /OneDrive list failed/.test(err.message));
+
+  // the FIRST page 404 is unchanged: a sub-folder or a client folder that is not there is "no files"
+  assert.deepEqual(await h.svc.listChildren({ clientName: CLIENT, caseRef: '2026-NONE-001', subfolder: 'Identity' }), []);
+  const gone = harness({ folders: [] });
+  assert.deepEqual(await gone.svc.listChildren(where), []);
+  assert.deepEqual(await gone.svc.listFiles(where), []);
+});
+

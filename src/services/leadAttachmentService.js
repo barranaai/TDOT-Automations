@@ -79,6 +79,20 @@ function parseStaffFileName(stored) {
 }
 
 /**
+ * The folder a staff file of this lead goes into, by its ID ('' = none on file): with a case, the CASE
+ * row's folder (a second lead on a reused case, or a folder made / repaired on the case, can differ from
+ * this lead's own); else — or when the case row carries none — the lead's own.
+ * Throws when the case row cannot be read — never guess.
+ * attach() below writes there; the lead page's "Attachments" list (leadFilesService) asks this SAME
+ * function where to look, so the place a file is written and the place it is looked for cannot drift.
+ */
+async function attachFolderId(lead) {
+  const cmId = String((lead && lead.clientMasterItemId) || '').trim();
+  const ofCase = cmId ? String((await io.caseFolderId(cmId)) || '').trim() : '';
+  return ofCase || String((lead && lead.oneDriveFolderId) || '').trim();
+}
+
+/**
  * @param {{ leadId: string, file: { originalname: string, buffer: Buffer, size: number }, staff: { name?: string, email?: string } }} p
  * @returns {Promise<{ ok: true, name: string, url: string, notedOn: string[] }>}
  * @throws .badRequest | .notFound | .forbidden | .retry (try again later) | .noFolder (an admin must make the folder)
@@ -95,19 +109,16 @@ async function attach({ leadId, file, staff } = {}) {
   let lead = await io.getLead(id);
   if (!lead) fail('That client could not be found — refresh the page.', 'notFound');
   const cmId = String(lead.clientMasterItemId || '').trim();
-  // With a case, the CASE row's folder is the client's folder (a second lead on a reused
-  // case, or a folder made / repaired on the case, can differ from this lead's own).
+  // With a case, the CASE row's folder is the client's folder; else the lead's own (attachFolderId).
   let folderId = '';
-  if (cmId) {
-    try { folderId = await io.caseFolderId(cmId); }
-    catch (err) { fail('The client’s case could not be read just now — try again in a minute.', 'retry'); }
-  }
+  try { folderId = await attachFolderId(lead); }
+  catch (err) { fail('The client’s case could not be read just now — try again in a minute.', 'retry'); }
   // A brand-new client's lead folder is made in the background: wait for its id, briefly.
-  for (let i = 0; !folderId && i < FOLDER_WAIT_TRIES && !String(lead.oneDriveFolderId || '').trim(); i++) {
+  for (let i = 0; !folderId && i < FOLDER_WAIT_TRIES; i++) {
     await io.sleep(FOLDER_WAIT_MS);
     lead = (await io.getLead(id)) || lead;
+    folderId = String(lead.oneDriveFolderId || '').trim();
   }
-  if (!folderId) folderId = String(lead.oneDriveFolderId || '').trim();
   if (!folderId && !cmId) {
     // No case: the lead folder cannot have been renamed yet, so making / finding it now is safe.
     const f = await io.ensureLeadFolder(lead).catch(() => null);
@@ -134,4 +145,4 @@ async function attach({ leadId, file, staff } = {}) {
   return { ok: true, name: up.name, url: up.url, notedOn };
 }
 
-module.exports = { attach, io, stamp, staffFileName, parseStaffFileName, FOLDER_WAIT_TRIES, FOLDER_WAIT_MS };
+module.exports = { attach, attachFolderId, io, stamp, staffFileName, parseStaffFileName, FOLDER_WAIT_TRIES, FOLDER_WAIT_MS };

@@ -168,11 +168,93 @@ test('styles: a chip that is a button, a 44px tap area on small and touch screen
   assert.ok(!/\.chip-btn[^{]*\{[^}]*(?:font-size|padding|background|outline)\s*:/.test(LEAD_FILES_CSS), 'size, colours and the shared focus ring stay the chip\'s and the page\'s own');
   for (const cls of ['lf-name', 'lf-meta', 'lf-msg', 'lf-who']) assert.match(LEAD_FILES_CSS, new RegExp('\\.' + cls + ' \\{[^}]*overflow-wrap:anywhere;'), cls + ' wraps');
   assert.match(LEAD_FILES_CSS, /\.lf-main \{ flex:1 1 auto; min-width:0; \}/);
-  assert.match(LEAD_FILES_CSS, /@media \(max-width:560px\) \{ \.lf-open \{ min-height:44px; \} \}/);
+  assert.match(LEAD_FILES_CSS, /@media \(max-width:560px\) \{ \.tdlg \.lf-open \{ min-height:44px; \} \}/);
   assert.match(LEAD_FILES_CSS, /@media print \{ \.lf-ov \{ display:none !important; \}/);
   // the row the chip sits in wraps, and the header is sticky only on wide screens
   assert.match(html, /\.ctx-meta \{ display:flex; gap:8px; flex-wrap:wrap;/);
   assert.match(html, /@media \(max-width:900px\)\{ \.cols\{[^}]*\} \.ctx\{ position:static; \} \}/);
+});
+
+// ── which rule really wins on the page ────────────────────────────────────
+// A rule that is only LOOKED for in the text can be dead: the house pop-up's styles come later on the lead
+// page and also set a min-height on .tdlg-btn. So the cascade is worked out here from the page as served:
+// every rule that sets the property and matches the element, by weight (ids, classes, tags), then by order.
+function cssRules(css) {
+  const out = []; let order = 0;
+  (function walk(text, media) {
+    let pos = 0;
+    while (pos < text.length) {
+      const open = text.indexOf('{', pos); if (open < 0) break;
+      let depth = 0, close = open;
+      for (; close < text.length; close++) { if (text[close] === '{') depth++; else if (text[close] === '}' && !--depth) break; }
+      const head = text.slice(pos, open).split(';').pop().trim(), body = text.slice(open + 1, close);
+      if (head.startsWith('@media')) walk(body, (media ? media + ' and ' : '') + head.slice(6).trim());
+      else if (!head.startsWith('@')) out.push({ selectors: head.split(',').map((x) => x.trim()).filter(Boolean), body, media, order: order++ });
+      pos = close + 1;
+    }
+  })(String(css).replace(/\/\*[\s\S]*?\*\//g, ''), '');
+  return out;
+}
+/** Does this @media apply on a screen `width` px wide? (print never; a feature this does not know counts as "yes" — a rival too many is the safe side.) */
+function mediaApplies(media, width) {
+  if (!media) return true;
+  if (/\bprint\b/.test(media)) return false;
+  for (const m of media.matchAll(/\(\s*(max|min)-width\s*:\s*(\d+)px\s*\)/g)) { if (m[1] === 'max' ? width > +m[2] : width < +m[2]) return false; }
+  return true;
+}
+/** The value of `prop` that wins for the LAST element of `path` ([{ tag, cls: [] }] from <html> down). Plain selectors only (tags, classes, descendant and child); any other kind must not set the property for it to count as checked. */
+function winner(css, path, prop, width) {
+  const compound = (c, node) => { const tag = (/^(\*|[a-z][a-z0-9]*)/i.exec(c) || [''])[0]; return (!tag || tag === '*' || tag.toLowerCase() === node.tag) && [...c.matchAll(/\.([\w-]+)/g)].every((m) => node.cls.includes(m[1])); };
+  const matches = (sel) => {
+    const t = sel.replace(/\s*>\s*/g, ' > ').trim().split(/\s+/);
+    const rec = (ti, ni) => {
+      if (ni < 0 || !compound(t[ti], path[ni])) return false;
+      if (ti === 0) return true;
+      if (t[ti - 1] === '>') return rec(ti - 2, ni - 1);
+      for (let k = ni - 1; k >= 0; k--) if (rec(ti - 1, k)) return true;
+      return false;
+    };
+    return rec(t.length - 1, path.length - 1);
+  };
+  let best = null;
+  for (const r of cssRules(css)) {
+    const decl = new RegExp('(?:^|;)\\s*' + prop + '\\s*:\\s*([^;]+)').exec(r.body);
+    if (!decl || !mediaApplies(r.media, width)) continue;
+    for (const sel of r.selectors) {
+      if (/[:\[#+~]/.test(sel)) continue;   // a state, an attribute, an id: none of them sets this property for these buttons (checked below)
+      if (!matches(sel)) continue;
+      const weight = [0, (sel.match(/\./g) || []).length, (sel.replace(/\.[\w-]+/g, ' ').match(/[a-z][a-z0-9]*/gi) || []).length];
+      const cand = { sel, value: decl[1].trim(), key: [/!important/.test(decl[1]) ? 1 : 0, ...weight, r.order] };
+      if (!best || cand.key.some((v, i) => v !== best.key[i] && cand.key.slice(0, i).every((x, j) => x === best.key[j]) && v > best.key[i])) best = cand;
+    }
+  }
+  return best;
+}
+const ROW_BUTTON = [{ tag: 'html', cls: [] }, { tag: 'body', cls: [] }, { tag: 'div', cls: ['tdlg-ov', 'lf-ov'] }, { tag: 'div', cls: ['tdlg', 'lf-dlg'] }, { tag: 'div', cls: ['tdlg-body'] },
+  { tag: 'div', cls: ['lf-list'] }, { tag: 'ul', cls: ['lf-group'] }, { tag: 'li', cls: ['lf-item'] }, { tag: 'div', cls: ['lf-row'] }, { tag: 'button', cls: ['tdlg-btn', 'lf-open'] }];
+
+test('lead page as served: on a phone the Open / Download buttons really are 44px tall — the pop-up\'s own later 38px rule does not win', () => {
+  const pageCss = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]).join('\n');
+  // the worked-out cascade is the real one: the rival rule is on the page, AFTER this feature's styles
+  const mine = pageCss.indexOf('.tdlg .lf-open { min-height:44px; }'), house = pageCss.search(/\.tdlg-btn,[^{]*\{[^}]*min-height:38px/);
+  assert.ok(mine > 0 && house > mine, 'the house rule comes later on the page');
+  const phone = winner(pageCss, ROW_BUTTON, 'min-height', 500);
+  assert.deepStrictEqual([phone.sel, phone.value], ['.tdlg .lf-open', '44px']);
+  assert.strictEqual(winner(pageCss, ROW_BUTTON, 'min-height', 560).value, '44px');
+  // wider than a phone: the house size, untouched
+  const wide = winner(pageCss, ROW_BUTTON, 'min-height', 561);
+  assert.strictEqual(wide.value, '38px'); assert.match(wide.sel, /^\.tdlg-btn$/);
+  // the footer's Close was already 44px on a phone (the house rule for the pop-up's own buttons)
+  const CLOSE = [...ROW_BUTTON.slice(0, 5), { tag: 'div', cls: ['tdlg-actions'] }, { tag: 'button', cls: ['tdlg-btn'] }];
+  assert.strictEqual(winner(pageCss, CLOSE, 'min-height', 500).value, '44px');
+  // the check itself: a one-class rule placed before the house rule loses (this is what the page had), and no
+  // selector the check skips (a state, an attribute, an id) sets a min-height on these buttons
+  const before = pageCss.replace('.tdlg .lf-open { min-height:44px; }', '.lf-open { min-height:44px; }');
+  assert.strictEqual(winner(before, ROW_BUTTON, 'min-height', 500).value, '38px');
+  for (const r of cssRules(pageCss)) {
+    if (!/(?:^|;)\s*min-height\s*:/.test(r.body)) continue;
+    for (const sel of r.selectors) if (/[:\[#+~]/.test(sel)) assert.ok(!/tdlg-btn|lf-open|\.tdlg\s+button|\.tdlg\s+\*/.test(sel), sel);
+  }
 });
 
 // ── small helpers ─────────────────────────────────────────────────────────
@@ -185,6 +267,9 @@ test('size, the small line and the save name', () => {
   assert.strictEqual(UI.tdotLfMeta(SHOT), 'PNG · 340 KB · added by Asha Test · 2026-11-21 10:05');
   assert.strictEqual(UI.tdotLfMeta(PHONE_PIC), 'HEIC · 2 MB · 2026-11-22 09:00', 'no staff name in the stored name: just the time');
   assert.strictEqual(UI.tdotLfMeta({ kind: 'client', ext: 'jpg', size: null }), 'JPG');
+  // the same letter twice (this lead's own, and the case folder's): the other copy says where it is from
+  assert.strictEqual(UI.tdotLfMeta({ ...LETTER, fromCase: true }), 'PDF · 1.2 MB · from the case folder');
+  assert.strictEqual(UI.tdotLfMeta({ ...SHOT, fromCase: true }), 'PNG · 340 KB · added by Asha Test · 2026-11-21 10:05', 'never on a staff file');
   assert.strictEqual(UI.tdotLfSaveName('inline; filename="refusal-letter.pdf"', LETTER), 'refusal-letter.pdf');
   assert.strictEqual(UI.tdotLfSaveName('attachment; filename="phone picture.heic"', PHONE_PIC), 'phone picture.heic');
   assert.strictEqual(UI.tdotLfSaveName('', LETTER), 'attachment.pdf');
@@ -247,7 +332,7 @@ test('chip: could not check — amber, never a false 0; a click tries again', as
   w.api.start();
   await w.answerList({ state: 'unchecked', files: [], reason: 'storage', message: 'Could not reach the files just now — try again.' });
   assert.strictEqual(w.chip.className, 'chip chip-btn amber');
-  assert.strictEqual(w.chip.textContent, 'Attachments — could not check');
+  assert.strictEqual(w.chip.textContent, 'Attachments — could not check · try again', 'the way out is in the words — a phone has no hover to show the tooltip');
   assert.strictEqual(w.chip.title, 'Click to try again');
   assert.strictEqual(w.chip.disabled, false);
   w.chip.click();
@@ -269,7 +354,7 @@ test('chip: every kind of failed look is "could not check" — a server error, a
     if (how === 'odd') call.answer(w.json(200, { state: 'ok', files: 'none' }));
     if (how === 'offline') call.fail();
     await tick();
-    assert.strictEqual(w.chip.textContent, 'Attachments — could not check', how);
+    assert.strictEqual(w.chip.textContent, 'Attachments — could not check · try again', how);
     assert.strictEqual(w.chip.className, 'chip chip-btn amber', how);
   }
 });
@@ -513,6 +598,19 @@ test('pop-up: the quiet look on opening — a changed list is drawn (and the cou
   assert.strictEqual(w.chip.disabled, true);
   assert.strictEqual(w.rows().length, 0);
   assert.strictEqual(w.find(w.dialog().box, (n) => n.className === 'lf-empty').textContent, 'No files on this lead.');
+});
+
+test('pop-up: the same letter twice — this lead\'s own first, the other row says "from the case folder" (in its line and for a screen reader)', async () => {
+  const OTHER_COPY = { ...LETTER, key: K4, size: 348160, fromCase: true };
+  const w = await loaded([LETTER, OTHER_COPY, { ...SHOT, fromCase: true }]);
+  assert.strictEqual(w.chip.textContent, 'Attachments 3');
+  w.chip.click();
+  assert.deepStrictEqual(w.rows().map((r) => [r.name, r.meta, r.btn.getAttribute('aria-label')]), [
+    ['Refusal letter', 'PDF · 1.2 MB', 'Open Refusal letter'],
+    ['Refusal letter', 'PDF · 340 KB · from the case folder', 'Open Refusal letter (from the case folder)'],
+    ['passport scan.png', 'PNG · 340 KB · added by Asha Test · 2026-11-21 10:05', 'Open passport scan.png'],
+  ]);
+  assert.deepStrictEqual(plain(w.api.state().files).map((f) => f.fromCase), [false, true, false], 'only a client letter can carry the mark');
 });
 
 test('pop-up: "there may be more" is said when the case folder could not be checked', async () => {

@@ -1,7 +1,8 @@
 // The lead page's "Attachments" (Faran 2026-11-27) — the service, with fakes only: which names may be listed
-// (and every name that never may), both candidate folders, a same-name clash, the order, the keys, the honest
-// "could not check" states, and reading one file by key (the stored name comes from a fresh listing, never
-// from the caller). Every name, id and reference here is invented.
+// (and every name that never may), both candidate folders, the folder staff files are really written to (by
+// id — a reused case), the same letter in two folders (both shown, the lead's own first), the order, the keys,
+// the honest "could not check" states, and reading one file by key (the stored name comes from a fresh
+// listing, never from the caller). Every name, id and reference here is invented.
 'use strict';
 
 const test = require('node:test');
@@ -20,13 +21,17 @@ const NAME = 'Test Person';
 const f = (name, size = 100, when = '2026-11-01T10:00:00Z', isFolder = false) => ({ name, size, lastModifiedDateTime: when, isFolder });
 
 /**
- * Fakes for the four seams. `folders` = { '<caseRef>': [children] | Error }; a reference that is not there
- * answers [] (listChildren's own "not there"). Restores the real seams when `fn` ends.
+ * Fakes for the six seams. `folders` = { '<caseRef>': [children] | Error }; a reference that is not there
+ * answers [] (listChildren's own "not there"). `folderId` = the id of the folder staff files are written to
+ * (a string, or an Error when the case row cannot be read); `items` = { '<folder id>': { name, parentPath } |
+ * Error } — an id that is not there answers null. Restores the real seams when `fn` ends.
  */
 async function withFakes(o, fn) {
   const keep = { ...svc.io };
-  const calls = { getLead: [], folderState: [], list: [], read: [] };
+  const calls = { getLead: [], folderState: [], list: [], read: [], folderId: [], item: [] };
   const leads = o.leads || { [LEAD]: { id: LEAD, name: NAME, fullName: NAME, clientMasterItemId: o.cmId || '' } };
+  svc.io.writeFolderId = async (lead) => { calls.folderId.push(lead.id); if (o.folderId instanceof Error) throw o.folderId; return o.folderId || ''; };
+  svc.io.folderItem = async (id) => { calls.item.push(id); const v = (o.items || {})[id]; if (v instanceof Error) throw v; return v || null; };
   svc.io.getLead = async (id) => { calls.getLead.push(id); if (o.leadFails) throw new Error('monday down'); return leads[id] || null; };
   svc.io.folderState = async (lead) => {
     calls.folderState.push(lead.id);
@@ -184,17 +189,189 @@ test('a lead with a case: the case folder is listed first, then LEAD-<id>; both 
   });
 });
 
-test('the same name in both folders: shown once, from the first (the case folder) — and that is the one that opens', async () => {
-  const folders = { [CASE]: [f('refusal-letter.pdf', 111)], [`LEAD-${LEAD}`]: [f('Refusal-Letter.PDF', 999), f('reference-letter.pdf', 5)] };
+test('the same letter in both folders is two different files: both are shown, the lead\'s own first, the other marked — and each key opens its own', async () => {
+  // the case folder's copy came from another form of the same person (a reused case); intake wrote this lead's into LEAD-<id>
+  const folders = {
+    [CASE]: [f('refusal-letter.pdf', 111, '2026-09-01T10:00:00Z'), f('enforcement-letter.pdf', 7), f('reference-letter.jpg', 8)],
+    [`LEAD-${LEAD}`]: [f('Refusal-Letter.PDF', 999, '2026-11-01T10:00:00Z'), f('reference-letter.pdf', 5)],
+  };
   await withFakes({ caseRef: CASE, cmId: '777', folders }, async (calls) => {
     const r = await svc.listLeadFiles(LEAD);
-    assert.deepEqual(r.files.map((x) => [x.label, x.size]), [['Refusal letter', 111], ['Relevant letter or screenshot', 5]]);
-    const got = await svc.readLeadFile(LEAD, r.files[0].key);
-    assert.deepEqual(calls.read, [{ clientName: NAME, caseRef: CASE, subfolder: 'Intake', filename: 'refusal-letter.pdf' }]);
-    assert.equal(got.buffer.toString(), `bytes of ${CASE}/Intake/refusal-letter.pdf`);
-    const second = await svc.readLeadFile(LEAD, r.files[1].key);
-    assert.equal(second.buffer.toString(), `bytes of LEAD-${LEAD}/Intake/reference-letter.pdf`);
+    assert.equal(r.state, 'ok'); assert.equal(r.partial, undefined);
+    assert.deepEqual(r.files.map((x) => [x.label, x.ext, x.size, x.fromCase === true]), [
+      ['Enforcement letter or notice', 'pdf', 7, false],            // only in the case folder: nothing to tell apart
+      ['Refusal letter', 'pdf', 999, false],                        // this lead's own
+      ['Refusal letter', 'pdf', 111, true],                         // the case folder's
+      ['Relevant letter or screenshot', 'pdf', 5, false],           // the same letter as another type: still own first
+      ['Relevant letter or screenshot', 'jpg', 8, true],
+    ]);
+    assert.equal(new Set(r.files.map((x) => x.key)).size, 5, 'one key per file');
+    for (const x of r.files) assert.deepEqual(Object.keys(x).filter((k) => k.startsWith('_') || /ref|own|name/i.test(k)), [], 'no folder, no stored name');
+    const mine = await svc.readLeadFile(LEAD, r.files[1].key);
+    assert.deepEqual(calls.read, [{ clientName: NAME, caseRef: `LEAD-${LEAD}`, subfolder: 'Intake', filename: 'Refusal-Letter.PDF' }]);
+    assert.equal(mine.buffer.toString(), `bytes of LEAD-${LEAD}/Intake/Refusal-Letter.PDF`);
+    const theirs = await svc.readLeadFile(LEAD, r.files[2].key);
+    assert.deepEqual(calls.read[1], { clientName: NAME, caseRef: CASE, subfolder: 'Intake', filename: 'refusal-letter.pdf' });
+    assert.equal(theirs.buffer.toString(), `bytes of ${CASE}/Intake/refusal-letter.pdf`);
   });
+  // staff files keep both too (their names carry the time and who, so a clash is the same upload seen twice at most)
+  await withFakes({ caseRef: CASE, cmId: '777', folders: { [CASE]: [f(STAFF_NEW, 1)], [`LEAD-${LEAD}`]: [f(STAFF_NEW, 2)] } }, async () => {
+    const r = await svc.listLeadFiles(LEAD);
+    assert.deepEqual(r.files.map((x) => [x.label, x.fromCase]), [['passport scan.pdf', undefined], ['passport scan.pdf', undefined]]);
+    assert.notEqual(r.files[0].key, r.files[1].key);
+  });
+});
+
+/* ══ the folder staff files are really written to (by id) ═════════════════════ */
+
+const ROOT = '/drive/root:/Client Documents';
+const FIRST = '9000000007';                       // the lead the reused case was first made for
+const FIRST_FOLDER = { name: `Test Person One - LEAD-${FIRST}`, parentPath: ROOT };
+
+test('second lead on a reused case, before the case reference: the staff file (written by the CASE row\'s folder id) is listed and opens', async () => {
+  // the case's folder is still called after the FIRST lead; this lead's two names do not find it
+  const folders = { [`LEAD-${FIRST}`]: [f(STAFF_NEW, 300), f('refusal-letter.pdf', 50), f('intake-submission.json')], [`LEAD-${LEAD}`]: [f('refusal-letter.pdf', 60)] };
+  await withFakes({ cmId: '777', folderId: 'FOLDER-OF-CASE-1', items: { 'FOLDER-OF-CASE-1': FIRST_FOLDER }, folders }, async (calls) => {
+    const r = await svc.listLeadFiles(LEAD);
+    assert.equal(r.state, 'ok'); assert.equal(r.partial, undefined);
+    assert.deepEqual(r.files.map((x) => [x.kind, x.label, x.size, x.fromCase === true]), [
+      ['client', 'Refusal letter', 60, false], ['client', 'Refusal letter', 50, true], ['staff', 'passport scan.pdf', 300, false],
+    ]);
+    assert.deepEqual(calls.folderId, [LEAD]); assert.deepEqual(calls.item, ['FOLDER-OF-CASE-1']);
+    assert.deepEqual(calls.list, [
+      { clientName: NAME, caseRef: `LEAD-${LEAD}`, subfolder: 'Intake' },
+      { clientName: 'Test Person One', caseRef: `LEAD-${FIRST}`, subfolder: 'Intake' },   // the folder's OWN name, as it is today
+    ]);
+    const got = await svc.readLeadFile(LEAD, r.files[2].key);
+    assert.deepEqual(calls.read, [{ clientName: 'Test Person One', caseRef: `LEAD-${FIRST}`, subfolder: 'Intake', filename: STAFF_NEW }]);
+    assert.equal(got.mime, 'application/pdf');
+    const text = JSON.stringify(r);
+    for (const secret of ['FOLDER-OF-CASE-1', 'Test Person One', `LEAD-${FIRST}`, 'parentPath']) assert.ok(!text.includes(secret), secret);
+  });
+});
+
+test('second lead on a reused case, after a refused rename: the case reference is known but the folder kept its old name — still listed and opens', async () => {
+  const folders = { [CASE]: [], [`LEAD-${LEAD}`]: [], [`LEAD-${FIRST}`]: [f(STAFF_OLD, 10)] };
+  await withFakes({ caseRef: CASE, cmId: '777', folderId: 'FOLDER-OF-CASE-1', items: { 'FOLDER-OF-CASE-1': FIRST_FOLDER }, folders }, async (calls) => {
+    const r = await svc.listLeadFiles(LEAD);
+    assert.deepEqual(r, { state: 'ok', files: r.files });
+    assert.deepEqual(r.files.map((x) => x.label), ['WhatsApp Image 2026.jpeg']);
+    assert.deepEqual(calls.list.map((a) => a.caseRef), [CASE, `LEAD-${LEAD}`, `LEAD-${FIRST}`]);
+    assert.ok((await svc.readLeadFile(LEAD, r.files[0].key)).buffer.toString().startsWith(`bytes of LEAD-${FIRST}/Intake/`));
+  });
+});
+
+test('the written-to folder is one of the two names already: it is not listed twice', async () => {
+  for (const name of [`Test Person - ${CASE}`, `Someone Renamed (12) - ${CASE}`, `Test Person - ${CASE.toLowerCase()}`, `Test Person - LEAD-${LEAD}`]) {
+    const folders = { [CASE]: [f(STAFF_NEW), f('refusal-letter.pdf')], [`LEAD-${LEAD}`]: [f(STAFF_OLD)] };
+    await withFakes({ caseRef: CASE, cmId: '777', folderId: 'F-1', items: { 'F-1': { name, parentPath: ROOT } }, folders }, async (calls) => {
+      const r = await svc.listLeadFiles(LEAD);
+      assert.equal(r.files.length, 3, name); assert.equal(calls.list.length, 2, name); assert.equal(r.partial, undefined);
+    });
+  }
+});
+
+test('the written-to folder is asked for only when the lead has a case; no id, an id that is not there, a folder outside the root or a name without a reference adds nothing', async () => {
+  // no case: the app has never renamed the folder — "LEAD-<id>" is it, and nothing more is asked
+  await withFakes({ folderId: 'F-1', items: { 'F-1': FIRST_FOLDER }, folders: { [`LEAD-${FIRST}`]: [f(STAFF_NEW)] } }, async (calls) => {
+    assert.deepEqual(await svc.listLeadFiles(LEAD), { state: 'ok', files: [] });
+    assert.equal(calls.folderId.length + calls.item.length, 0); assert.equal(calls.list.length, 1);
+  });
+  const elsewhere = [
+    ['', {}],                                                                              // the case row has no folder on file
+    ['F-GONE', {}],                                                                        // not there any more
+    ['F-1', { 'F-1': { name: `Test Person One - LEAD-${FIRST}`, parentPath: '/drive/root:/Somewhere Else' } }],
+    ['F-1', { 'F-1': { name: `Test Person One - LEAD-${FIRST}`, parentPath: `${ROOT}/Test Person - ${CASE}` } }],   // a sub-folder, not a client folder
+    ['F-1', { 'F-1': { name: `Test Person One - LEAD-${FIRST}`, parentPath: '' } }],
+    ['F-1', { 'F-1': { name: 'No reference here', parentPath: ROOT } }],
+    ['F-1', { 'F-1': { name: 'Test Person One - ', parentPath: ROOT } }],
+    ['F-1', { 'F-1': { name: ` - LEAD-${FIRST}`, parentPath: ROOT } }],
+  ];
+  for (const [folderId, items] of elsewhere) {
+    await withFakes({ caseRef: CASE, cmId: '777', folderId, items, folders: { [`LEAD-${FIRST}`]: [f(STAFF_NEW)], '': [f(STAFF_NEW)] } }, async (calls) => {
+      assert.deepEqual(await svc.listLeadFiles(LEAD), { state: 'ok', files: [] }, JSON.stringify([folderId, items]));
+      assert.deepEqual(calls.list.map((a) => a.caseRef), [CASE, `LEAD-${LEAD}`]);
+    });
+  }
+  // an id that is not an id (the column can be typed in by hand) is never put in a storage address
+  for (const bad of ['../../me/drive/root', '..', '.', 'F 1', 'a/b', 'x?$select=name', 'x'.repeat(201)]) {
+    await withFakes({ caseRef: CASE, cmId: '777', folderId: bad, items: { [bad]: FIRST_FOLDER }, folders: {} }, async (calls) => {
+      assert.deepEqual(await svc.listLeadFiles(LEAD), { state: 'ok', files: [] });
+      assert.equal(calls.item.length, 0, bad);
+    });
+  }
+});
+
+test('the written-to folder could not be read: nothing found → "could not check"; something found → shown, marked partial — never a clean 0', async () => {
+  const transient = Object.assign(new Error('OneDrive item lookup failed: Test Person'), { transient: true });
+  const held = Object.assign(new Error('folder repair in progress'), { transient: true, held: true });
+  const cases = [
+    [{ folderId: new Error('Monday 503') }, 'case-unreadable'],                                  // the case row's folder id
+    [{ folderId: 'F-1', items: { 'F-1': transient } }, 'storage'],                              // the folder itself
+    [{ folderId: 'F-1', items: { 'F-1': held } }, 'folder-busy'],
+  ];
+  for (const [o, reason] of cases) {
+    await withFakes({ caseRef: CASE, cmId: '777', ...o, folders: {} }, async (calls) => {
+      assert.deepEqual(await svc.listLeadFiles(LEAD), { state: 'unchecked', files: [], reason });
+      assert.equal(calls.list.length, 2, 'the two names are still looked at');
+      assert.deepEqual(await svc.readLeadFile(LEAD, 'a'.repeat(24)), { refused: 'unchecked', reason });
+    });
+    await withFakes({ caseRef: CASE, cmId: '777', ...o, folders: { [CASE]: [f('refusal-letter.pdf')] } }, async () => {
+      const r = await svc.listLeadFiles(LEAD);
+      assert.equal(r.state, 'ok'); assert.equal(r.partial, true); assert.equal(r.files.length, 1);
+      assert.ok(!JSON.stringify(r).includes('Test Person'));
+      assert.equal((await svc.readLeadFile(LEAD, r.files[0].key)).mime, 'application/pdf');
+      // a key that is not in a half look (the file just attached, say): "could not check", not "gone"
+      assert.deepEqual(await svc.readLeadFile(LEAD, 'b'.repeat(24)), { refused: 'unchecked', reason });
+    });
+  }
+  // the written-to folder itself fails to list → "could not check", as for any folder
+  await withFakes({ caseRef: CASE, cmId: '777', folderId: 'F-1', items: { 'F-1': FIRST_FOLDER }, folders: { [CASE]: [f('refusal-letter.pdf')], [`LEAD-${FIRST}`]: new Error('timeout') } }, async () => {
+    assert.deepEqual(await svc.listLeadFiles(LEAD), { state: 'unchecked', files: [], reason: 'storage' });
+  });
+});
+
+test('written and looked for in the same place: attach() and the list ask ONE rule for the folder id (the case row\'s, else the lead\'s own)', async () => {
+  const keepA = { ...attachSvc.io };
+  const asked = [];
+  try {
+    attachSvc.io.caseFolderId = async (cmId) => { asked.push(cmId); return 'FOLDER-OF-CASE-1'; };
+    assert.equal(await attachSvc.attachFolderId({ id: LEAD, clientMasterItemId: '777', oneDriveFolderId: 'FOLDER-OF-LEAD' }), 'FOLDER-OF-CASE-1');
+    attachSvc.io.caseFolderId = async () => '  ';
+    assert.equal(await attachSvc.attachFolderId({ id: LEAD, clientMasterItemId: '777', oneDriveFolderId: ' FOLDER-OF-LEAD ' }), 'FOLDER-OF-LEAD', 'a case row with no folder: the lead\'s own');
+    assert.equal(await attachSvc.attachFolderId({ id: LEAD, clientMasterItemId: '777' }), '');
+    attachSvc.io.caseFolderId = async () => { throw new Error('Monday 503'); };
+    await assert.rejects(attachSvc.attachFolderId({ id: LEAD, clientMasterItemId: '777', oneDriveFolderId: 'FOLDER-OF-LEAD' }), /Monday 503/, 'unreadable is never guessed');
+    assert.equal(await attachSvc.attachFolderId({ id: LEAD, clientMasterItemId: '', oneDriveFolderId: 'FOLDER-OF-LEAD' }), 'FOLDER-OF-LEAD', 'no case: no Monday read');
+    assert.deepEqual(asked, ['777']);
+
+    // end to end with a fake drive: attach() uploads by id; the list finds that very file through the same rule
+    const drive = { 'FOLDER-OF-CASE-1': { name: `Test Person One - LEAD-${FIRST}`, parentPath: ROOT, intake: [] } };
+    const lead = { id: LEAD, name: NAME, fullName: NAME, clientMasterItemId: '777', oneDriveFolderId: '' };
+    Object.assign(attachSvc.io, {
+      getLead: async () => lead, caseFolderId: async () => 'FOLDER-OF-CASE-1', ensureLeadFolder: async () => { throw new Error('never for a case'); },
+      upload: async ({ folderId, subfolder, filename, buffer }) => { assert.equal(subfolder, 'Intake'); drive[folderId].intake.push(f(filename, buffer.length)); return { name: filename, url: 'https://files.example/x' }; },
+      note: async () => ({}), sleep: async () => {}, now: () => new Date('2026-11-20T14:05:00Z'),
+    });
+    const keepLog = console.log; console.log = () => {};
+    try { await attachSvc.attach({ leadId: LEAD, file: { originalname: 'passport scan.pdf', buffer: Buffer.from('pdf'), size: 3 }, staff: { name: 'Staff Two', email: attachRules.allowedEmails()[0] } }); }
+    finally { console.log = keepLog; }
+    assert.equal(drive['FOLDER-OF-CASE-1'].intake.length, 1);
+
+    const keep = { ...svc.io };
+    svc.io.getLead = async () => lead;
+    svc.io.folderState = async (l) => ({ refs: [{ clientName: l.fullName, caseRef: `LEAD-${l.id}` }], caseRefKnown: true });   // no case reference yet
+    svc.io.folderItem = async (id) => drive[id] || null;
+    svc.io.listChildren = async ({ clientName, caseRef }) => { const d = Object.values(drive).find((x) => x.name === `${clientName} - ${caseRef}`); return d ? d.intake : []; };
+    try {
+      const r = await svc.listLeadFiles(LEAD);
+      assert.deepEqual(r.files.map((x) => [x.kind, x.label, x.addedBy]), [['staff', 'passport scan.pdf', 'Staff Two']]);
+    } finally { Object.assign(svc.io, keep); }
+  } finally { Object.assign(attachSvc.io, keepA); }
+  const src = fs.readFileSync(require.resolve('../src/services/leadAttachmentService.js'), 'utf8');
+  assert.ok(src.includes('try { folderId = await attachFolderId(lead); }'), 'attach() uses the shared rule');
+  assert.equal((src.match(/io\.caseFolderId\(/g) || []).length, 1, 'the case row\'s folder id is read in one place');
+  assert.ok(fs.readFileSync(require.resolve('../src/services/leadFilesService.js'), 'utf8').includes("require('./leadAttachmentService').attachFolderId(lead)"));
 });
 
 test('with the real folder rule (utils/clientFolderRefs): a lead with no case looks in "<name> - LEAD-<id>" only, with no Monday read', async () => {
@@ -379,5 +556,5 @@ test('client letters: the four names here are the four intakeFormService stores'
 test('the service only reads: no upload, create, move, delete or link call anywhere in it', () => {
   const src = fs.readFileSync(require.resolve('../src/services/leadFilesService.js'), 'utf8');
   assert.ok(!/upload|ensure|create(?!Hash)|rename|move|delete|orgLink|mondayApi|console\./i.test(src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')));
-  assert.deepEqual(Object.keys(svc.io).sort(), ['folderState', 'getLead', 'listChildren', 'readFile']);
+  assert.deepEqual(Object.keys(svc.io).sort(), ['folderItem', 'folderState', 'getLead', 'listChildren', 'readFile', 'writeFolderId']);
 });

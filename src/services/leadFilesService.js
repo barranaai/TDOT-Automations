@@ -8,16 +8,23 @@
  *
  * WHERE: the lead's candidate folders from utils/clientFolderRefs (the case folder first, then "LEAD-<id>") —
  * a lead's folder is renamed when its case reference is assigned, and a split / reused case leaves files
- * under both names. Each candidate's Intake is LISTED (never created); a same-named file in two folders is
- * shown once, from the first candidate.
+ * under both names. Each candidate's Intake is LISTED (never created).
+ *   · Staff files are WRITTEN by folder id, not by name (leadAttachmentService): with a case, into the CASE
+ *     row's folder. On a reused case that folder can still carry another lead's name ("… - LEAD-<other id>":
+ *     it is renamed only when the case reference is assigned, and a rename can be refused) — neither name
+ *     above finds it. So for a lead with a case the folder attach() writes to is asked what it is called
+ *     NOW (attachFolderId — attach()'s own rule — then the folder item) and is looked in as well.
+ *   · A same-named letter in two folders is two DIFFERENT files (intake only ever writes into the lead's
+ *     own "LEAD-<id>" folder; one in the case folder came from another lead's form): BOTH are listed, this
+ *     lead's own first, the other marked `fromCase`.
  *
  * WHAT IS NEVER LISTED OR SERVED: everything else in Intake — intake-submission.json and
  * pre-consult-submission.json (the client's full answers), pre-consultation-summary.pdf, any other name or
  * type. The two allow-lists below are the whole rule; a name that matches neither does not exist here.
  *
  * HONEST STATES: "no files" is answered only after a clean look. A storage error, a folder held during a
- * repair, or a case reference that could not be read with nothing found → state 'unchecked' (the page says
- * "could not check"), never a false 0.
+ * repair, or a case reference / case folder that could not be read with nothing found → state 'unchecked'
+ * (the page says "could not check"), never a false 0. Read with something found → shown, marked partial.
  *
  * A FILE IS NAMED BY A KEY, never by its name: the key is a hash of (lead id, folder reference, stored
  * name). To open a file the folder is listed AGAIN and the key matched against that fresh listing; the name
@@ -32,6 +39,10 @@ const io = {
   getLead: (id) => require('./leadService').getLead(String(id)),
   folderState: (lead) => require('../utils/clientFolderRefs').candidateFolderState(lead),
   listChildren: (args) => require('./oneDriveService').listChildren(args),
+  /** The id of the folder a staff file of this lead is written into ('' = none on file); throws when the case row cannot be read. */
+  writeFolderId: (lead) => require('./leadAttachmentService').attachFolderId(lead),
+  /** A folder by its id → { name, parentPath } | null (not there). Throws on storage trouble. */
+  folderItem: (id) => require('./oneDriveService').getDriveItemById(id),
   readFile: (args) => require('./oneDriveService').readFile(args),
 };
 
@@ -39,6 +50,8 @@ const SUBFOLDER = 'Intake';
 const LEAD_ID_RE = /^\d{5,20}$/;
 const KEY_RE = /^[a-f0-9]{16,64}$/;
 const KEY_LENGTH = 24;
+/** A storage item id as it may be put in a storage address (the column that holds it can be edited by hand). */
+const FOLDER_ID_RE = /^[A-Za-z0-9!_-]{1,200}$/;
 
 /**
  * The client's letters, in the order they are shown. The stored names are the ones intakeFormService
@@ -102,7 +115,8 @@ function sortEntries(list) {
   const rank = (e) => (e.kind === 'client' ? 0 : 1);
   return list.sort((a, b) => {
     if (rank(a) !== rank(b)) return rank(a) - rank(b);
-    if (a.kind === 'client') return (a.order - b.order) || a.ext.localeCompare(b.ext);
+    // the same letter twice (two folders): this lead's own copy first
+    if (a.kind === 'client') return (a.order - b.order) || ((b._own ? 1 : 0) - (a._own ? 1 : 0)) || a.ext.localeCompare(b.ext);
     // staff files: newest first — by the time in the name, then the storage date, then the name
     return String(b.addedAt || '').localeCompare(String(a.addedAt || ''))
       || String(b.modified || '').localeCompare(String(a.modified || ''))
@@ -111,9 +125,26 @@ function sortEntries(list) {
 }
 
 /**
+ * The folder attach() writes this lead's staff files into, as a folder reference — asked of the folder
+ * itself, by id. null when there is none on file, it is not there, it is not a client folder directly under
+ * the root, or its name does not have the " - <reference>" shape. Throws when it could not be read.
+ */
+async function writtenFolderRef(lead) {
+  let folderId;
+  try { folderId = String((await io.writeFolderId(lead)) || '').trim(); }
+  catch (_) { throw Object.assign(new Error('case row unreadable'), { reason: 'case-unreadable' }); }
+  if (!FOLDER_ID_RE.test(folderId)) return null;
+  let item;
+  try { item = await io.folderItem(folderId); }
+  catch (err) { throw Object.assign(new Error('folder unreadable'), { reason: reasonOf(err) }); }
+  const ref = require('../utils/clientFolderRefs').refOfRootFolderItem(item);
+  return ref && ref.clientName.trim() && ref.caseRef.trim() ? ref : null;
+}
+
+/**
  * The fresh look both public functions share. Entries carry the folder reference and the stored name
  * (`_ref`, `_name`) — those two never leave this module.
- * @returns {Promise<{ state: 'ok', entries: object[], partial: boolean } | { state: 'unchecked', reason: string } | { state: 'not-found' }>}
+ * @returns {Promise<{ state: 'ok', entries: object[], partial: boolean, why?: string } | { state: 'unchecked', reason: string } | { state: 'not-found' }>}
  */
 async function look(leadId) {
   const id = String(leadId == null ? '' : leadId).trim();
@@ -127,9 +158,20 @@ async function look(leadId) {
   try { ({ refs, caseRefKnown } = await io.folderState({ ...lead, id })); }
   catch (_) { return { state: 'unchecked', reason: 'lead-unreadable' }; }
 
+  // Where attach() really writes (by folder id) — only a lead WITH a case can differ from the names above:
+  // with no case the app has never renamed the folder, so "LEAD-<id>" is it and nothing more is asked.
+  const places = [...(refs || [])];
+  let unread = caseRefKnown === false ? 'case-unreadable' : '';   // why this look may have missed a folder ('' = it did not)
+  if (String(lead.clientMasterItemId || '').trim()) {
+    try {
+      const written = await writtenFolderRef({ ...lead, id });
+      if (written && !places.some((p) => String(p.caseRef).toLowerCase() === written.caseRef.toLowerCase())) places.push(written);
+    } catch (err) { unread = unread || err.reason || 'storage'; }
+  }
+
+  const own = `LEAD-${id}`;
   const entries = [];
-  const seen = new Set();
-  for (const ref of refs || []) {
+  for (const ref of places) {
     let kids;
     try { kids = await io.listChildren({ clientName: ref.clientName, caseRef: ref.caseRef, subfolder: SUBFOLDER }); }
     catch (err) { return { state: 'unchecked', reason: reasonOf(err) }; }
@@ -138,9 +180,6 @@ async function look(leadId) {
       const stored = String(k.name == null ? '' : k.name);
       const kind = classify(stored);
       if (!kind) continue;
-      const clash = stored.toLowerCase();
-      if (seen.has(clash)) continue;        // the same name in a later folder: the first candidate wins
-      seen.add(clash);
       entries.push({
         ...kind,
         key: keyOf(id, ref.caseRef, stored),
@@ -149,28 +188,35 @@ async function look(leadId) {
         view: viewOf(kind.ext),
         _ref: { clientName: ref.clientName, caseRef: ref.caseRef },
         _name: stored,
+        _own: ref.caseRef === own,
       });
     }
   }
-  // The case reference could not be read, so the renamed case folder was never looked at: finding nothing
-  // then proves nothing.
-  if (caseRefKnown === false && !entries.length) return { state: 'unchecked', reason: 'case-unreadable' };
-  return { state: 'ok', entries: sortEntries(entries), partial: caseRefKnown === false };
+  // The case reference (or the folder staff files are written to) could not be read, so a folder was never
+  // looked at: finding nothing then proves nothing.
+  if (unread && !entries.length) return { state: 'unchecked', reason: unread };
+  // The same letter in this lead's own folder AND in another one: two different files — say which is which.
+  const mine = new Set(entries.filter((e) => e.kind === 'client' && e._own).map((e) => e.order));
+  for (const e of entries) if (e.kind === 'client' && !e._own && mine.has(e.order)) e.fromCase = true;
+  return { state: 'ok', entries: sortEntries(entries), partial: Boolean(unread), ...(unread ? { why: unread } : {}) };
 }
 
 const publicFile = (e) => ({
   key: e.key, label: e.label, kind: e.kind, ext: e.ext, size: e.size, modified: e.modified, view: e.view,
   ...(e.kind === 'staff' ? { addedBy: e.addedBy || '', addedAt: e.addedAt || '' } : {}),
+  ...(e.fromCase ? { fromCase: true } : {}),
 });
 
 /**
  * The files of one lead.
  * @returns {Promise<
- *   { state: 'ok', files: Array<{ key, label, kind: 'client'|'staff', ext, size, modified, view: 'tab'|'download', addedBy?, addedAt? }>, partial?: true }
+ *   { state: 'ok', files: Array<{ key, label, kind: 'client'|'staff', ext, size, modified, view: 'tab'|'download', addedBy?, addedAt?, fromCase?: true }>, partial?: true }
  *   | { state: 'unchecked', files: [], reason: 'storage'|'folder-busy'|'case-unreadable'|'lead-unreadable' }
  *   | { state: 'not-found', files: [] }>}
- *   `partial: true` — the case reference could not be read, so only the lead-stage folder was looked at:
- *   the files shown are real, but there may be more.
+ *   `partial: true` — the case reference, or the folder staff files are written to, could not be read, so
+ *   not every folder was looked at: the files shown are real, but there may be more.
+ *   `fromCase: true` — a client letter that this lead ALSO has in its own folder: this one is the other copy
+ *   (from the case's folder — another form of the same person).
  */
 async function listLeadFiles(leadId) {
   const r = await look(leadId);
@@ -192,7 +238,7 @@ async function readLeadFile(leadId, key) {
   if (r.state !== 'ok') return { refused: 'unchecked', reason: r.reason };
   const entry = r.entries.find((e) => e.key === k);
   // Not in a look that could not see every folder: "could not check", not "gone".
-  if (!entry) return r.partial ? { refused: 'unchecked', reason: 'case-unreadable' } : { refused: 'not-found' };
+  if (!entry) return r.partial ? { refused: 'unchecked', reason: r.why || 'case-unreadable' } : { refused: 'not-found' };
   if (entry.size != null && entry.size > MAX_READ_BYTES) return { refused: 'too-big' };
   let buffer;
   try { buffer = await io.readFile({ clientName: entry._ref.clientName, caseRef: entry._ref.caseRef, subfolder: SUBFOLDER, filename: entry._name }); }

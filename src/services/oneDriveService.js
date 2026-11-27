@@ -501,8 +501,26 @@ async function listChildren({ clientName, caseRef, subfolder = '' }) {
       return withGraphAuth('list', async (token) => {
         const out = [];
         let next = firstUrl;
+        let firstPage = true;
         while (next) {
-          const res = await axios.get(next, { headers: { Authorization: `Bearer ${token}` }, timeout: GRAPH_TIMEOUT_MS });
+          let res;
+          try {
+            res = await axios.get(next, { headers: { Authorization: `Bearer ${token}` }, timeout: GRAPH_TIMEOUT_MS });
+          } catch (err) {
+            // Only the FIRST request can mean "the folder is not there". A 404 on
+            // a continuation is a stale skiptoken (the same guard as
+            // findCaseFoldersByRef): answering [] there would turn half a listing
+            // into a clean "no files". It leaves as a transient error with NO
+            // .response, so neither withCaseFolder nor the catch below can read it
+            // as "absent".
+            if (err?.response?.status === 404 && !firstPage) {
+              const partial = new Error('listing continuation was not found (partial listing)');
+              partial.transient = true;
+              throw partial;
+            }
+            throw err;
+          }
+          firstPage = false;
           for (const it of (res.data?.value || [])) {
             out.push({ name: it.name, size: it.size, lastModifiedDateTime: it.lastModifiedDateTime, isFolder: Boolean(it.folder) });
           }

@@ -16,7 +16,10 @@
  * The bytes: Content-Type from a fixed list by extension, nosniff, a sandbox CSP, never cached; shown in the
  * tab (pdf / pictures) or saved (heic). The page fetches them with the key header and opens a blob.
  *
- * A small guard: only a few files may be read at once (per lead, and in all) — each one is held in memory.
+ * A small guard: only a few files may be on their way at once (per lead, and in all) — each one is held in
+ * memory from the storage read until its bytes have left the server. A file keeps its place until the answer
+ * is finished, or the connection drops; a reader that takes nothing for a minute is cut off, so a dead
+ * connection can never keep a place (and lock the other staff out).
  *
  * server.js only registers these; the handlers live here so tests run them with fakes.
  */
@@ -28,6 +31,8 @@ const KEY_RE = /^[a-f0-9]{16,64}$/;
 
 const MAX_READS_PER_LEAD = 3;
 const MAX_READS_IN_ALL = 8;
+/** A file being sent whose reader takes nothing for this long is cut off. A slow download that still moves is not. */
+const SEND_IDLE_MS = 60 * 1000;
 
 const TEXT = Object.freeze({
   badLead: 'Which client? (bad lead id)',
@@ -97,6 +102,9 @@ async function fileHandler(req, res, deps) {
   if (!LEAD_RE.test(leadId)) return res.status(400).json({ error: TEXT.badLead });
   if (!KEY_RE.test(key)) return res.status(400).json({ error: TEXT.badKey });
   if (!enter(leadId)) return res.status(429).json({ error: TEXT.tooMany });
+  // The place is given back exactly once: here when no file is sent, else when the bytes have really left.
+  let released = false, sending = false;
+  const release = () => { if (!released) { released = true; leave(leadId); } };
   try {
     let r;
     try { r = await svcOf(deps).readLeadFile(leadId, key); }
@@ -107,6 +115,9 @@ async function fileHandler(req, res, deps) {
       console.warn(`[LeadFiles] lead ${leadId}: file ${key} could not be read (${(r && r.reason) || 'unknown'})`);
       return res.status(503).json({ error: TEXT.busy });
     }
+    // The person left while the file was being fetched: nobody to send it to ("close" has already fired, so
+    // waiting for it below would keep the place for ever).
+    if (res.destroyed === true || res.closed === true || (res.socket && res.socket.destroyed === true)) return;
     const download = r.view !== 'tab';
     // the save name is built by the service from a fixed alphabet; cleaned again here so the header can never break
     let saveAs = String(r.downloadName || '').replace(/[^A-Za-z0-9 ._()-]+/g, '').replace(/^[\s.]+/, '').trim();
@@ -118,13 +129,23 @@ async function fileHandler(req, res, deps) {
     res.set('Content-Security-Policy', download ? "sandbox; default-src 'none'" : 'sandbox');
     res.set('Cache-Control', 'private, no-store');
     console.log(`[LeadFiles] lead ${leadId}: file ${key} opened by ${whoOf(req, deps)} (${r.kind || 'file'}, ${r.buffer.length} bytes)`);
-    res.status(200).end(r.buffer);
+    // end() only queues the bytes: the buffer stays in memory until the reader has taken it. So the place is
+    // kept until the answer is finished or the connection closes, whichever comes first.
+    if (typeof res.once === 'function') {
+      res.once('finish', release); res.once('close', release);
+      sending = true;
+      // A reader that has stopped is cut off — that closes the connection, which gives the place back.
+      // (Node holds this timer back while the queue to the reader is still getting shorter.)
+      if (typeof res.setTimeout === 'function') res.setTimeout(SEND_IDLE_MS, () => { try { res.destroy(); } catch (_) { /* already gone */ } });
+    }
+    try { res.status(200).end(r.buffer); }
+    catch (err) { release(); throw err; }
   } finally {
-    leave(leadId);
+    if (!sending) release();
   }
 }
 
 const list = safely('the list', listHandler);
 const file = safely('a file read', fileHandler);
 
-module.exports = { list, file, TEXT, LEAD_RE, KEY_RE, MAX_READS_PER_LEAD, MAX_READS_IN_ALL, _inFlight: () => ({ leads: _reads.size, all: _readsInAll }) };
+module.exports = { list, file, TEXT, LEAD_RE, KEY_RE, MAX_READS_PER_LEAD, MAX_READS_IN_ALL, SEND_IDLE_MS, _inFlight: () => ({ leads: _reads.size, all: _readsInAll }) };

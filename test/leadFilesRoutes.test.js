@@ -1,13 +1,15 @@
 // The lead page's "Attachments" (Faran 2026-11-27) — the two READ-ONLY routes with fakes: the plain-words
 // refusals (400 / 404 / 413 / 429 / 503), the exact headers of a file shown in a tab and of a download, the
-// log line (lead id + key + who — never a file name), the team-key gate (no Monday sign-in needed), and the
-// wiring in server.js. Every name, id and key here is invented.
+// log line (lead id + key + who — never a file name), the team-key gate (no Monday sign-in needed), a place
+// that is kept until the bytes have left (or the connection drops or stalls), and the wiring in server.js. Every name, id and key here is invented.
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const { Writable } = require('node:stream');
+const { Writable, Duplex } = require('node:stream');
+const { EventEmitter } = require('node:events');
+const http = require('node:http');
 const express = require('express');
 
 const routes = require('../src/routes/leadFilesRoutes');
@@ -260,6 +262,116 @@ test('anything unforeseen ends as a plain 500 — a handler never rejects', asyn
   });
   assert.equal(res.statusCode, 500); assert.deepEqual(res.body, { error: 'Could not reach the files just now — try again.' });
   assert.ok(logs.every((l) => !/passport|Test Person/.test(l)));
+  assert.deepEqual(routes._inFlight(), { leads: 0, all: 0 });
+});
+
+/* ══ a place is kept until the bytes have left ════════════════════════════════ */
+
+/** A response that behaves like a live connection: it ends only when the test says the reader has taken the bytes. */
+function liveRes() {
+  const r = new EventEmitter();
+  Object.assign(r, {
+    statusCode: 200, headers: {}, body: undefined, ended: undefined, destroyed: false, timeouts: [],
+    status(c) { r.statusCode = c; return r; }, json(b) { r.body = b; return r; },
+    set(k, v) { r.headers[k.toLowerCase()] = v; return r; }, end(b) { r.ended = b; return r; },
+    setTimeout(ms, cb) { r.timeouts.push([ms, cb]); return r; },
+    destroy() { if (!r.destroyed) { r.destroyed = true; r.emit('close'); } return r; },
+  });
+  return r;
+}
+
+test('a file keeps its place until its bytes have left: still held after the handler returns; freed on finish or close, once', async () => {
+  const a = liveRes(), b = liveRes();
+  await quiet(async () => { await routes.file(req(), a, deps(fakeService())); await routes.file(req(), b, deps(fakeService())); });
+  assert.equal(a.statusCode, 200); assert.ok(a.ended.equals(PDF));
+  assert.deepEqual(routes._inFlight(), { leads: 1, all: 2 }, 'both are still being sent');
+  a.emit('finish');
+  assert.deepEqual(routes._inFlight(), { leads: 1, all: 1 }, 'finish gives the place back');
+  a.emit('close'); a.emit('finish'); a.emit('close');
+  assert.deepEqual(routes._inFlight(), { leads: 1, all: 1 }, 'only once — the other file still has its place');
+  b.emit('close');   // the reader went away before the end
+  assert.deepEqual(routes._inFlight(), { leads: 0, all: 0 }, 'close gives the place back');
+  b.emit('finish');
+  assert.deepEqual(routes._inFlight(), { leads: 0, all: 0 });
+});
+
+test('while three files of a lead are still being sent the fourth gets 429; a place freed lets the next one in', async () => {
+  const sending = [liveRes(), liveRes(), liveRes()];
+  const s = fakeService();
+  await quiet(async () => { for (const r of sending) await routes.file(req(), r, deps(s)); });
+  assert.ok(sending.every((r) => r.statusCode === 200 && r.ended), 'all three handlers have returned');
+  const fourth = liveRes();
+  await routes.file(req(), fourth, deps(s));
+  assert.equal(fourth.statusCode, 429);
+  assert.deepEqual(fourth.body, { error: 'Too many files are being opened at once — wait a moment and try again.' });
+  assert.equal(s.calls.length, 3, 'the fourth read never started');
+  assert.equal(fourth.listenerCount('finish') + fourth.listenerCount('close') + fourth.timeouts.length, 0);
+  sending[0].emit('finish');
+  const next = liveRes();
+  await quiet(() => routes.file(req(), next, deps(s)));
+  assert.equal(next.statusCode, 200);
+  for (const r of [...sending, next]) r.emit('close');
+  assert.deepEqual(routes._inFlight(), { leads: 0, all: 0 });
+});
+
+test('a reader that has stopped is cut off after a minute — a dead connection never keeps a place', async () => {
+  assert.equal(routes.SEND_IDLE_MS, 60000);
+  const res = liveRes();
+  await quiet(() => routes.file(req(), res, deps(fakeService())));
+  assert.equal(res.timeouts.length, 1); assert.equal(res.timeouts[0][0], 60000);
+  assert.deepEqual(routes._inFlight(), { leads: 1, all: 1 });
+  res.timeouts[0][1]();   // the idle timer fires
+  assert.equal(res.destroyed, true);
+  assert.deepEqual(routes._inFlight(), { leads: 0, all: 0 });
+  // a refusal sends no file: no timer, and the place is back at once
+  for (const file of [{ refused: 'not-found' }, { refused: 'too-big' }, { refused: 'unchecked', reason: 'storage' }]) {
+    const r = liveRes();
+    await quiet(() => routes.file(req(), r, deps(fakeService({ file }))));
+    assert.equal(r.timeouts.length, 0); assert.equal(r.listenerCount('finish') + r.listenerCount('close'), 0);
+    assert.deepEqual(routes._inFlight(), { leads: 0, all: 0 });
+  }
+});
+
+test('the person left while the file was being fetched: nothing is sent and the place is back at once', async () => {
+  const res = liveRes();
+  let open; const wait = new Promise((r) => { open = r; });
+  const running = quiet(() => routes.file(req(), res, deps(fakeService({ wait }))));
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(routes._inFlight(), { leads: 1, all: 1 });
+  res.destroy();   // "close" fires now — before the handler could listen for it
+  open(); const logs = await running;
+  assert.equal(res.ended, undefined); assert.deepEqual(logs, []);
+  assert.deepEqual(routes._inFlight(), { leads: 0, all: 0 });
+});
+
+test('with Node\'s own response on a connection that takes nothing: held while unsent, freed when the connection is cut; an answer that fails after that still frees it', async () => {
+  const stuckSocket = () => {
+    const sock = new Duplex({ read() {}, write() { /* never calls back: the reader takes nothing */ } });
+    sock.setTimeout = () => sock;
+    return sock;
+  };
+  const nodeRes = () => {
+    const res = new http.ServerResponse({ method: 'GET', httpVersionMajor: 1, httpVersionMinor: 1 });
+    Object.assign(res, { status(c) { this.statusCode = c; return this; }, json(b) { this.body = b; return this; }, set(k, v) { this.setHeader(k, v); return this; } });
+    res.assignSocket(stuckSocket());
+    return res;
+  };
+  const big = { buffer: Buffer.alloc(256 * 1024, 1), mime: 'application/pdf', ext: 'pdf', downloadName: 'scan.pdf', view: 'tab', kind: 'staff' };
+  const held = [nodeRes(), nodeRes(), nodeRes()];
+  await quiet(async () => { for (const r of held) await routes.file(req(), r, deps(fakeService({ file: big }))); });
+  await new Promise((r) => setImmediate(r));
+  assert.ok(held.every((r) => r.writableEnded && !r.writableFinished), 'ended by the handler, not yet taken by the reader');
+  assert.deepEqual(routes._inFlight(), { leads: 1, all: 3 });
+  const fourth = fakeRes();
+  await routes.file(req(), fourth, deps(fakeService({ file: big })));
+  assert.equal(fourth.statusCode, 429);
+  for (const r of held) r.destroy();
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(routes._inFlight(), { leads: 0, all: 0 });
+  // a connection that is already gone when the file arrives
+  const gone = nodeRes(); gone.socket.destroy();
+  await new Promise((r) => setImmediate(r));
+  await quiet(() => routes.file(req(), gone, deps(fakeService({ file: big }))));
   assert.deepEqual(routes._inFlight(), { leads: 0, all: 0 });
 });
 
